@@ -76,12 +76,18 @@
 #define ASM_OUTPUT_TYPE_DIRECTIVE(STREAM, NAME, TYPE)
 #define ASM_DECLARE_FUNCTION_SIZE(FILE, FNAME, DECL)
 
+#undef TARGET_ASM_CONSTRUCTOR
+#define TARGET_ASM_CONSTRUCTOR aarch64_elf_asm_constructor
+
+#undef TARGET_ASM_DESTRUCTOR
+#define TARGET_ASM_DESTRUCTOR aarch64_elf_asm_destructor
+
 #define TEXT_SECTION_ASM_OP	"\t.text"
 #define DATA_SECTION_ASM_OP	"\t.data"
 #define BSS_SECTION_ASM_OP	"\t.bss"
 
-#define CTORS_SECTION_ASM_OP	"\t.section\t.ctors, \"aw\""
-#define DTORS_SECTION_ASM_OP	"\t.section\t.dtors, \"aw\""
+#define CTORS_SECTION_ASM_OP "\t.section\t.init_array,\"aw\""
+#define DTORS_SECTION_ASM_OP "\t.section\t.fini_array,\"aw\""
 
 #define GLOBAL_ASM_OP "\t.global\t"
 

@@ -21,18 +21,9 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_AARCH64_CYGMING_H
 #define GCC_AARCH64_CYGMING_H
 
-#undef PREFERRED_DEBUGGING_TYPE
-#define PREFERRED_DEBUGGING_TYPE DINFO_TYPE_NONE
-
 #define FASTCALL_PREFIX '@'
 
 #define print_reg(rtx, code, file) (gcc_unreachable ())
-
-#define SYMBOL_FLAG_DLLIMPORT 0
-#define SYMBOL_FLAG_DLLEXPORT 0
-
-#define SYMBOL_REF_DLLEXPORT_P(X) \
-	((SYMBOL_REF_FLAGS (X) & SYMBOL_FLAG_DLLEXPORT) != 0)
 
 /* Disable SEH and declare the required SEH-related macros that are
 still needed for compilation.  */
@@ -45,6 +36,11 @@ still needed for compilation.  */
 
 #undef TARGET_PECOFF
 #define TARGET_PECOFF 1
+
+#define DWARF2_DEBUGGING_INFO 1
+
+#undef PREFERRED_DEBUGGING_TYPE
+#define PREFERRED_DEBUGGING_TYPE DWARF2_DEBUG
 
 #include <stdbool.h>
 #ifdef __MINGW32__
@@ -66,6 +62,13 @@ extern void mingw_pe_declare_function_type (FILE *file, const char *name,
 /* Declare the type properly for any external libcall.  */
 #define ASM_OUTPUT_EXTERNAL_LIBCALL(FILE, FUN) \
   mingw_pe_declare_function_type (FILE, XSTR (FUN, 0), 1)
+
+/* In winnt.cc */
+extern bool i386_pe_valid_dllimport_attribute_p (const_tree);
+
+#define TARGET_VALID_DLLIMPORT_ATTRIBUTE_P i386_pe_valid_dllimport_attribute_p
+
+#define TARGET_DLLIMPORT_DECL_ATTRIBUTES 1
 
 #define TARGET_OS_CPP_BUILTINS()					\
   do									\
@@ -108,6 +111,20 @@ extern void mingw_pe_declare_function_type (FILE *file, const char *name,
   (fprintf (asm_out_file, "\t.section\t.drectve\n"), \
    in_section = NULL)
 
+/* This implements the `alias' attribute, keeping any stdcall or
+   fastcall decoration.  */
+#undef	ASM_OUTPUT_DEF_FROM_DECLS
+#define	ASM_OUTPUT_DEF_FROM_DECLS(STREAM, DECL, TARGET)			\
+  do									\
+    {									\
+      const char *alias							\
+	= IDENTIFIER_POINTER (DECL_ASSEMBLER_NAME (DECL));		\
+      mingw_pe_maybe_record_exported_symbol (DECL, alias, 0);		\
+      if (TREE_CODE (DECL) == FUNCTION_DECL)				\
+	mingw_pe_declare_function_type (STREAM, alias,			\
+				       TREE_PUBLIC (DECL));		\
+      ASM_OUTPUT_DEF (STREAM, alias, IDENTIFIER_POINTER (TARGET));	\
+    } while (0)
 
 /* Enable alias attribute support.  */
 #ifndef SET_ASM_OP
@@ -165,6 +182,44 @@ extern void mingw_pe_declare_function_type (FILE *file, const char *name,
 #define STACK_CHECK_STATIC_BUILTIN 1
 
 #define HAVE_GAS_ALIGNED_COMM 1
+
+/* Use section relative relocations for debugging offsets.  Unlike
+   other targets that fake this by putting the section VMA at 0, PE
+   won't allow it.  */
+#define ASM_OUTPUT_DWARF_OFFSET(FILE, SIZE, LABEL, OFFSET, SECTION) \
+  do {								\
+    switch (SIZE)						\
+      {								\
+      case 4:							\
+	fputs ("\t.secrel32\t", FILE);				\
+	assemble_name (FILE, LABEL);				\
+	if ((OFFSET) != 0)					\
+	  fprintf (FILE, "+" HOST_WIDE_INT_PRINT_DEC,		\
+		   (HOST_WIDE_INT) (OFFSET));			\
+	break;							\
+      case 8:							\
+	/* This is a hack.  There is no 64-bit section relative	\
+	   relocation.  However, the COFF format also does not	\
+	   support 64-bit file offsets; 64-bit applications are	\
+	   limited to 32-bits of code+data in any one module.	\
+	   Fake the 64-bit offset by zero-extending it.  */	\
+	fputs ("\t.secrel32\t", FILE);				\
+	assemble_name (FILE, LABEL);				\
+	if ((OFFSET) != 0)					\
+	  fprintf (FILE, "+" HOST_WIDE_INT_PRINT_DEC,		\
+		   (HOST_WIDE_INT) (OFFSET));			\
+	fputs ("\n\t.long\t0", FILE);				\
+	break;							\
+      default:							\
+	gcc_unreachable ();					\
+      }								\
+  } while (0)
+
+#define SUBTARGET_ATTRIBUTE_TABLE \
+  { "selectany", 0, 0, true, false, false, false, \
+    ix86_handle_selectany_attribute, NULL }
+  /* { name, min_len, max_len, decl_req, type_req, fn_type_req,
+       affects_type_identity, handler, exclude } */
 
 #undef MAX_OFILE_ALIGNMENT
 #define MAX_OFILE_ALIGNMENT (8192 * 8)
