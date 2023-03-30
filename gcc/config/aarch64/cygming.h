@@ -28,11 +28,11 @@ along with GCC; see the file COPYING3.  If not see
 /* Disable SEH and declare the required SEH-related macros that are
 still needed for compilation.  */
 #undef TARGET_SEH
-#define TARGET_SEH 0
+#define TARGET_SEH 1
 
 #define SSE_REGNO_P(N) (gcc_unreachable (), 0)
 #define GENERAL_REGNO_P(N) (gcc_unreachable (), 0)
-#define SEH_MAX_FRAME_SIZE (gcc_unreachable (), 0)
+//#define SEH_MAX_FRAME_SIZE (gcc_unreachable (), 0)
 
 #undef TARGET_PECOFF
 #define TARGET_PECOFF 1
@@ -41,6 +41,35 @@ still needed for compilation.  */
 
 #undef PREFERRED_DEBUGGING_TYPE
 #define PREFERRED_DEBUGGING_TYPE DWARF2_DEBUG
+
+
+/* Support hooks for SEH.  */
+// #undef  TARGET_ASM_UNWIND_EMIT
+// #define TARGET_ASM_UNWIND_EMIT  i386_pe_seh_unwind_emit
+#undef  TARGET_ASM_UNWIND_EMIT_BEFORE_INSN
+#define TARGET_ASM_UNWIND_EMIT_BEFORE_INSN  false
+//#undef  TARGET_ASM_FUNCTION_PROLOGUE
+//#define TARGET_ASM_FUNCTION_PROLOGUE i386_pe_seh_function_prologue
+#undef  TARGET_ASM_FUNCTION_END_PROLOGUE
+#define TARGET_ASM_FUNCTION_END_PROLOGUE  i386_pe_seh_end_prologue
+#undef  TARGET_ASM_EMIT_EXCEPT_PERSONALITY
+#define TARGET_ASM_EMIT_EXCEPT_PERSONALITY i386_pe_seh_emit_except_personality
+#undef  TARGET_ASM_INIT_SECTIONS
+#define TARGET_ASM_INIT_SECTIONS  i386_pe_seh_init_sections
+#undef  SUBTARGET_ASM_UNWIND_INIT
+#define SUBTARGET_ASM_UNWIND_INIT  i386_pe_seh_init
+// #undef  TARGET_ASM_FINAL_POSTSCAN_INSN
+// #define TARGET_ASM_FINAL_POSTSCAN_INSN i386_pe_seh_asm_final_postscan_insn
+
+#undef DEFAULT_ABI
+#define DEFAULT_ABI MS_ABI
+
+// #if ! defined (USE_MINGW64_LEADING_UNDERSCORES)
+// #undef USER_LABEL_PREFIX
+// #define USER_LABEL_PREFIX (TARGET_64BIT ? "" : "_")
+
+// #undef LOCAL_LABEL_PREFIX
+// #define LOCAL_LABEL_PREFIX (TARGET_64BIT ? "." : "")
 
 #include <stdbool.h>
 #ifdef __MINGW32__
@@ -68,14 +97,13 @@ extern bool i386_pe_valid_dllimport_attribute_p (const_tree);
 
 #define TARGET_VALID_DLLIMPORT_ATTRIBUTE_P i386_pe_valid_dllimport_attribute_p
 
-#define TARGET_DLLIMPORT_DECL_ATTRIBUTES 1
-
 #define TARGET_OS_CPP_BUILTINS()					\
   do									\
     {									\
       builtin_define ("__MSVCRT__");					\
       builtin_define ("__MINGW32__");					\
       builtin_define ("_WIN32");					\
+      builtin_define ("__SEH__");                               \
       builtin_define_std ("WIN32");					\
       builtin_define_std ("WINNT");					\
       builtin_define_with_int_value ("_INTEGRAL_MAX_BITS",		\
@@ -89,6 +117,29 @@ extern bool i386_pe_valid_dllimport_attribute_p (const_tree);
       builtin_define ("__cdecl=__attribute__((__cdecl__))");		\
     }									\
   while (0)
+
+/* SEH support */
+extern void i386_pe_seh_init (FILE *);
+extern void i386_pe_seh_end_prologue (FILE *);
+extern void i386_pe_seh_function_prologue (FILE *);
+extern void i386_pe_seh_cold_init (FILE *, const char *);
+extern void i386_pe_seh_unwind_emit (FILE *, rtx_insn *);
+extern void i386_pe_seh_emit_except_personality (rtx);
+extern void i386_pe_seh_init_sections (void);
+// extern void i386_pe_seh_asm_final_postscan_insn (FILE *stream, rtx_insn *insn, rtx*, int);
+
+/* In aarch64_c */
+extern void aarch64_pe_asm_named_section (const char *, unsigned int, tree);
+extern bool aarch64_pe_valid_dllimport_attribute_p (const_tree);
+extern void aarch64_pe_maybe_record_exported_symbol (tree, const char *, int);
+extern void aarch64_pe_declare_function_type (FILE *, const char *, int);
+
+/* In winnt */
+extern void aarch64_print_reg (rtx, int, FILE*);
+extern void i386_pe_end_function (FILE *f, const char *, tree);
+extern void i386_pe_end_cold_function (FILE *f, const char *, tree);
+extern void aarch64_pe_end_epilogue (FILE *file);
+extern void i386_pe_begin_epilogue (FILE *file);
 
 /* Windows64 continues to use a 32-bit long type.  */
 #undef LONG_TYPE_SIZE
@@ -215,13 +266,39 @@ extern bool i386_pe_valid_dllimport_attribute_p (const_tree);
       }								\
   } while (0)
 
+#undef ASM_DECLARE_FUNCTION_SIZE
+#define ASM_DECLARE_FUNCTION_SIZE(FILE,NAME,DECL) \
+  i386_pe_end_function (FILE, NAME, DECL)
+
+#undef ASM_DECLARE_COLD_FUNCTION_SIZE
+#define ASM_DECLARE_COLD_FUNCTION_SIZE(FILE,NAME,DECL) \
+  i386_pe_end_cold_function (FILE, NAME, DECL)
+
+// #undef  TARGET_ASM_FUNCTION_BEGIN_EPILOGUE
+// #define TARGET_ASM_FUNCTION_BEGIN_EPILOGUE i386_pe_begin_epilogue
+
 #define SUBTARGET_ATTRIBUTE_TABLE \
   { "selectany", 0, 0, true, false, false, false, \
     ix86_handle_selectany_attribute, NULL }
   /* { name, min_len, max_len, decl_req, type_req, fn_type_req,
        affects_type_identity, handler, exclude } */
 
+#undef DWARF2_UNWIND_INFO
+#define DWARF2_UNWIND_INFO 0
+
 #undef MAX_OFILE_ALIGNMENT
 #define MAX_OFILE_ALIGNMENT (8192 * 8)
+
+/* According to Windows x64 software convention, the maximum stack allocatable
+   in the prologue is 4G - 8 bytes.  Furthermore, there is a limited set of
+   instructions allowed to adjust the stack pointer in the epilog, forcing the
+   use of frame pointer for frames larger than 2 GB.  This theorical limit
+   is reduced by 256, an over-estimated upper bound for the stack use by the
+   prologue.
+   We define only one threshold for both the prolog and the epilog.  When the
+   frame size is larger than this threshold, we allocate the area to save SSE
+   regs, then save them, and then allocate the remaining.  There is no SEH
+   unwind info for this later allocation.  */
+#define SEH_MAX_FRAME_SIZE ((2U << 30) - 256)
 
 #endif

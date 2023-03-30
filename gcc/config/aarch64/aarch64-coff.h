@@ -35,6 +35,9 @@
 #undef LONG_TYPE_SIZE
 #define LONG_TYPE_SIZE 32
 
+#define TARGET_64BIT_MS_ABI 1
+#define TARGET_SEH 1
+
 #ifndef ASM_GENERATE_INTERNAL_LABEL
 # define ASM_GENERATE_INTERNAL_LABEL(STRING, PREFIX, NUM)  \
   sprintf (STRING, "*%s%s%u", LOCAL_LABEL_PREFIX, PREFIX, (unsigned int)(NUM))
@@ -86,8 +89,8 @@
 #define DATA_SECTION_ASM_OP	"\t.data"
 #define BSS_SECTION_ASM_OP	"\t.bss"
 
-#define CTORS_SECTION_ASM_OP "\t.section\t.init_array,\"aw\""
-#define DTORS_SECTION_ASM_OP "\t.section\t.fini_array,\"aw\""
+#define CTORS_SECTION_ASM_OP	"\t.section\t.ctors, \"aw\""
+#define DTORS_SECTION_ASM_OP	"\t.section\t.dtors, \"aw\""
 
 #define GLOBAL_ASM_OP "\t.global\t"
 
