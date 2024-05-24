@@ -1035,6 +1035,8 @@ static void
 seh_emit_save (FILE *f, struct seh_frame_state *seh,
 	       rtx reg, HOST_WIDE_INT cfa_offset)
 {
+// FIX ME
+  return;
   const unsigned int regno = REGNO (reg);
   HOST_WIDE_INT offset;
 

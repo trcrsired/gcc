@@ -35,6 +35,8 @@
 #undef LONG_TYPE_SIZE
 #define LONG_TYPE_SIZE 32
 
+#define TARGET_SEH 1
+
 #ifndef ASM_GENERATE_INTERNAL_LABEL
 # define ASM_GENERATE_INTERNAL_LABEL(STRING, PREFIX, NUM)  \
   sprintf (STRING, "*%s%s%u", LOCAL_LABEL_PREFIX, PREFIX, (unsigned int)(NUM))
@@ -75,6 +77,12 @@
    aarch64-w64-mingw32 target.  */
 #define ASM_OUTPUT_TYPE_DIRECTIVE(STREAM, NAME, TYPE)
 #define ASM_DECLARE_FUNCTION_SIZE(FILE, FNAME, DECL)
+
+#undef TARGET_ASM_CONSTRUCTOR
+#define TARGET_ASM_CONSTRUCTOR aarch64_elf_asm_constructor
+
+#undef TARGET_ASM_DESTRUCTOR
+#define TARGET_ASM_DESTRUCTOR aarch64_elf_asm_destructor
 
 #define TEXT_SECTION_ASM_OP	"\t.text"
 #define DATA_SECTION_ASM_OP	"\t.data"
