@@ -22,23 +22,26 @@
 // see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 // <http://www.gnu.org/licenses/>.
 
+#include <bits/c++config.h>
+#ifdef _GLIBCXX_VERBOSE_ASSERT
 #include <cstdio>	// for std::fprintf, stderr
+#endif
 #include <cstdlib>	// for std::abort
 
-#ifdef _GLIBCXX_VERBOSE_ASSERT
 namespace std
 {
   [[__noreturn__]]
   void
-  __glibcxx_assert_fail(const char* file, int line,
-			const char* function, const char* condition) noexcept
+  __glibcxx_assert_fail([[maybe_unused]] const char* file, [[maybe_unused]] int line,
+			[[maybe_unused]] const char* function, [[maybe_unused]] const char* condition) noexcept
   {
+#ifdef _GLIBCXX_VERBOSE_ASSERT
     if (file && function && condition)
       fprintf(stderr, "%s:%d: %s: Assertion '%s' failed.\n",
 	      file, line, function, condition);
     else if (function)
       fprintf(stderr, "%s: Undefined behavior detected.\n", function);
+#endif
     abort();
   }
 }
-#endif
