@@ -1488,6 +1488,21 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
        && bitwise_inverted_equal_p (@0, @1, wascmp))
    { wascmp ? constant_boolean_node (false, type) : build_zero_cst (type); })))
 
+/* zero_extend (X) & sign_extend (X) -> zero_extend (X) and
+   zero_extend (X) | sign_extend (X) -> sign_extend (X)  */
+(for bitop (bit_and bit_ior)
+ (simplify
+  (bitop:c (convert @0) (convert (nop_convert@1 @0)))
+  (if (INTEGRAL_TYPE_P (type)
+       && INTEGRAL_TYPE_P (TREE_TYPE (@0))
+       && INTEGRAL_TYPE_P (TREE_TYPE (@1))
+       && TYPE_UNSIGNED (TREE_TYPE (@0)) != TYPE_UNSIGNED (TREE_TYPE (@1))
+       && TYPE_PRECISION (TREE_TYPE (@0)) == TYPE_PRECISION (TREE_TYPE (@1))
+       && TYPE_PRECISION (TREE_TYPE (@0)) <= TYPE_PRECISION (type))
+   (if ((bitop == BIT_AND_EXPR) == TYPE_UNSIGNED (TREE_TYPE (@0)))
+    (convert @0)
+    (convert @1)))))
+
 /* PR71636: Transform x & ((1U << b) - 1) -> x & ~(~0U << b);  */
 (simplify
   (bit_and:c @0 (plus:s (lshift:s integer_onep @1) integer_minus_onep))
@@ -9846,6 +9861,26 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
      (abs @0)
      (negate (abs @0))))))
 
+/* (signbit (x) cmp1 0) cmp (signbit (y) cmp2 0) ? y : -y
+   -> copysign (y, +-x).  */
+#if GIMPLE
+(for cmp (eq ne)
+ (for icmp1 (eq ne)
+  (for icmp2 (eq ne)
+   (for sign (SIGNBIT)
+    (simplify
+     (cond (cmp:c (icmp1 (sign @0) integer_zerop)
+		  (icmp2 (sign @1) integer_zerop))
+	   @1 (negate @1))
+     (if (SCALAR_FLOAT_TYPE_P (type)
+	  && types_match (type, TREE_TYPE (@0))
+	  && direct_internal_fn_supported_p (IFN_COPYSIGN, type,
+					     OPTIMIZE_FOR_BOTH))
+      (if ((cmp == EQ_EXPR) == (icmp1 == icmp2))
+       (IFN_COPYSIGN @1 @0)
+       (IFN_COPYSIGN @1 (negate @0)))))))))
+#endif
+
 (simplify
  /* signbit(x) -> 0 if x is nonnegative.  */
  (SIGNBIT tree_expr_nonnegative_p@0)
@@ -10389,6 +10424,23 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
   (if (!HONOR_SIGN_DEPENDENT_ROUNDING (type) && single_use (@3))
    (IFN_COND_FMA @4 @0 @1 @2 (negate @5)))))
 
+/* min (clz (x), clz (y)) -> clz (x | y) and
+   min (ctz (x), ctz (y)) -> ctz (x | y).  */
+(for func (CLZ CTZ)
+ (simplify
+  (min (func:s @0) (func:s @1))
+  (if (types_match (@0, @1)
+       && (!sanitize_flags_p (SANITIZE_BUILTIN)
+	   || (cfun && (cfun->curr_properties & PROP_ssa) != 0)))
+   (func (bit_ior @0 @1)))))
+(for func (IFN_CLZ IFN_CTZ)
+ (simplify
+  (min (func:s @0 INTEGER_CST@2) (func:s @1 @2))
+  (if (types_match (@0, @1)
+       && wi::geu_p (wi::to_wide (@2),
+		     TYPE_PRECISION (TREE_TYPE (@0))))
+   (func (bit_ior @0 @1) @2))))
+
 /* CLZ simplifications.  */
 (for clz (CLZ)
  (for op (eq ne)
@@ -10749,15 +10801,16 @@ DEFINE_INT_AND_FLOAT_ROUND_FN (RINT)
 #endif
 
 /* PARITY simplifications.  */
-/* parity(~X) is parity(X).  */
+/* parity(~X) is parity(X) for even precision and parity(X) ^ 1 otherwise.  */
 (simplify
   (PARITY (bit_not @0))
-  (PARITY @0))
+  (if ((element_precision (TREE_TYPE (@0)) & 1) == 0)
+   (PARITY @0)
+   (bit_xor (PARITY:type @0) { build_one_cst (type); })))
 
 /* parity(bswap(x)) is parity(x).  */
 (for parity (PARITY)
-  (for bswap (BUILT_IN_BSWAP16 BUILT_IN_BSWAP32
-	      BUILT_IN_BSWAP64 BUILT_IN_BSWAP128)
+  (for bswap (BSWAP BITREVERSE)
     (simplify
       (parity (convert?@0 (bswap:s@1 @2)))
       (if (INTEGRAL_TYPE_P (TREE_TYPE (@0))

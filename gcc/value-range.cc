@@ -1013,6 +1013,34 @@ frange_cmp (const REAL_VALUE_TYPE &a, const REAL_VALUE_TYPE &b)
   return 0;
 }
 
+static inline const REAL_VALUE_TYPE &
+frange_min (const REAL_VALUE_TYPE &a, const REAL_VALUE_TYPE &b)
+{
+  return frange_cmp (a, b) <= 0 ? a : b;
+}
+
+static inline const REAL_VALUE_TYPE &
+frange_max (const REAL_VALUE_TYPE &a, const REAL_VALUE_TYPE &b)
+{
+  return frange_cmp (a, b) >= 0 ? a : b;
+}
+
+// Return TRUE if [..., A_MAX] and [B_MIN, ...] can be fused into one interval,
+// either because they overlap or because no representable value exists between
+// them.  The latter is how -0.0 and +0.0 abut: there is nothing in between, so
+// [x, -0.0] U [+0.0, y] is really [x, y].
+
+static bool
+frange_fusible_p (machine_mode mode, const REAL_VALUE_TYPE &a_max,
+		  const REAL_VALUE_TYPE &b_min)
+{
+  if (frange_cmp (b_min, a_max) <= 0)
+    return true;
+  REAL_VALUE_TYPE next = a_max;
+  frange_nextafter (mode, next, dconstinf);
+  return frange_cmp (b_min, next) <= 0;
+}
+
 // Flush denormal endpoints to the appropriate 0.0.
 
 void
@@ -1022,23 +1050,29 @@ frange::flush_denormals_to_zero ()
     return;
 
   machine_mode mode = TYPE_MODE (type ());
+  frange_pair pairs[MAX_PAIRS];
+  unsigned n = m_num_ranges;
 
-  // FIXME: Rewrite for sub-ranges.
   // Flush a denormal endpoint to a zero of the same sign: a +denormal lower
-  // bound to +0.0, and a -denormal upper bound to -0.0.  Then call
-  // canonicalize_zeros to rewrite the sign to whatever the flags make
+  // bound to +0.0, and a -denormal upper bound to -0.0.  Then set_pairs, via
+  // canonicalize_zeros, rewrites the sign to whatever the flags make
   // canonical.  For example, under !HONOR_SIGNED_ZEROS (-fno-signed-zeros) a
   // range reaching zero must hold both signs of it, so:
   //
   //     [ +DENORMAL, 5.0 ]  flushes to  [ -0.0, 5.0 ]
   //
-  // keeping contains_p (-0.0) true; under HONOR_SIGNED_ZEROS the sign stands and
-  // it stays [ +0.0, 5.0 ].
-  if (real_isdenormal (&m_pairs[0].max, mode) && real_isneg (&m_pairs[0].max))
-    m_pairs[0].max = dconstm0;
-  if (real_isdenormal (&m_pairs[0].min, mode) && !real_isneg (&m_pairs[0].min))
-    m_pairs[0].min = dconst0;
-  canonicalize_zeros (m_pairs[0]);
+  // keeping contains_p (-0.0) true; under HONOR_SIGNED_ZEROS the sign stands
+  // and it stays [ +0.0, 5.0 ].
+  for (unsigned i = 0; i < n; ++i)
+    {
+      pairs[i] = m_pairs[i];
+      if (real_isdenormal (&pairs[i].max, mode) && real_isneg (&pairs[i].max))
+	pairs[i].max = dconstm0;
+      if (real_isdenormal (&pairs[i].min, mode) && !real_isneg (&pairs[i].min))
+	pairs[i].min = dconst0;
+    }
+
+  set_pairs (pairs, n);
 }
 
 // Canonicalize the signed zeros of a sub-range according with what the target
@@ -1068,6 +1102,58 @@ frange::canonicalize_zeros (frange_pair &p)
       if (real_iszero (&p.min, 0))
 	p.min.sign = 1;
     }
+}
+
+// Sort, fuse and install the N intervals in PAIRS as this range's sub-ranges.
+//
+// Fusing merges intervals that overlap or abut.  If more than MAX_PAIRS still
+// survive, the last slot swallows the surplus.
+
+void
+frange::set_pairs (frange_pair *pairs, unsigned n)
+{
+  gcc_checking_assert (n > 0);
+  machine_mode mode = TYPE_MODE (m_type);
+
+  // Sort by lower bound.  N is tiny (at most 2 * MAX_PAIRS).
+  for (unsigned i = 0; i + 1 < n; ++i)
+    for (unsigned j = i + 1; j < n; ++j)
+      if (frange_cmp (pairs[j].min, pairs[i].min) < 0)
+	std::swap (pairs[i], pairs[j]);
+
+  // Fuse overlapping and abutting intervals.
+  unsigned k = 0;
+  for (unsigned i = 1; i < n; ++i)
+    {
+      if (frange_fusible_p (mode, pairs[k].max, pairs[i].min))
+	{
+	  if (frange_cmp (pairs[i].max, pairs[k].max) > 0)
+	    pairs[k].max = pairs[i].max;
+	}
+      else
+	pairs[++k] = pairs[i];
+    }
+  n = k + 1;
+
+  // Only MAX_PAIRS fit.  Like irange, keep the first pieces and let the last
+  // slot swallow the rest.
+  if (n > MAX_PAIRS)
+    {
+      pairs[MAX_PAIRS - 1].max = pairs[n - 1].max;
+      n = MAX_PAIRS;
+    }
+
+  m_kind = VR_RANGE;
+  m_num_ranges = n;
+  for (unsigned i = 0; i < n; ++i)
+    {
+      m_pairs[i] = pairs[i];
+      canonicalize_zeros (m_pairs[i]);
+    }
+
+  normalize_kind ();
+  if (flag_checking)
+    verify_range ();
 }
 
 // Setter for franges.
@@ -1238,29 +1324,26 @@ frange::union_ (const vrange &v)
   // Combine NAN info.
   if (known_isnan () || r.known_isnan ())
     return union_nans (r);
-  bool changed = false;
-  if (m_pos_nan != r.m_pos_nan || m_neg_nan != r.m_neg_nan)
-    {
-      m_pos_nan |= r.m_pos_nan;
-      m_neg_nan |= r.m_neg_nan;
-      changed = true;
-    }
 
-  // FIXME: Rewrite for sub-ranges.
-  // Combine endpoints.  This needs to be rewritten for sub-ranges.
-  if (frange_cmp (r.m_pairs[0].min, m_pairs[0].min) < 0)
-    {
-      m_pairs[0].min = r.m_pairs[0].min;
-      changed = true;
-    }
-  if (frange_cmp (m_pairs[0].max, r.m_pairs[0].max) < 0)
-    {
-      m_pairs[0].max = r.m_pairs[0].max;
-      changed = true;
-    }
+  frange save = *this;
+  m_pos_nan |= r.m_pos_nan;
+  m_neg_nan |= r.m_neg_nan;
 
-  changed |= normalize_kind ();
-  return changed;
+  // Throw both operands' sub-ranges into the pot as set_pairs will
+  // canonicalize things and hand us back at most MAX_PAIRS.
+  //
+  // NOTE: Both operands are already sorted and disjoint, so a merge could
+  // combine them in O(n) like irange::union_ rather than have set_pairs
+  // re-sort.  Not worth it while MAX_PAIRS is tiny; revisit if it grows.
+  frange_pair pairs[2 * MAX_PAIRS];
+  unsigned n = 0;
+  for (unsigned i = 0; i < save.m_num_ranges; ++i)
+    pairs[n++] = save.m_pairs[i];
+  for (unsigned i = 0; i < r.m_num_ranges; ++i)
+    pairs[n++] = r.m_pairs[i];
+
+  set_pairs (pairs, n);
+  return *this != save;
 }
 
 // Intersect two ranges when one is known to be a NAN.
@@ -1273,11 +1356,9 @@ frange::intersect_nans (const frange &r)
   m_pos_nan &= r.m_pos_nan;
   m_neg_nan &= r.m_neg_nan;
   if (maybe_isnan ())
-    m_kind = VR_NAN;
+    set_nan (m_type, get_nan_state ());
   else
     set_undefined ();
-  if (flag_checking)
-    verify_range ();
   return true;
 }
 
@@ -1302,43 +1383,44 @@ frange::intersect (const vrange &v)
   // Combine NAN info.
   if (known_isnan () || r.known_isnan ())
     return intersect_nans (r);
-  bool changed = false;
-  if (m_pos_nan != r.m_pos_nan || m_neg_nan != r.m_neg_nan)
-    {
-      m_pos_nan &= r.m_pos_nan;
-      m_neg_nan &= r.m_neg_nan;
-      changed = true;
-    }
 
-  // FIXME: Rewrite for sub-ranges.
-  // Combine endpoints.
-  if (frange_cmp (m_pairs[0].min, r.m_pairs[0].min) < 0)
-    {
-      m_pairs[0].min = r.m_pairs[0].min;
-      changed = true;
-    }
-  if (frange_cmp (r.m_pairs[0].max, m_pairs[0].max) < 0)
-    {
-      m_pairs[0].max = r.m_pairs[0].max;
-      changed = true;
-    }
+  frange save = *this;
+  m_pos_nan &= r.m_pos_nan;
+  m_neg_nan &= r.m_neg_nan;
 
-  // FIXME: Rewrite for sub-ranges.
-  // If the endpoints are swapped, the resulting range is empty.  This also
-  // catches [+0.0, -0.0], which is also empty.
-  if (frange_cmp (m_pairs[0].max, m_pairs[0].min) < 0)
+  // Meet every sub-range against every other.  Two sorted, disjoint sets of at
+  // most MAX_PAIRS each cannot yield more than MAX_PAIRS^2 pieces.
+  //
+  // NOTE: Since both operands are sorted, a merge-style meet like irange would
+  // be O(n) and leave set_pairs nothing to sort.  Not worth it while MAX_PAIRS
+  // is tiny; revisit if it grows.
+  frange_pair pairs[MAX_PAIRS * MAX_PAIRS];
+  unsigned n = 0;
+  for (unsigned i = 0; i < save.m_num_ranges; ++i)
+    for (unsigned j = 0; j < r.m_num_ranges; ++j)
+      {
+	const REAL_VALUE_TYPE &min
+	  = frange_max (save.m_pairs[i].min, r.m_pairs[j].min);
+	const REAL_VALUE_TYPE &max
+	  = frange_min (save.m_pairs[i].max, r.m_pairs[j].max);
+	// A reversed interval means these two do not overlap.  This also
+	// catches [+0.0, -0.0], which is empty rather than nonsensical.
+	if (frange_cmp (min, max) <= 0)
+	  pairs[n++] = { min, max };
+      }
+
+  // Nothing but a possible NAN survives.
+  if (n == 0)
     {
       if (maybe_isnan ())
-	m_kind = VR_NAN;
+	set_nan (m_type, get_nan_state ());
       else
 	set_undefined ();
-      if (flag_checking)
-	verify_range ();
       return true;
     }
 
-  changed |= normalize_kind ();
-  return changed;
+  set_pairs (pairs, n);
+  return *this != save;
 }
 
 frange &
@@ -1510,6 +1592,7 @@ frange::verify_range () const
       return;
     case VR_RANGE:
       gcc_checking_assert (m_type);
+      gcc_checking_assert (m_num_ranges >= 1 && m_num_ranges <= MAX_PAIRS);
       break;
     case VR_NAN:
       gcc_checking_assert (m_type);
@@ -1539,6 +1622,12 @@ frange::verify_range () const
 	gcc_checking_assert (!real_iszero (&m_pairs[i].min, 0)
 			     && !real_iszero (&m_pairs[i].max, 1));
     }
+
+  // Sub-ranges are sorted and separated by at least one representable value.
+  for (unsigned i = 1; i < m_num_ranges; ++i)
+    gcc_checking_assert (!frange_fusible_p (TYPE_MODE (m_type),
+					    m_pairs[i - 1].max,
+					    m_pairs[i].min));
 
   // If all the properties are clear, we better not span the entire
   // domain, because that would make us varying.
