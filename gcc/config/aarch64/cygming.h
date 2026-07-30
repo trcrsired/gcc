@@ -150,7 +150,7 @@ along with GCC; see the file COPYING3.  If not see
       builtin_define ("__thiscall=__attribute__((__thiscall__))");	\
       builtin_define ("__cdecl=__attribute__((__cdecl__))");		\
       if (TARGET_SEH)							\
-	builtin_define ("__SEH__");					\
+      builtin_define ("__SEH__");					\
     }									\
   while (0)
 
@@ -223,6 +223,7 @@ along with GCC; see the file COPYING3.  If not see
 #define SUBTARGET_OVERRIDE_OPTIONS			\
   do {							\
     flag_stack_check = STATIC_BUILTIN_STACK_CHECK;	\
+    flag_unwind_tables = 1;				\
   } while (0)
 
 #define SUBTARGET_ATTRIBUTE_TABLE \
@@ -276,7 +277,7 @@ along with GCC; see the file COPYING3.  If not see
 #define GOT_ALIAS_SET mingw_GOT_alias_set ()
 
 #define PE_COFF_LEGITIMIZE_EXTERN_DECL(RTX) \
-  (GET_CODE (RTX) == SYMBOL_REF && SYMBOL_REF_WEAK (RTX))
+  (GET_CODE (RTX) == SYMBOL_REF)
 
 #define HAVE_64BIT_POINTERS 1
 
