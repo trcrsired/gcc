@@ -752,12 +752,21 @@ globalize_reg (tree decl, int i)
 
   if (global_regs[i])
     {
-      auto_diagnostic_group d;
-      warning_at (loc, 0,
-		  "register of %qD used for multiple global register variables",
-		  decl);
-      inform (DECL_SOURCE_LOCATION (global_regs_decl[i]),
-	      "conflicts with %qD", global_regs_decl[i]);
+      /* Registers that are fixed by the target (i.e. reserved by the ABI,
+	 such as x18 holding the TEB on Windows on ARM64) may legitimately
+	 be bound to several read-only global register variables, all of
+	 which are aliases of the same platform value.  Only warn for
+	 registers that the target did not itself reserve, where two
+	 distinct variables aliasing one register is a genuine hazard.  */
+      if (!TEST_HARD_REG_BIT (fixed_nonglobal_reg_set, i))
+	{
+	  auto_diagnostic_group d;
+	  warning_at (loc, 0,
+		      "register of %qD used for multiple global register variables",
+		      decl);
+	  inform (DECL_SOURCE_LOCATION (global_regs_decl[i]),
+		  "conflicts with %qD", global_regs_decl[i]);
+	}
       return;
     }
 

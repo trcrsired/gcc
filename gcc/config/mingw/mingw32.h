@@ -169,6 +169,13 @@ along with GCC; see the file COPYING3.  If not see
 # define LINK_SPEC_DISABLE_DYNAMICBASE ""
 #endif
 
+/* Targets running on systems with pages larger than 4K (e.g. Windows on
+   ARM64 on Apple Silicon or Android, which use 16K pages) can raise the
+   default PE section alignment by defining this macro.  */
+#ifndef LINK_SPEC_SECTION_ALIGNMENT
+# define LINK_SPEC_SECTION_ALIGNMENT ""
+#endif
+
 #define LINK_SPEC "%{mwindows:--subsystem windows} \
   %{mconsole:--subsystem console} \
   %{shared: %{mdll: %eshared and mdll are not compatible}} \
@@ -177,23 +184,26 @@ along with GCC; see the file COPYING3.  If not see
   %{shared|mdll: " SUB_LINK_ENTRY " --enable-auto-image-base} \
   " LINK_SPEC_LARGE_ADDR_AWARE "\
   " LINK_SPEC_DISABLE_DYNAMICBASE "\
+  " LINK_SPEC_SECTION_ALIGNMENT "\
   %(shared_libgcc_undefs)"
 
 /* Include in the mingw32 libraries with libgcc */
-#ifdef ENABLE_SHARED_LIBGCC
-#define SHARED_LIBGCC_SPEC " \
- %{static|static-libgcc:-lgcc -lgcc_eh} \
- %{!static: \
-   %{!static-libgcc: \
-     %{!shared: \
-       %{!shared-libgcc:-lgcc -lgcc_eh} \
-       %{shared-libgcc:-lgcc_s -lgcc} \
-      } \
-     %{shared:-lgcc_s -lgcc} \
-    } \
-  } "
-#else
-#define SHARED_LIBGCC_SPEC " -lgcc "
+#ifndef SHARED_LIBGCC_SPEC
+# ifdef ENABLE_SHARED_LIBGCC
+#  define SHARED_LIBGCC_SPEC " \
+  %{static|static-libgcc:-lgcc -lgcc_eh} \
+  %{!static: \
+    %{!static-libgcc: \
+      %{!shared: \
+        %{!shared-libgcc:-lgcc -lgcc_eh} \
+        %{shared-libgcc:-lgcc_s -lgcc} \
+       } \
+      %{shared:-lgcc_s -lgcc} \
+     } \
+   } "
+# else
+#  define SHARED_LIBGCC_SPEC " -lgcc "
+# endif
 #endif
 #ifdef TARGET_USING_MCFGTHREAD
 #define MCFGTHREAD_SPEC  " -lmcfgthread -lkernel32 -lntdll "
