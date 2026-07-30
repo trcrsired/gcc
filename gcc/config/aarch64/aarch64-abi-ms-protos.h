@@ -31,4 +31,8 @@ extern tree aarch64_ms_variadic_abi_canonical_va_list_type (tree type);
 extern int aarch64_arg_partial_bytes (cumulative_args_t,
 				      const function_arg_info &);
 
+#ifdef TARGET_SEH
+extern void aarch64_pe_seh_unwind_emit (FILE *, rtx_insn *);
+#endif
+
 #endif

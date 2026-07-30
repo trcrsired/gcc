@@ -5616,6 +5616,40 @@ aarch64_add_offset (scalar_int_mode mode, rtx dest, rtx src,
 	      || !reg_overlap_mentioned_p (temp1, dest));
   gcc_assert (temp2 == NULL_RTX || !reg_overlap_mentioned_p (dest, temp2));
 
+  /* On Windows (PE/COFF) the OS grows the stack via guard pages, so a
+     stack allocation that moves SP by more than one page must touch each
+     intervening page to hit the guard page; otherwise a large frame that
+     jumps over it faults with an access violation.  This is required
+     regardless of -fstack-clash-protection, matching the behaviour of
+     the LLVM backend for Windows on AArch64.  Probe in 4096-byte (one
+     page) chunks.  */
+  if (TARGET_PECOFF
+      && dest == stack_pointer_rtx
+      && src == stack_pointer_rtx
+      && offset.is_constant ()
+      && offset.to_constant () < 0
+      && -offset.to_constant () >= 4096)
+    {
+      HOST_WIDE_INT size = -offset.to_constant ();
+      const HOST_WIDE_INT probe_interval = 4096;
+      /* Emit each probe chunk directly (do not recurse back into the
+	 probing logic).  Pass TEMP1 so the single-chunk adjustments can
+	 use it, with EMIT_MOVE_IMM false to keep the chunks as direct
+	 immediate subtractions where possible.  */
+      rtx temp = temp1 ? temp1 : temp2;
+      while (size >= probe_interval)
+	{
+	  aarch64_add_offset_1 (mode, dest, src, -probe_interval, temp,
+				frame_related_p, true);
+	  emit_stack_probe (dest);
+	  size -= probe_interval;
+	}
+      if (size > 0)
+	aarch64_add_offset_1 (mode, dest, src, -size, temp,
+			      frame_related_p, true);
+      return;
+    }
+
   /* Try using ADDVL or ADDPL to add the whole value.  */
   if (src != const0_rtx && aarch64_sve_addvl_addpl_immediate_p (offset))
     {
@@ -5855,6 +5889,8 @@ aarch64_sub_sp (rtx temp1, rtx temp2, poly_int64 delta,
 		aarch64_isa_mode force_isa_mode,
 		bool frame_related_p, bool emit_move_imm = true)
 {
+  /* Stack probing for Windows on ARM64 is handled inside
+     aarch64_add_offset, which this function calls.  */
   aarch64_add_offset (Pmode, stack_pointer_rtx, stack_pointer_rtx, -delta,
 		      temp1, temp2, force_isa_mode, frame_related_p,
 		      emit_move_imm);
@@ -10401,14 +10437,21 @@ aarch64_allocate_and_probe_stack_space (rtx temp1, rtx temp2,
     }
 
   /* If SIZE is not large enough to require probing, just adjust the stack and
-     exit.  */
-  if (known_lt (poly_size, min_probe_threshold)
-      || !flag_stack_clash_protection)
-    {
-      aarch64_sub_sp (temp1, temp2, poly_size, force_isa_mode,
-		      frame_related_p);
-      return;
-    }
+      exit.  */
+   if (known_lt (poly_size, min_probe_threshold)
+       || !flag_stack_clash_protection)
+     {
+       /* On Windows (PE/COFF) the OS grows the stack via guard pages, so a
+	 stack allocation that moves SP by more than one page must touch each
+	 intervening page to hit the guard page; otherwise a large frame that
+	 jumps over it faults with an access violation.  This is required
+	 regardless of -fstack-clash-protection, matching the behaviour of
+	 the LLVM backend for Windows on AArch64.  Probing is handled inside
+	 aarch64_sub_sp -> aarch64_add_offset.  */
+       aarch64_sub_sp (temp1, temp2, poly_size, force_isa_mode,
+		       frame_related_p);
+       return;
+     }
 
   HOST_WIDE_INT size;
   /* Handle the SVE non-constant case first.  */
@@ -26894,6 +26937,11 @@ aarch64_declare_function_name (FILE *stream, const char* name,
   /* Don't forget the type directive for ELF.  */
   ASM_OUTPUT_TYPE_DIRECTIVE (stream, name, "function");
   ASM_OUTPUT_FUNCTION_LABEL (stream, name, fndecl);
+
+#ifdef SUBTARGET_ASM_UNWIND_INIT
+  if (TARGET_AARCH64_MS_ABI)
+    SUBTARGET_ASM_UNWIND_INIT (stream);
+#endif
 
   cfun->machine->label_is_assembled = true;
 }
