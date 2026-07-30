@@ -459,7 +459,14 @@ aarch64-*-mingw*)
 	    tmake_thr_file="mingw/t-mingw-mcfgthread"
 	    ;;
 	esac
+	# Shared libgcc DLL install dir depends on cross/native build.
+	if test x${build} = x${host} ; then
+		tmake_dlldir_file="i386/t-dlldir"
+	else
+		tmake_dlldir_file="i386/t-dlldir-x"
+	fi
 	tmake_file="${tmake_file} mingw/t-seh-eh ${tmake_thr_file}"
+	tmake_file="${tmake_file} ${tmake_dlldir_file} i386/t-slibgcc-cygming i386/t-slibgcc-mingw i386/t-cygming i386/t-mingw32"
 	tmake_file="${tmake_file} t-dfprules"
 	tmake_file="${tmake_file} ${cpu_type}/t-aarch64"
 	tmake_file="${tmake_file} ${cpu_type}/t-mingw"
