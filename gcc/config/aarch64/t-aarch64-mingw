@@ -18,8 +18,10 @@
 # along with GCC; see the file COPYING3.  If not see
 # <http://www.gnu.org/licenses/>.
 
-aarch64-abi-ms.o: \
-  $(srcdir)/config/aarch64/aarch64-abi-ms.cc \
-  $(TREE_H)
+aarch64-abi-ms.o: $(srcdir)/config/aarch64/aarch64-abi-ms.cc \
+  $(CONFIG_H) $(SYSTEM_H) coretypes.h $(TM_H) $(RTL_H) $(TREE_H) \
+  $(REGS_H) memmodel.h output.h $(FUNCTION_ABI_H) \
+  $(srcdir)/config/aarch64/aarch64-abi-ms-protos.h \
+  $(srcdir)/config/mingw/winnt.h
 	$(COMPILER) -c $(ALL_COMPILERFLAGS) $(ALL_CPPFLAGS) $(INCLUDES) \
 		$(srcdir)/config/aarch64/aarch64-abi-ms.cc
