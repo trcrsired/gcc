@@ -180,20 +180,22 @@ along with GCC; see the file COPYING3.  If not see
   %(shared_libgcc_undefs)"
 
 /* Include in the mingw32 libraries with libgcc */
-#ifdef ENABLE_SHARED_LIBGCC
-#define SHARED_LIBGCC_SPEC " \
- %{static|static-libgcc:-lgcc -lgcc_eh} \
- %{!static: \
-   %{!static-libgcc: \
-     %{!shared: \
-       %{!shared-libgcc:-lgcc -lgcc_eh} \
-       %{shared-libgcc:-lgcc_s -lgcc} \
-      } \
-     %{shared:-lgcc_s -lgcc} \
-    } \
-  } "
-#else
-#define SHARED_LIBGCC_SPEC " -lgcc "
+#ifndef SHARED_LIBGCC_SPEC
+# ifdef ENABLE_SHARED_LIBGCC
+#  define SHARED_LIBGCC_SPEC " \
+  %{static|static-libgcc:-lgcc -lgcc_eh} \
+  %{!static: \
+    %{!static-libgcc: \
+      %{!shared: \
+        %{!shared-libgcc:-lgcc -lgcc_eh} \
+        %{shared-libgcc:-lgcc_s -lgcc} \
+       } \
+      %{shared:-lgcc_s -lgcc} \
+     } \
+   } "
+# else
+#  define SHARED_LIBGCC_SPEC " -lgcc "
+# endif
 #endif
 #ifdef TARGET_USING_MCFGTHREAD
 #define MCFGTHREAD_SPEC  " -lmcfgthread -lkernel32 -lntdll "

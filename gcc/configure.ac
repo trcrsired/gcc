@@ -4552,21 +4552,32 @@ case "$target" in
         AC_MSG_ERROR([Assembler does not support -mabi=ilp32.\
                      Upgrade the Assembler.])
       fi
-      if test x"$with_multilib_list" = xdefault; then
-        TM_MULTILIB_CONFIG=lp64
-      else
-        aarch64_multilibs=`echo $with_multilib_list | sed -e 's/,/ /g'`
-        for aarch64_multilib in ${aarch64_multilibs}; do
-          case ${aarch64_multilib} in
-            ilp32)
-              AC_MSG_ERROR([Assembler does not support -mabi=ilp32.\
-                            Upgrade the Assembler.])
-              ;;
-            *)
-              ;;
-          esac
-        done
-      fi
+      case "$target" in
+        aarch64*-*-mingw* | aarch64*-*-cygwin* | aarch64*-*-pe*)
+          # Windows on AArch64 has a single LLP64 ABI; the COFF assembler
+          # only understands -mabi=llp64, so the -mabi=lp64 probe above
+          # always fails here.  Keep multilibs enabled (so the driver does
+          # not fall back to single-ABI assumptions) but do not invent a
+          # redundant lp64 multilib variant.
+          ;;
+        *)
+          if test x"$with_multilib_list" = xdefault; then
+            TM_MULTILIB_CONFIG=lp64
+          else
+            aarch64_multilibs=`echo $with_multilib_list | sed -e 's/,/ /g'`
+            for aarch64_multilib in ${aarch64_multilibs}; do
+              case ${aarch64_multilib} in
+                ilp32)
+                  AC_MSG_ERROR([Assembler does not support -mabi=ilp32.\
+                                Upgrade the Assembler.])
+                  ;;
+                *)
+                  ;;
+              esac
+            done
+          fi
+          ;;
+      esac
     fi
     # Check if we have binutils support for relocations types needed by -fpic
     gcc_GAS_CHECK_FEATURE([-fpic relocs], gcc_cv_as_aarch64_picreloc,,
