@@ -30,12 +30,6 @@
 
 #if defined (__SEH__) && !defined (__USING_SJLJ_EXCEPTIONS__)
 
-/* At the moment everything is written for x64, but in theory this could
-   also be used for i386, arm, mips and other extant embedded Windows.  */
-#ifndef __x86_64__
-#error "Unsupported architecture."
-#endif
-
 /* Define GCC's exception codes.  See
      http://msdn.microsoft.com/en-us/library/het71c37(v=VS.80).aspx
    In particular, MS defines bits:
@@ -52,7 +46,7 @@
      [0] = _Unwind_Exception pointer
      [1] = target frame
      [2] = target ip
-     [3] = target rdx
+     [3] = target rdx (x64) / x1 (aarch64)
 */
 
 #define STATUS_USER_DEFINED		(1U << 29)
@@ -65,7 +59,8 @@
 #define STATUS_GCC_UNWIND		GCC_EXCEPTION (1)
 #define STATUS_GCC_FORCED		GCC_EXCEPTION (2)
 
-
+#if defined(__x86_64__)
+
 struct _Unwind_Context
 {
   _Unwind_Word cfa;
@@ -73,8 +68,6 @@ struct _Unwind_Context
   _Unwind_Word reg[2];
   PDISPATCHER_CONTEXT disp;
 };
-
-/* Get the value of register INDEX as saved in CONTEXT.  */
 
 _Unwind_Word
 _Unwind_GetGR (struct _Unwind_Context *c, int index)
@@ -84,8 +77,6 @@ _Unwind_GetGR (struct _Unwind_Context *c, int index)
   return c->reg[index];
 }
 
-/* Overwrite the saved value for register INDEX in CONTEXT with VAL.  */
-
 void
 _Unwind_SetGR (struct _Unwind_Context *c, int index, _Unwind_Word val)
 {
@@ -94,15 +85,11 @@ _Unwind_SetGR (struct _Unwind_Context *c, int index, _Unwind_Word val)
   c->reg[index] = val;
 }
 
-/* Get the value of the CFA as saved in CONTEXT.  */
-
 _Unwind_Word
 _Unwind_GetCFA (struct _Unwind_Context *c)
 {
   return c->cfa;
 }
-
-/* Retrieve the return address for CONTEXT.  */
 
 _Unwind_Ptr
 _Unwind_GetIP (struct _Unwind_Context *c)
@@ -110,20 +97,12 @@ _Unwind_GetIP (struct _Unwind_Context *c)
   return c->ra;
 }
 
-/* Retrieve the return address and flag whether that IP is before
-   or after first not yet fully executed instruction.  */
-
 _Unwind_Ptr
 _Unwind_GetIPInfo (struct _Unwind_Context *c, int *ip_before_insn)
 {
-  /* ??? Is there a concept of a signal context properly?  There's
-     obviously an UNWP_PUSH_MACHFRAME opcode, but the runtime might
-     have arranged for that not to matter, really.  */
   *ip_before_insn = 0;
   return c->ra;
 }
-
-/* Overwrite the return address for CONTEXT with VAL.  */
 
 void
 _Unwind_SetIP (struct _Unwind_Context *c, _Unwind_Ptr val)
@@ -166,7 +145,100 @@ _Unwind_GetTextRelBase (struct _Unwind_Context *c)
   return c->disp->ImageBase;
 }
 
-
+#elif defined(__aarch64__)
+
+/* AArch64 (ARM64) Windows SEH context structure.
+   References LLVM libunwind's Unwind-seh.cpp for register mapping.  */
+
+struct _Unwind_Context
+{
+  _Unwind_Word cfa;
+  _Unwind_Word ra;
+  _Unwind_Word reg[2];
+  PDISPATCHER_CONTEXT disp;
+};
+
+_Unwind_Word
+_Unwind_GetGR (struct _Unwind_Context *c, int index)
+{
+  if (index < 0 || index >= 2)
+    abort ();
+  return c->reg[index];
+}
+
+void
+_Unwind_SetGR (struct _Unwind_Context *c, int index, _Unwind_Word val)
+{
+  if (index < 0 || index >= 2)
+    abort ();
+  c->reg[index] = val;
+}
+
+_Unwind_Word
+_Unwind_GetCFA (struct _Unwind_Context *c)
+{
+  return c->cfa;
+}
+
+_Unwind_Ptr
+_Unwind_GetIP (struct _Unwind_Context *c)
+{
+  return c->ra;
+}
+
+_Unwind_Ptr
+_Unwind_GetIPInfo (struct _Unwind_Context *c, int *ip_before_insn)
+{
+  *ip_before_insn = 0;
+  return c->ra;
+}
+
+void
+_Unwind_SetIP (struct _Unwind_Context *c, _Unwind_Ptr val)
+{
+  c->ra = val;
+}
+
+void *
+_Unwind_GetLanguageSpecificData (struct _Unwind_Context *c)
+{
+  return c->disp->HandlerData;
+}
+
+_Unwind_Ptr
+_Unwind_GetRegionStart (struct _Unwind_Context *c)
+{
+  return (c->disp->FunctionEntry->BeginAddress
+	  + (_Unwind_Ptr)c->disp->ImageBase);
+}
+
+void *
+_Unwind_FindEnclosingFunction (void *pc)
+{
+  PRUNTIME_FUNCTION entry;
+  ULONG64 ImageBase;
+
+  entry = RtlLookupFunctionEntry ((ULONG64)pc, &ImageBase, NULL);
+
+  return (entry ? (void *)(entry->BeginAddress + ImageBase) : NULL);
+}
+
+_Unwind_Ptr
+_Unwind_GetDataRelBase (struct _Unwind_Context *c ATTRIBUTE_UNUSED)
+{
+  return 0;
+}
+
+_Unwind_Ptr
+_Unwind_GetTextRelBase (struct _Unwind_Context *c)
+{
+  return c->disp->ImageBase;
+}
+
+#else
+#error "Unsupported architecture for SEH."
+#endif
+
 /* The two-phase unwind process that GCC uses is ordered differently
    from the two-phase unwind process that SEH uses.  The mechansism
    that GCC uses is to have the filter return _URC_HANDER_FOUND; the
@@ -205,33 +277,35 @@ _GCC_specific_handler (PEXCEPTION_RECORD ms_exc, void *this_frame,
 
   if (ms_flags & EXCEPTION_TARGET_UNWIND)
     {
-      /* This frame is known to be the target frame.  We've already
-         "installed" the target_ip and RAX value via the arguments
-         to RtlUnwindEx.  All that's left is to set the RDX value
-         and "continue" to have the context installed.  */
+#if defined(__x86_64__)
       ms_disp->ContextRecord->Rdx = ms_exc->ExceptionInformation[3];
+#elif defined(__aarch64__)
+      /* Following LLVM libunwind Unwind-seh.cpp for aarch64 register mapping.  */
+      ms_disp->ContextRecord->X1 = ms_exc->ExceptionInformation[3];
+#endif
       return ExceptionContinueSearch;
     }
 
   if (ms_code == STATUS_GCC_UNWIND)
     {
-      /* This is a colliding exception that we threw so that we could
-         cancel the already in-flight exception and stop in a frame
-	 that wanted to perform some unwind action.  The only relevant
-	 test is that we're the target frame.  */
       if (ms_exc->ExceptionInformation[1] == (_Unwind_Ptr) this_frame)
 	{
+	  CONTEXT new_ctx;
 	  RtlUnwindEx (this_frame, (PVOID) ms_exc->ExceptionInformation[2],
-		       ms_exc, gcc_exc, ms_orig_context,
+		       ms_exc, gcc_exc, &new_ctx,
 		       ms_disp->HistoryTable);
 	  abort ();
 	}
       return ExceptionContinueSearch;
     }
 
+#if defined(__x86_64__)
   gcc_context.cfa = ms_disp->ContextRecord->Rsp;
+#elif defined(__aarch64__)
+  gcc_context.cfa = ms_disp->ContextRecord->Sp;
+#endif
   gcc_context.ra = ms_disp->ControlPc;
-  gcc_context.reg[0] = 0xdeadbeef;	/* These are write-only.  */
+  gcc_context.reg[0] = 0xdeadbeef;
   gcc_context.reg[1] = 0xdeadbeef;
   gcc_context.disp = ms_disp;
 
@@ -248,17 +322,11 @@ _GCC_specific_handler (PEXCEPTION_RECORD ms_exc, void *this_frame,
        goto phase2;
     }
 
-  /* ??? TODO: handling non-gcc user-defined exceptions as foreign.  */
   if (ms_code != STATUS_GCC_THROW)
     return ExceptionContinueSearch;
 
   if (ms_flags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND))
     {
-      /* This is Phase 2.  */
-      /* We know this isn't the target frame because we've already tested
-	 EXCEPTION_TARGET_UNWIND.  The remaining possibility is that the
-	 gcc personality has unwind code to run.  */
-
       gcc_action = _UA_CLEANUP_PHASE;
     phase2:
       gcc_reason = gcc_per (1, gcc_action, gcc_exc->exception_class,
@@ -269,23 +337,16 @@ _GCC_specific_handler (PEXCEPTION_RECORD ms_exc, void *this_frame,
 
       if (gcc_reason == _URC_INSTALL_CONTEXT)
 	{
-	  /* Scratch space for the bits for the unwind catch.  */
 	  ms_exc->ExceptionInformation[1] = (_Unwind_Ptr) this_frame;
 	  ms_exc->ExceptionInformation[2] = gcc_context.ra;
 	  ms_exc->ExceptionInformation[3] = gcc_context.reg[1];
 
-	  /* Cancel the current exception by raising another.  */
 	  RaiseException (STATUS_GCC_UNWIND, EXCEPTION_NONCONTINUABLE,
 			  4, ms_exc->ExceptionInformation);
-
-	  /* Is RaiseException declared noreturn?  */
 	}
-
-      /* In _Unwind_RaiseException_Phase2 we return _URC_FATAL_PHASE2_ERROR. */
     }
   else
     {
-      /* This is Phase 1.  */
       gcc_reason = gcc_per (1, _UA_SEARCH_PHASE, gcc_exc->exception_class,
 			    gcc_exc, &gcc_context);
 
@@ -294,9 +355,6 @@ _GCC_specific_handler (PEXCEPTION_RECORD ms_exc, void *this_frame,
 
       if (gcc_reason == _URC_HANDLER_FOUND)
 	{
-	  /* We really need some of the information that GCC's personality
-	     routines compute during phase 2 right now, like the target IP.
-	     Go ahead and ask for it now, and cache it.  */
 	  gcc_reason = gcc_per (1, _UA_CLEANUP_PHASE | _UA_HANDLER_FRAME,
 				gcc_exc->exception_class, gcc_exc,
 				&gcc_context);
@@ -312,13 +370,10 @@ _GCC_specific_handler (PEXCEPTION_RECORD ms_exc, void *this_frame,
 	  ms_exc->ExceptionInformation[2] = gcc_context.ra;
 	  ms_exc->ExceptionInformation[3] = gcc_context.reg[1];
 
-	  /* Begin phase 2.  Perform the unwinding.  */
 	  RtlUnwindEx (this_frame, (PVOID)gcc_context.ra, ms_exc,
-		       (PVOID)gcc_context.reg[0], ms_orig_context,
+		       gcc_exc, ms_orig_context,
 		       ms_disp->HistoryTable);
 	}
-
-      /* In _Unwind_RaiseException we return _URC_FATAL_PHASE1_ERROR.  */
     }
   abort ();
 }
@@ -452,6 +507,7 @@ _Unwind_Backtrace(_Unwind_Trace_Fn trace,
 
   while (1)
     {
+#if defined(__x86_64__)
       gcc_context.disp->ControlPc = ms_context.Rip;
       gcc_context.disp->FunctionEntry
 	= RtlLookupFunctionEntry (ms_context.Rip, &gcc_context.disp->ImageBase,
@@ -466,18 +522,39 @@ _Unwind_Backtrace(_Unwind_Trace_Fn trace,
 			    &gcc_context.disp->HandlerData,
 			    &gcc_context.disp->EstablisherFrame, NULL);
 
-      /* Set values that the callback can inspect via _Unwind_GetIP
-       * and _Unwind_GetCFA. */
       gcc_context.ra = ms_context.Rip;
       gcc_context.cfa = ms_context.Rsp;
 
-      /* Call trace function.  */
       if (trace (&gcc_context, trace_argument) != _URC_NO_REASON)
 	return _URC_FATAL_PHASE1_ERROR;
 
-      /* ??? Check for invalid stack pointer.  */
       if (ms_context.Rip == 0)
 	return _URC_END_OF_STACK;
+#elif defined(__aarch64__)
+      gcc_context.disp->ControlPc = ms_context.Pc;
+      gcc_context.disp->FunctionEntry
+	= RtlLookupFunctionEntry (ms_context.Pc, &gcc_context.disp->ImageBase,
+				  &ms_history);
+
+      if (!gcc_context.disp->FunctionEntry)
+	return _URC_END_OF_STACK;
+
+      gcc_context.disp->LanguageHandler
+	= RtlVirtualUnwind (0, gcc_context.disp->ImageBase, ms_context.Pc,
+			    gcc_context.disp->FunctionEntry, &ms_context,
+			    &gcc_context.disp->HandlerData,
+			    &gcc_context.disp->EstablisherFrame, NULL);
+
+      gcc_context.ra = ms_context.Pc;
+      gcc_context.cfa = ms_context.Sp;
+
+      if (trace (&gcc_context, trace_argument) != _URC_NO_REASON)
+	return _URC_FATAL_PHASE1_ERROR;
+
+      if (ms_context.Pc == 0)
+	return _URC_END_OF_STACK;
+#endif
     }
 }
 #endif /* __SEH__  && !defined (__USING_SJLJ_EXCEPTIONS__)  */
+

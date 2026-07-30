@@ -45,17 +45,52 @@ along with GCC; see the file COPYING3.  If not see
 #define SYMBOL_REF_STUBVAR_P(X) \
 	((SYMBOL_REF_FLAGS (X) & SYMBOL_FLAG_STUBVAR) != 0)
 
-/* Disable SEH and declare the required SEH-related macros that are
-still needed for compilation.  */
+/* Enable SEH for Windows on ARM64.  */
 #undef TARGET_SEH
-#define TARGET_SEH 0
+#define TARGET_SEH  flag_unwind_tables
 
 #define SSE_REGNO_P(N) (gcc_unreachable (), 0)
 #define GENERAL_REGNO_P(N) (gcc_unreachable (), 0)
-#define SEH_MAX_FRAME_SIZE (gcc_unreachable (), 0)
+
+/* ARM64 SEH can represent up to 1MB - 4 bytes per unwind fragment.  */
+#define SEH_MAX_FRAME_SIZE ((1U << 20) - 4)
+
+/* Support hooks for SEH.  */
+#undef  TARGET_ASM_UNWIND_EMIT
+#define TARGET_ASM_UNWIND_EMIT  aarch64_pe_seh_unwind_emit
+#undef  TARGET_ASM_UNWIND_EMIT_BEFORE_INSN
+#define TARGET_ASM_UNWIND_EMIT_BEFORE_INSN  false
+#undef  TARGET_ASM_FUNCTION_END_PROLOGUE
+#define TARGET_ASM_FUNCTION_END_PROLOGUE  mingw_pe_seh_end_prologue
+#undef  TARGET_ASM_EMIT_EXCEPT_PERSONALITY
+#define TARGET_ASM_EMIT_EXCEPT_PERSONALITY mingw_pe_seh_emit_except_personality
+#undef  TARGET_ASM_INIT_SECTIONS
+#define TARGET_ASM_INIT_SECTIONS  mingw_pe_seh_init_sections
+#define SUBTARGET_ASM_UNWIND_INIT  mingw_pe_seh_init
+
+/* Always limit stack alignment to STACK_BOUNDARY: AArch64 has no DRAP
+   support (cannot realign the stack).  When SEH is active it is also
+   incompatible with DRAP, but the limitation applies regardless.  */
+#undef MAX_STACK_ALIGNMENT
+#define MAX_STACK_ALIGNMENT STACK_BOUNDARY
 
 #undef TARGET_PECOFF
 #define TARGET_PECOFF 1
+
+/* Force shared libgcc for aarch64-w64-mingw32 so libstdc++ links against
+   libgcc_s_seh-1.dll at runtime (needed for SEH unwinding to work).  */
+#undef SHARED_LIBGCC_SPEC
+#define SHARED_LIBGCC_SPEC \
+  "%{static|static-libgcc:-lgcc -lgcc_eh} \
+   %{!static: \
+     %{!static-libgcc: \
+       %{!shared: \
+         %{!shared-libgcc:-lgcc_s -lgcc} \
+         %{shared-libgcc:-lgcc_s -lgcc} \
+        } \
+       %{shared:-lgcc_s -lgcc} \
+      } \
+    } "
 
 #include <stdbool.h>
 #ifdef __MINGW32__
@@ -69,6 +104,12 @@ still needed for compilation.  */
 
 #define TARGET_ASM_UNIQUE_SECTION mingw_pe_unique_section
 #define TARGET_ENCODE_SECTION_INFO  mingw_pe_encode_section_info
+
+/* Local and global relocs can be placed always into readonly memory
+   for PE-COFF targets.  */
+#undef TARGET_ASM_RELOC_RW_MASK
+#define TARGET_ASM_RELOC_RW_MASK i386_pe_reloc_rw_mask
+extern int i386_pe_reloc_rw_mask (void);
 
 #define TARGET_VALID_DLLIMPORT_ATTRIBUTE_P mingw_pe_valid_dllimport_attribute_p
 
@@ -129,6 +170,8 @@ still needed for compilation.  */
       builtin_define ("__fastcall=__attribute__((__fastcall__))");	\
       builtin_define ("__thiscall=__attribute__((__thiscall__))");	\
       builtin_define ("__cdecl=__attribute__((__cdecl__))");		\
+      if (TARGET_SEH)							\
+      builtin_define ("__SEH__");					\
     }									\
   while (0)
 
@@ -200,7 +243,7 @@ still needed for compilation.  */
 #undef  SUBTARGET_OVERRIDE_OPTIONS
 #define SUBTARGET_OVERRIDE_OPTIONS			\
   do {							\
-    flag_stack_check = STATIC_BUILTIN_STACK_CHECK;	\
+    flag_unwind_tables = 1;				\
   } while (0)
 
 #define SUBTARGET_ATTRIBUTE_TABLE \
@@ -231,6 +274,16 @@ still needed for compilation.  */
     aarch64_declare_function_name (STREAM, NAME, DECL);			\
   } while (0)
 
+#undef ASM_DECLARE_COLD_FUNCTION_NAME
+#define ASM_DECLARE_COLD_FUNCTION_NAME(STREAM, NAME, DECL) \
+  do {							       \
+    mingw_pe_declare_type (STREAM, NAME, TREE_PUBLIC (DECL), 1); \
+    mingw_pe_seh_cold_init (STREAM, NAME);			    \
+  } while (0)
+
+#undef ASM_DECLARE_COLD_FUNCTION_SIZE
+#define ASM_DECLARE_COLD_FUNCTION_SIZE(STREAM, NAME, DECL)	\
+  mingw_pe_end_cold_function (STREAM, NAME, DECL)
 
 /* Define this to be nonzero if static stack checking is supported.  */
 #define STACK_CHECK_STATIC_BUILTIN 1
@@ -243,8 +296,7 @@ still needed for compilation.  */
 #undef GOT_ALIAS_SET
 #define GOT_ALIAS_SET mingw_GOT_alias_set ()
 
-#define PE_COFF_LEGITIMIZE_EXTERN_DECL(RTX) \
-  (GET_CODE (RTX) == SYMBOL_REF && SYMBOL_REF_WEAK (RTX))
+#define PE_COFF_LEGITIMIZE_EXTERN_DECL(RTX) 1
 
 #define HAVE_64BIT_POINTERS 1
 

@@ -1325,12 +1325,13 @@ aarch64-*-mingw*)
 	    tm_file="${tm_file} mingw/mingw-pthread.h"
 	    ;;
 	esac
-	tm_file="${tm_file} aarch64/cygming.h"
-	tm_file="${tm_file} mingw/mingw32.h"
-	tm_file="${tm_file} mingw/mingw-stdint.h"
-	tm_file="${tm_file} mingw/winnt.h"
-	tm_file="${tm_file} mingw/winnt-dll.h"
-	tmake_file="${tmake_file} aarch64/t-aarch64"
+ 	tm_file="${tm_file} aarch64/cygming.h"
+ 	tm_file="${tm_file} mingw/mingw32.h"
+ 	tm_file="${tm_file} mingw/mingw-stdint.h"
+ 	tm_file="${tm_file} mingw/winnt.h"
+ 	tm_file="${tm_file} mingw/winnt-dll.h"
+ 	tm_file="${tm_file} aarch64/aarch64-mingw32.h"
+ 	tmake_file="${tmake_file} aarch64/t-aarch64"
 	tmake_file="${tmake_file} aarch64/t-aarch64-mingw"
         native_system_header_dir=/mingw/include
 	target_gtfiles="$target_gtfiles \$(srcdir)/config/mingw/winnt.cc"
@@ -1989,6 +1990,7 @@ i[34567]86-*-elf*)
 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h"
 	;;
 x86_64-*-elf*)
+    tmake_file="${tmake_file} i386/t-x86_64-elf"
 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h newlib-stdint.h i386/i386elf.h i386/x86-64.h"
 	;;
 x86_64-*-rtems*)
