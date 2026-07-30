@@ -159,7 +159,10 @@ legitimize_pe_coff_extern_decl (rtx symbol, bool want_reg)
   gcc_assert (SYMBOL_REF_DECL (symbol));
   imp_decl = get_dllimport_decl (SYMBOL_REF_DECL (symbol), false);
 
-  x = DECL_RTL (imp_decl);
+  /* DECL_RTL is a shared rtx that is cached per refptr symbol.  Copy it so
+     that each use gets its own MEM, otherwise the same rtx object ends up in
+     multiple insns which breaks RTL sharing verification.  */
+  x = copy_rtx (DECL_RTL (imp_decl));
   if (want_reg)
     x = force_reg (Pmode, x);
   return x;
@@ -177,7 +180,10 @@ legitimize_dllimport_symbol (rtx symbol, bool want_reg)
   gcc_assert (SYMBOL_REF_DECL (symbol));
   imp_decl = get_dllimport_decl (SYMBOL_REF_DECL (symbol), true);
 
-  x = DECL_RTL (imp_decl);
+  /* DECL_RTL is a shared rtx that is cached per __imp_ symbol.  Copy it so
+     that each use gets its own MEM, otherwise the same rtx object ends up in
+     multiple insns which breaks RTL sharing verification.  */
+  x = copy_rtx (DECL_RTL (imp_decl));
   if (want_reg)
     x = force_reg (Pmode, x);
   return x;

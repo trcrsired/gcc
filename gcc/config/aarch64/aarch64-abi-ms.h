@@ -37,11 +37,10 @@ along with GCC; see the file COPYING3.  If not see
    aarch64-w64-mingw32 target.  */
 #define ASM_OUTPUT_TYPE_DIRECTIVE(STREAM, NAME, TYPE)
 
-/* Structured Exception Handling (SEH) is not yet supported by binutils
-   so adding seh_endproc as an assembly comment to mark the end of a
-   function.  */
-#define ASM_DECLARE_FUNCTION_SIZE(FILE, FNAME, DECL) \
-  fprintf (FILE, "\t" ASM_COMMENT_START "  seh_endproc\n")
+/* Use the shared mingw SEH end function which emits .seh_endproc
+   for SEH-enabled functions.  */
+#undef ASM_DECLARE_FUNCTION_SIZE
+#define ASM_DECLARE_FUNCTION_SIZE  mingw_pe_end_function
 
 /* Long double is 64 bit for Coff targets.
    Reference:

@@ -947,87 +947,101 @@ mingw_pe_seh_end_prologue (FILE *f)
   fputs ("\t.seh_endprologue\n", f);
 }
 
-/* Emit assembler directives to reconstruct the SEH state.  */
+/* Emit assembler directives to reconstruct the SEH state for
+   a cold section.  On x64 this reconstructs the full prologue;
+   on aarch64 the per-insn emitter handles prologue directives.  */
 
 void
 mingw_pe_seh_cold_init (FILE *f, const char *name)
 {
   struct seh_frame_state *seh;
-  HOST_WIDE_INT alloc_offset, offset;
 
   if (!TARGET_SEH)
     return;
   if (cfun->is_thunk)
     return;
   seh = cfun->machine->seh;
+  gcc_assert (seh != NULL);
+
+  seh->in_cold_section = true;
 
   fputs ("\t.seh_proc\t", f);
   assemble_name (f, name);
   fputc ('\n', f);
 
-  /* In the normal case, the frame pointer is near the bottom of the frame
-     so we can do the full stack allocation and set it afterwards.  There
-     is an exception if the function overflows the SEH maximum frame size
-     or accesses prior frames so, in this case, we need to pre-allocate a
-     small chunk of stack before setting it.  */
-  offset = seh->sp_offset - INCOMING_FRAME_SP_OFFSET;
-  if (offset < SEH_MAX_FRAME_SIZE && !crtl->accesses_prior_frames)
-    alloc_offset = seh->sp_offset;
-  else
-    alloc_offset = MIN (seh->cfa_offset + 240, seh->sp_offset);
+#if defined(__x86_64__)
+  {
+    HOST_WIDE_INT alloc_offset, offset;
 
-  offset = alloc_offset - INCOMING_FRAME_SP_OFFSET;
-  if (offset > 0)
-    fprintf (f, "\t.seh_stackalloc\t" HOST_WIDE_INT_PRINT_DEC "\n", offset);
+    /* In the normal case, the frame pointer is near the bottom of the frame
+       so we can do the full stack allocation and set it afterwards.  There
+       is an exception if the function overflows the SEH maximum frame size
+       or accesses prior frames so, in this case, we need to pre-allocate a
+       small chunk of stack before setting it.  */
+    offset = seh->sp_offset - INCOMING_FRAME_SP_OFFSET;
+    if (offset < SEH_MAX_FRAME_SIZE && !crtl->accesses_prior_frames)
+      alloc_offset = seh->sp_offset;
+    else
+      alloc_offset = MIN (seh->cfa_offset + 240, seh->sp_offset);
 
-  for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-    if (seh->reg_offset[regno] > 0 && seh->reg_offset[regno] <= alloc_offset)
+    offset = alloc_offset - INCOMING_FRAME_SP_OFFSET;
+    if (offset > 0)
+      fprintf (f, "\t.seh_stackalloc\t" HOST_WIDE_INT_PRINT_DEC "\n", offset);
+
+    for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+      if (seh->reg_offset[regno] > 0 && seh->reg_offset[regno] <= alloc_offset)
+	{
+	  if (SSE_REGNO_P (regno))
+	    fputs ("\t.seh_savexmm\t", f);
+	  else if (GENERAL_REGNO_P (regno))
+	    fputs ("\t.seh_savereg\t", f);
+	  else
+	    gcc_unreachable ();
+	  print_reg (gen_rtx_REG (DImode, regno), 0, f);
+	  fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n",
+		   alloc_offset - seh->reg_offset[regno]);
+	}
+
+    if (seh->cfa_reg != stack_pointer_rtx)
       {
-	if (SSE_REGNO_P (regno))
-	  fputs ("\t.seh_savexmm\t", f);
-	else if (GENERAL_REGNO_P (regno))
-	  fputs ("\t.seh_savereg\t", f);
-	else
-	  gcc_unreachable ();
-	print_reg (gen_rtx_REG (DImode, regno), 0, f);
-	fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n",
-		 alloc_offset - seh->reg_offset[regno]);
+	offset = alloc_offset - seh->cfa_offset;
+
+	gcc_assert ((offset & 15) == 0);
+	gcc_assert (IN_RANGE (offset, 0, 240));
+
+	fputs ("\t.seh_setframe\t", f);
+	print_reg (seh->cfa_reg, 0, f);
+	fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n", offset);
       }
 
-  if (seh->cfa_reg != stack_pointer_rtx)
-    {
-      offset = alloc_offset - seh->cfa_offset;
+    if (alloc_offset != seh->sp_offset)
+      {
+	offset = seh->sp_offset - alloc_offset;
+	if (offset > 0 && offset < SEH_MAX_FRAME_SIZE)
+	  fprintf (f, "\t.seh_stackalloc\t" HOST_WIDE_INT_PRINT_DEC "\n", offset);
 
-      gcc_assert ((offset & 15) == 0);
-      gcc_assert (IN_RANGE (offset, 0, 240));
+	for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
+	  if (seh->reg_offset[regno] > alloc_offset)
+	    {
+	      if (SSE_REGNO_P (regno))
+		fputs ("\t.seh_savexmm\t", f);
+	      else if (GENERAL_REGNO_P (regno))
+		fputs ("\t.seh_savereg\t", f);
+	      else
+		gcc_unreachable ();
+	      print_reg (gen_rtx_REG (DImode, regno), 0, f);
+	      fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n",
+		       seh->sp_offset - seh->reg_offset[regno]);
+	    }
+      }
 
-      fputs ("\t.seh_setframe\t", f);
-      print_reg (seh->cfa_reg, 0, f);
-      fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n", offset);
-    }
-
-  if (alloc_offset != seh->sp_offset)
-    {
-      offset = seh->sp_offset - alloc_offset;
-      if (offset > 0 && offset < SEH_MAX_FRAME_SIZE)
-	fprintf (f, "\t.seh_stackalloc\t" HOST_WIDE_INT_PRINT_DEC "\n", offset);
-
-      for (int regno = 0; regno < FIRST_PSEUDO_REGISTER; regno++)
-	if (seh->reg_offset[regno] > alloc_offset)
-	  {
-	    if (SSE_REGNO_P (regno))
-	      fputs ("\t.seh_savexmm\t", f);
-	    else if (GENERAL_REGNO_P (regno))
-	      fputs ("\t.seh_savereg\t", f);
-	    else
-	      gcc_unreachable ();
-	    print_reg (gen_rtx_REG (DImode, regno), 0, f);
-	    fprintf (f, ", " HOST_WIDE_INT_PRINT_DEC "\n",
-		     seh->sp_offset - seh->reg_offset[regno]);
-	  }
-    }
-
-  fputs ("\t.seh_endprologue\n", f);
+    fputs ("\t.seh_endprologue\n", f);
+  }
+#elif defined(__aarch64__)
+  /* Prologue is emitted by aarch64_pe_seh_unwind_emit per insn.  */
+#else
+  gcc_unreachable ();
+#endif
 }
 
 /* Emit an assembler directive for the end of the function.  */
