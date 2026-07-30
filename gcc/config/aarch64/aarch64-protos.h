@@ -1315,4 +1315,8 @@ extern unsigned aarch64_stack_alignment (const_tree exp, unsigned align);
 extern rtx aarch64_gen_compare_zero_and_branch (rtx_code code, rtx x,
 						rtx_code_label *label);
 
+#ifdef TARGET_SEH
+extern void aarch64_pe_seh_unwind_emit (FILE *, rtx_insn *);
+#endif
+
 #endif /* GCC_AARCH64_PROTOS_H */
