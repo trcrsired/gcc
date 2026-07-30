@@ -77,6 +77,21 @@ along with GCC; see the file COPYING3.  If not see
 #undef TARGET_PECOFF
 #define TARGET_PECOFF 1
 
+/* Force shared libgcc for aarch64-w64-mingw32 so libstdc++ links against
+   libgcc_s_seh-1.dll at runtime (needed for SEH unwinding to work).  */
+#undef SHARED_LIBGCC_SPEC
+#define SHARED_LIBGCC_SPEC \
+  "%{static|static-libgcc:-lgcc -lgcc_eh} \
+   %{!static: \
+     %{!static-libgcc: \
+       %{!shared: \
+         %{!shared-libgcc:-lgcc_s -lgcc} \
+         %{shared-libgcc:-lgcc_s -lgcc} \
+        } \
+       %{shared:-lgcc_s -lgcc} \
+      } \
+    } "
+
 #include <stdbool.h>
 #ifdef __MINGW32__
 #include <stdio.h>
