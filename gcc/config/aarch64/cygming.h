@@ -45,14 +45,32 @@ along with GCC; see the file COPYING3.  If not see
 #define SYMBOL_REF_STUBVAR_P(X) \
 	((SYMBOL_REF_FLAGS (X) & SYMBOL_FLAG_STUBVAR) != 0)
 
-/* Disable SEH and declare the required SEH-related macros that are
-still needed for compilation.  */
+/* Enable SEH for Windows on ARM64.  */
 #undef TARGET_SEH
-#define TARGET_SEH 0
+#define TARGET_SEH  flag_unwind_tables
 
 #define SSE_REGNO_P(N) (gcc_unreachable (), 0)
 #define GENERAL_REGNO_P(N) (gcc_unreachable (), 0)
-#define SEH_MAX_FRAME_SIZE (gcc_unreachable (), 0)
+
+/* ARM64 SEH can represent up to 1MB - 4 bytes per unwind fragment.  */
+#define SEH_MAX_FRAME_SIZE ((1U << 20) - 4)
+
+/* Support hooks for SEH.  */
+#undef  TARGET_ASM_UNWIND_EMIT
+#define TARGET_ASM_UNWIND_EMIT  aarch64_pe_seh_unwind_emit
+#undef  TARGET_ASM_UNWIND_EMIT_BEFORE_INSN
+#define TARGET_ASM_UNWIND_EMIT_BEFORE_INSN  false
+#undef  TARGET_ASM_FUNCTION_END_PROLOGUE
+#define TARGET_ASM_FUNCTION_END_PROLOGUE  mingw_pe_seh_end_prologue
+#undef  TARGET_ASM_EMIT_EXCEPT_PERSONALITY
+#define TARGET_ASM_EMIT_EXCEPT_PERSONALITY mingw_pe_seh_emit_except_personality
+#undef  TARGET_ASM_INIT_SECTIONS
+#define TARGET_ASM_INIT_SECTIONS  mingw_pe_seh_init_sections
+#define SUBTARGET_ASM_UNWIND_INIT  mingw_pe_seh_init
+
+/* Win64 with SEH cannot represent DRAP stack frames.  Disable its use.  */
+#undef MAX_STACK_ALIGNMENT
+#define MAX_STACK_ALIGNMENT  (TARGET_SEH ? 128 : MAX_OFILE_ALIGNMENT)
 
 #undef TARGET_PECOFF
 #define TARGET_PECOFF 1
@@ -129,6 +147,8 @@ still needed for compilation.  */
       builtin_define ("__fastcall=__attribute__((__fastcall__))");	\
       builtin_define ("__thiscall=__attribute__((__thiscall__))");	\
       builtin_define ("__cdecl=__attribute__((__cdecl__))");		\
+      if (TARGET_SEH)							\
+	builtin_define ("__SEH__");					\
     }									\
   while (0)
 
@@ -231,6 +251,16 @@ still needed for compilation.  */
     aarch64_declare_function_name (STREAM, NAME, DECL);			\
   } while (0)
 
+#undef ASM_DECLARE_COLD_FUNCTION_NAME
+#define ASM_DECLARE_COLD_FUNCTION_NAME(STREAM, NAME, DECL) \
+  do {							       \
+    mingw_pe_declare_type (STREAM, NAME, TREE_PUBLIC (DECL), 1); \
+    aarch64_pe_seh_cold_init (STREAM, NAME);		    \
+  } while (0)
+
+#undef ASM_DECLARE_COLD_FUNCTION_SIZE
+#define ASM_DECLARE_COLD_FUNCTION_SIZE(STREAM, NAME, DECL)	\
+  mingw_pe_end_cold_function (STREAM, NAME, DECL)
 
 /* Define this to be nonzero if static stack checking is supported.  */
 #define STACK_CHECK_STATIC_BUILTIN 1

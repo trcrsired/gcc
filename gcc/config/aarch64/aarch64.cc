@@ -26885,6 +26885,11 @@ aarch64_declare_function_name (FILE *stream, const char* name,
   ASM_OUTPUT_TYPE_DIRECTIVE (stream, name, "function");
   ASM_OUTPUT_FUNCTION_LABEL (stream, name, fndecl);
 
+#ifdef SUBTARGET_ASM_UNWIND_INIT
+  if (TARGET_AARCH64_MS_ABI)
+    SUBTARGET_ASM_UNWIND_INIT (stream);
+#endif
+
   cfun->machine->label_is_assembled = true;
 }
 
