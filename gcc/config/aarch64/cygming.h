@@ -68,9 +68,11 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_ASM_INIT_SECTIONS  mingw_pe_seh_init_sections
 #define SUBTARGET_ASM_UNWIND_INIT  mingw_pe_seh_init
 
-/* Win64 with SEH cannot represent DRAP stack frames.  Disable its use.  */
+/* Always limit stack alignment to STACK_BOUNDARY: AArch64 has no DRAP
+   support (cannot realign the stack).  When SEH is active it is also
+   incompatible with DRAP, but the limitation applies regardless.  */
 #undef MAX_STACK_ALIGNMENT
-#define MAX_STACK_ALIGNMENT  (TARGET_SEH ? 128 : MAX_OFILE_ALIGNMENT)
+#define MAX_STACK_ALIGNMENT STACK_BOUNDARY
 
 #undef TARGET_PECOFF
 #define TARGET_PECOFF 1
@@ -255,7 +257,7 @@ along with GCC; see the file COPYING3.  If not see
 #define ASM_DECLARE_COLD_FUNCTION_NAME(STREAM, NAME, DECL) \
   do {							       \
     mingw_pe_declare_type (STREAM, NAME, TREE_PUBLIC (DECL), 1); \
-    aarch64_pe_seh_cold_init (STREAM, NAME);		    \
+    mingw_pe_seh_cold_init (STREAM, NAME);			    \
   } while (0)
 
 #undef ASM_DECLARE_COLD_FUNCTION_SIZE

@@ -32,9 +32,9 @@
 #include "regs.h"
 #include "function-abi.h"
 #include "builtins.h"
+#include "memmodel.h"
 #include "output.h"
 #include "emit-rtl.h"
-#include "insn-notes.h"
 #include "rtl-iter.h"
 #include "aarch64-abi-ms-protos.h"
 #include "config/mingw/winnt.h"
@@ -277,29 +277,6 @@ aarch64_pe_seh_unwind_emit (FILE *out_file, rtx_insn *insn)
 	  break;
 	}
     }
-}
-
-/* AArch64 SEH cold section init.
-   Reuses the existing seh state so that mingw_pe_seh_fini can track
-   hot/cold section completion via the in_cold_section flag.  */
-void
-aarch64_pe_seh_cold_init (FILE *f, const char *name)
-{
-  struct seh_frame_state *seh;
-
-  if (!TARGET_SEH)
-    return;
-  if (cfun->is_thunk)
-    return;
-
-  seh = cfun->machine->seh;
-  gcc_assert (seh != NULL);
-
-  seh->in_cold_section = true;
-
-  fputs ("\t.seh_proc\t", f);
-  assemble_name (f, name);
-  fputc ('\n', f);
 }
 
 

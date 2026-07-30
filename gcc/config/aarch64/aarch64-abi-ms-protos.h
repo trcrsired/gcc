@@ -33,7 +33,6 @@ extern int aarch64_arg_partial_bytes (cumulative_args_t,
 
 #ifdef TARGET_SEH
 extern void aarch64_pe_seh_unwind_emit (FILE *, rtx_insn *);
-extern void aarch64_pe_seh_cold_init (FILE *, const char *);
 #endif
 
 #endif
