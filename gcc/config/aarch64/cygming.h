@@ -90,6 +90,12 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_ASM_UNIQUE_SECTION mingw_pe_unique_section
 #define TARGET_ENCODE_SECTION_INFO  mingw_pe_encode_section_info
 
+/* Local and global relocs can be placed always into readonly memory
+   for PE-COFF targets.  */
+#undef TARGET_ASM_RELOC_RW_MASK
+#define TARGET_ASM_RELOC_RW_MASK i386_pe_reloc_rw_mask
+extern int i386_pe_reloc_rw_mask (void);
+
 #define TARGET_VALID_DLLIMPORT_ATTRIBUTE_P mingw_pe_valid_dllimport_attribute_p
 
 /* Output function declarations at the end of the file.  */
@@ -276,8 +282,7 @@ along with GCC; see the file COPYING3.  If not see
 #undef GOT_ALIAS_SET
 #define GOT_ALIAS_SET mingw_GOT_alias_set ()
 
-#define PE_COFF_LEGITIMIZE_EXTERN_DECL(RTX) \
-  (GET_CODE (RTX) == SYMBOL_REF)
+#define PE_COFF_LEGITIMIZE_EXTERN_DECL(RTX) 1
 
 #define HAVE_64BIT_POINTERS 1
 
