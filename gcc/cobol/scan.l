@@ -1114,18 +1114,20 @@ USE({SPC}FOR)?		{ return USE; }
   HIGH-VALUES?	        { return HIGH_VALUES; }
   QUOTES?		{ return QUOTES; }
   NULLS?		{ return NULLS; }
+  OF			{ return OF; }
 
-  OF		           { return OF; }
+  VALUE				{ return VALUE; }
   VALUE({SPC}IS)?/[[:space:]]   { return VALUE; }
   VALUES({SPC}ARE)?/[[:space:]] { return VALUE; }
-  THRU|THROUGH             { return THRU; }
 
   VALUES?({SPC}(IS|ARE))?{SPC}NULLS? { return NULLPTR; }
   VALUES?({SPC}(IS|ARE))?/{SPC}[+-]?{dfc} {
                           yy_push_state(numeric_state); return VALUE; }
 
+  THRU|THROUGH		{ return THRU; }
  (THRU|THROUGH)/{SPC}[[:digit:].,+-] {
-                          yy_push_state(numeric_state); return THRU; }
+                          yy_push_state(numeric_state);
+			  return THRU; }
 
   ALL			{ return ALL; }
   AS			{ return AS; }
@@ -1987,6 +1989,7 @@ USE({SPC}FOR)?		{ return USE; }
 
   FUNCTION 			{ yy_push_state(function); return FUNCTION; }
 
+  SECTION{OSPC}/{DOTSEP} { yylval.string = NULL; return SECTION; }
   SECTION{OSPC}[.]+{SPC}/USE[[:space:]]	{ yylval.string = NULL; return SECTION; }
 
   [.]+({SPC}(EJECT|SKIP[123]))*{SPC}EXIT{OSPC}/{DOTSEP} {
@@ -2439,7 +2442,7 @@ BASIS		{ yy_push_state(basis); return BASIS; }
 				  yy_push_state(cdf_state); return CDF_IF; }
   ^[ ]*[$]{OBLANK}ELSE	 	{ dialect_ok(yylloc, MfCdfDollar, yytext); 
 				  return CDF_ELSE; }
-  ^[ ]*[$]{OBLANK}END	 	{ dialect_ok(yylloc, MfCdfDollar, yytext); 
+  ^[ ]*[$]{OBLANK}END(-IF)? 	{ dialect_ok(yylloc, MfCdfDollar, yytext); 
 				  return CDF_END_IF; }
 
   ^[ ]*[$]{OBLANK}SET({SPC}CONSTANT)? {

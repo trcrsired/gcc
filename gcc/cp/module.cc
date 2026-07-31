@@ -1511,6 +1511,7 @@ class elf_out : public elf, public data::allocator {
 private:
   ptr_int_hash_map identtab;	/* Map of IDENTIFIERS to strtab offsets. */
   unsigned pos;			/* Write position in file.  */
+  bool began;			/* True if begin initialized output state.  */
 #if MAPPED_WRITING
   unsigned offset;		/* Offset of the mapping.  */
   unsigned extent;		/* Length of mapping.  */
@@ -1519,7 +1520,7 @@ private:
 
 public:
   elf_out (int fd, int e)
-    :parent (fd, e), identtab (500), pos (0)
+    :parent (fd, e), identtab (500), pos (0), began (false)
   {
 #if MAPPED_WRITING
     offset = extent = 0;
@@ -2231,7 +2232,10 @@ elf_out::begin ()
   memset (h, 0, sizeof (header));
   hdr.pos = hdr.size;
   write (hdr);
-  return !get_error ();
+  if (get_error ())
+    return false;
+  began = true;
+  return true;
 }
 
 /* Finish writing the file.  Write out the string & section tables.
@@ -2240,7 +2244,7 @@ elf_out::begin ()
 bool
 elf_out::end ()
 {
-  if (fd >= 0)
+  if (fd >= 0 && began)
     {
       /* Write the string table.  */
       unsigned strnam = name (".strtab");
@@ -15202,6 +15206,12 @@ depset::hash::add_namespace_entities (tree ns, bitmap partitions)
   for (tree udir : NAMESPACE_LEVEL (ns)->using_directives)
     if (TREE_CODE (udir) == USING_DECL && DECL_MODULE_PURVIEW_P (udir))
       {
+	/* Unless it's a (TU-local) anonymous namespace.
+
+	   FIXME instead of checking here, they should be
+	   is_tu_local_entity.  */
+	if (!TREE_PUBLIC (USING_DECL_DECLS (udir)))
+	  continue;
 	make_dependency (USING_DECL_DECLS (udir), depset::EK_NAMESPACE);
 	if (DECL_MODULE_EXPORT_P (udir))
 	  count++;

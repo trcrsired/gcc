@@ -730,7 +730,7 @@ class locale_tgt_t {
     // https://savannah.gnu.org/forum/forum.php?forum_id=9735
 %token  YYEOF 0 "end of file"
 
-%type   <number>        sentence statements statement
+%type   <number>        statements statement
 %type   <number>        star_cbl_opt close_how
 
 %type   <number>        test_before usage_clause1 might_be alphanational
@@ -1566,7 +1566,7 @@ class locale_tgt_t {
 %locations
 %token-table
 %define parse.error verbose // custom
-%expect 6
+%expect 7
 %require "3.5.1"  //    3.8.2 also works, but not 3.8.0
 %%
 
@@ -4550,7 +4550,7 @@ data_clauses:   data_clause
                 data_clause_t clause = data_clause_t($1);
                 proto_field.add_clause(clause);
                 }
-        |       data_clauses data_clause {
+        |       data_clauses[clauses] data_clause {
                   const char *clause = "data";
                   switch($2) {
                   case occurs_clause_e:     clause = "OCCURS";    break;
@@ -4575,16 +4575,12 @@ data_clauses:   data_clause
                     YYERROR;
                   }
 
-		  // We could be more judicious. We could clear the map when
-		  // the first clause is encountered, and e.g. set the location
-		  // to just the VALUE string, not the whole clause.  As of now
-		  // the map isn't used, though.
                   data_clause_locations[data_clause_t($2)] = @data_clause;
 
-                  if( $data_clause == redefines_clause_e ) {
-                    error_msg(@2, "REDEFINES must appear "
-                             "immediately after LEVEL and NAME");
-                    YYERROR;
+                  if( $clauses && $data_clause == redefines_clause_e ) {
+                      dialect_ok(@2, MfRedefinesFirst,
+                                 "-REDEFINES must appear "
+                                 "immediately after LEVEL and NAME");
                   }
                   cbl_field_t *field = current_field();
                   const int globex = (global_e | external_e);
@@ -5691,7 +5687,8 @@ paragraph_name: NAME
         |       NUMSTR { $$ = $1.string; }
 		;
 
-sentence:       statements  '.'
+sentence:       '.'
+        |       statements  '.'
         |       statements  YYEOF
                 {
                   if( ! goodnight_gracie() ) {
@@ -8035,31 +8032,27 @@ section_name:	NAME section_kw '.'
                 ;
 
 section_kw:     SECTION
-/* Dubner commented out this code on 2026-06-28 as part of getting the
-   compiler working on the IBM S390. It was failing in an off-by-one way;
-   the $1 parameter, on the S390, wasn't the section number, but rather the
-   section name.  */
-//                {
-//                  if( $1 && dialect_ok(@1, IbmSectionSegmentW, "SECTION segment") ) {
-//		    cbl_message(@1, IbmSectionSegmentW,
-//                                "SECTION segment %qs was ignored", $1);
-//		    if( *$1 == '-' ) {
-//                      cbl_message(@1, IbmSectionNegE,
-//                                  "SECTION segment %qs is negative", $1);
-//                    } else {
-//                      int sectno;
-//                      sscanf($1, "%d", &sectno);
-//                      if( ! (0 <= sectno && sectno <= 99) ) {
-//                        cbl_message(@1, IbmSectionRangeE,
-//                                     "SECTION segment %qs must be 0-99", $1);
-//		      } 
-//                    }
-//		  }
-//                }
-//        |       SECTION error
-//                {
-//                  error_msg(@1, "unknown section qualifier");
-//                }
+               {
+                 if( $1 && dialect_ok(@1, IbmSectionSegmentW, "SECTION segment") ) {
+		    cbl_message(@1, IbmSectionSegmentW,
+                               "SECTION segment %qs was ignored", $1);
+		    if( *$1 == '-' ) {
+                     cbl_message(@1, IbmSectionNegE,
+                                 "SECTION segment %qs is negative", $1);
+                   } else {
+                     int sectno;
+                     sscanf($1, "%d", &sectno);
+                     if( ! (0 <= sectno && sectno <= 99) ) {
+                       cbl_message(@1, IbmSectionRangeE,
+                                    "SECTION segment %qs must be 0-99", $1);
+		      } 
+                   }
+		  }
+               }
+       |       SECTION error
+               {
+                 error_msg(@1, "unknown section qualifier");
+               }
                 ;
 
 stop:           STOP RUN exit_with
