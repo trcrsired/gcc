@@ -3,3 +3,6 @@ LIBGCC2_CFLAGS += -Wno-error=attributes
 
 # AArch64 has no 80-bit extended precision floating point.
 LIBGCC2_CFLAGS += -D__NO_BINARY80__
+
+# Include LSE atomics in the shared libgcc (needed by mingw-w64 CRT).
+libgcc-s-objects += $(LSE_OBJS) lse-init$(objext)

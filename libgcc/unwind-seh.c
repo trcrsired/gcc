@@ -290,8 +290,9 @@ _GCC_specific_handler (PEXCEPTION_RECORD ms_exc, void *this_frame,
     {
       if (ms_exc->ExceptionInformation[1] == (_Unwind_Ptr) this_frame)
 	{
+	  CONTEXT new_ctx;
 	  RtlUnwindEx (this_frame, (PVOID) ms_exc->ExceptionInformation[2],
-		       ms_exc, gcc_exc, ms_orig_context,
+		       ms_exc, gcc_exc, &new_ctx,
 		       ms_disp->HistoryTable);
 	  abort ();
 	}
@@ -370,7 +371,7 @@ _GCC_specific_handler (PEXCEPTION_RECORD ms_exc, void *this_frame,
 	  ms_exc->ExceptionInformation[3] = gcc_context.reg[1];
 
 	  RtlUnwindEx (this_frame, (PVOID)gcc_context.ra, ms_exc,
-		       (PVOID)gcc_context.reg[0], ms_orig_context,
+		       gcc_exc, ms_orig_context,
 		       ms_disp->HistoryTable);
 	}
     }

@@ -243,7 +243,6 @@ extern int i386_pe_reloc_rw_mask (void);
 #undef  SUBTARGET_OVERRIDE_OPTIONS
 #define SUBTARGET_OVERRIDE_OPTIONS			\
   do {							\
-    flag_stack_check = STATIC_BUILTIN_STACK_CHECK;	\
     flag_unwind_tables = 1;				\
   } while (0)
 
