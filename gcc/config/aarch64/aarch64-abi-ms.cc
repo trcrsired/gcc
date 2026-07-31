@@ -220,14 +220,17 @@ seh_aarch64_emit_expr (FILE *out_file, struct seh_frame_state *seh, rtx pat)
 		    ? INTVAL (XEXP (a1, 1)) : 0;
 
 		  /* SEH offset is relative to the current SP.  */
-		  if ((REGNO (reg0) == 29 && REGNO (reg1) == 30)
-		      || (REGNO (reg0) == 30 && REGNO (reg1) == 29))
+		  unsigned int r0 = REGNO (reg0), r1 = REGNO (reg1);
+		  if ((r0 == 29 && r1 == 30) || (r0 == 30 && r1 == 29))
 		    fprintf (out_file, "\t.seh_save_fplr\t"
 			     HOST_WIDE_INT_PRINT_DEC "\n", off0);
-		  else
-		    fprintf (out_file, "\t.seh_save_regp\tx%d, x%d, "
+		  else if (FP_REGNUM_P (r0) && FP_REGNUM_P (r1))
+		    fprintf (out_file, "\t.seh_save_fregp\td%d, d%d, "
 			     HOST_WIDE_INT_PRINT_DEC "\n",
-			     REGNO (reg0), REGNO (reg1), off0);
+			     r0 - V0_REGNUM, r1 - V0_REGNUM, off0);
+		  else if (!FP_REGNUM_P (r0) && !FP_REGNUM_P (r1))
+		    fprintf (out_file, "\t.seh_save_regp\tx%d, x%d, "
+			     HOST_WIDE_INT_PRINT_DEC "\n", r0, r1, off0);
 		  return;
 		}
 	    }
@@ -312,10 +315,10 @@ seh_aarch64_emit_expr (FILE *out_file, struct seh_frame_state *seh, rtx pat)
 
       seh->reg_offset[regno] = offset;
 
-      if (regno >= 8 && regno <= 15)
+      if (FP_REGNUM_P (regno))
 	fprintf (out_file, "\t.seh_save_freg\td%d, "
-		 HOST_WIDE_INT_PRINT_DEC "\n", regno, offset);
-      else
+		 HOST_WIDE_INT_PRINT_DEC "\n", regno - V0_REGNUM, offset);
+      else if (regno >= 0 && regno <= 30)
 	fprintf (out_file, "\t.seh_save_reg\tx%d, "
 		 HOST_WIDE_INT_PRINT_DEC "\n", regno, offset);
       return;
@@ -339,7 +342,10 @@ seh_aarch64_emit_expr (FILE *out_file, struct seh_frame_state *seh, rtx pat)
       if ((r1 == 29 && r2 == 30) || (r1 == 30 && r2 == 29))
 	fprintf (out_file, "\t.seh_save_fplr\t"
 		 HOST_WIDE_INT_PRINT_DEC "\n", offset);
-      else
+      else if (FP_REGNUM_P (r1) && FP_REGNUM_P (r2))
+	fprintf (out_file, "\t.seh_save_fregp\td%d, d%d, "
+		 HOST_WIDE_INT_PRINT_DEC "\n", r1 - V0_REGNUM, r2 - V0_REGNUM, offset);
+      else if (!FP_REGNUM_P (r1) && !FP_REGNUM_P (r2))
 	fprintf (out_file, "\t.seh_save_regp\tx%d, x%d, "
 		 HOST_WIDE_INT_PRINT_DEC "\n", r1, r2, offset);
       return;
