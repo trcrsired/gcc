@@ -290,10 +290,20 @@ _GCC_specific_handler (PEXCEPTION_RECORD ms_exc, void *this_frame,
     {
       if (ms_exc->ExceptionInformation[1] == (_Unwind_Ptr) this_frame)
 	{
+#if defined(__x86_64__)
+	  /* This is a colliding exception that we threw so that we could
+	     cancel the already in-flight exception and stop in a frame
+	     that wanted to perform some unwind action.  The only relevant
+	     test is that we're the target frame.  */
+	  RtlUnwindEx (this_frame, (PVOID) ms_exc->ExceptionInformation[2],
+		       ms_exc, gcc_exc, ms_orig_context,
+		       ms_disp->HistoryTable);
+#elif defined(__aarch64__)
 	  CONTEXT new_ctx;
 	  RtlUnwindEx (this_frame, (PVOID) ms_exc->ExceptionInformation[2],
 		       ms_exc, gcc_exc, &new_ctx,
 		       ms_disp->HistoryTable);
+#endif
 	  abort ();
 	}
       return ExceptionContinueSearch;
