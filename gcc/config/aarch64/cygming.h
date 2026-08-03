@@ -77,6 +77,9 @@ along with GCC; see the file COPYING3.  If not see
 #undef TARGET_PECOFF
 #define TARGET_PECOFF 1
 
+/* Windows executables use the .exe suffix, matching i386/cygming.h.  */
+#define TARGET_EXECUTABLE_SUFFIX ".exe"
+
 /* Force shared libgcc for aarch64-w64-mingw32 so libstdc++ links against
    libgcc_s_seh-1.dll at runtime (needed for SEH unwinding to work).  */
 #undef SHARED_LIBGCC_SPEC
