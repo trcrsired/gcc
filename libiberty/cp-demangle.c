@@ -199,6 +199,20 @@ static void d_init_info (const char *, int, size_t, struct d_info *);
 #endif /* defined (__STDC__) */
 #endif /* ! defined (__GNUC__) */
 
+/* Allocate SIZE bytes of memory, aborting on failure, like libiberty's
+   xmalloc.  libiberty's xmalloc cannot be used here because this file is
+   also compiled into libstdc++ (-DIN_GLIBCPP_V3), which does not link
+   against libiberty.  */
+
+static void *
+d_malloc (size_t size)
+{
+  void *p = malloc (size);
+  if (p == NULL)
+    abort ();
+  return p;
+}
+
 /* We avoid pulling in the ctype tables, to prevent pulling in
    additional unresolved symbols when this code is used in a library.
    FIXME: Is this really a valid reason?  This comes from the original
@@ -4691,17 +4705,18 @@ cplus_demangle_print_callback (int options,
      large for deeply-nested templates, and alloca overflows the stack
      when the process has a small committed stack (e.g. Windows threads).  */
   if (dpi.num_saved_scopes > 0)
-    dpi.saved_scopes = XNEWVEC (struct d_saved_scope, dpi.num_saved_scopes);
+    dpi.saved_scopes = (struct d_saved_scope *)
+      d_malloc (dpi.num_saved_scopes * sizeof (*dpi.saved_scopes));
   if (dpi.num_copy_templates > 0)
-    dpi.copy_templates = XNEWVEC (struct d_print_template,
-				  dpi.num_copy_templates);
+    dpi.copy_templates = (struct d_print_template *)
+      d_malloc (dpi.num_copy_templates * sizeof (*dpi.copy_templates));
 
   d_print_comp (&dpi, options, dc);
 
   if (dpi.saved_scopes != NULL)
-    XDELETEVEC (dpi.saved_scopes);
+    free (dpi.saved_scopes);
   if (dpi.copy_templates != NULL)
-    XDELETEVEC (dpi.copy_templates);
+    free (dpi.copy_templates);
 
   d_print_flush (&dpi);
 
@@ -6875,8 +6890,10 @@ d_demangle_callback (const char *mangled, int options,
      the stack on deeply-templated symbols when the process had a small
      committed stack (e.g. Windows threads).  Allocate them on the heap
      instead, so demangling does not depend on the stack size.  */
-  comps = XNEWVEC (struct demangle_component, 2 * len);
-  subs = XNEWVEC (struct demangle_component *, len);
+  comps = (struct demangle_component *)
+    d_malloc (2 * len * sizeof (*comps));
+  subs = (struct demangle_component **)
+    d_malloc (len * sizeof (*subs));
 
   di.unresolved_name_state = 1;
 
@@ -6931,8 +6948,8 @@ d_demangle_callback (const char *mangled, int options,
            ? cplus_demangle_print_callback (options, dc, callback, opaque)
            : 0;
 
-  XDELETEVEC (comps);
-  XDELETEVEC (subs);
+  free (comps);
+  free (subs);
 
   return status;
 }
@@ -7169,8 +7186,10 @@ is_ctor_or_dtor (const char *mangled,
 
   /* Allocate on the heap rather than with alloca/VLAs (see comment in
      d_demangle_callback).  */
-  comps = XNEWVEC (struct demangle_component, 2 * len);
-  subs = XNEWVEC (struct demangle_component *, len);
+  comps = (struct demangle_component *)
+    d_malloc (2 * len * sizeof (*comps));
+  subs = (struct demangle_component **)
+    d_malloc (len * sizeof (*subs));
 
   cplus_demangle_init_info (mangled, DMGL_GNU_V3, len, &di);
 
@@ -7217,8 +7236,8 @@ is_ctor_or_dtor (const char *mangled,
 	}
     }
 
-  XDELETEVEC (comps);
-  XDELETEVEC (subs);
+  free (comps);
+  free (subs);
 
   return ret;
 }
