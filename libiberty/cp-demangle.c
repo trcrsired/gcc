@@ -4687,26 +4687,21 @@ cplus_demangle_print_callback (int options,
 
   d_print_init (&dpi, callback, opaque, dc);
 
-  {
-#ifdef CP_DYNAMIC_ARRAYS
-    /* Avoid zero-length VLAs, which are prohibited by the C99 standard
-       and flagged as errors by Address Sanitizer.  */
-    __extension__ struct d_saved_scope scopes[(dpi.num_saved_scopes > 0)
-                                              ? dpi.num_saved_scopes : 1];
-    __extension__ struct d_print_template temps[(dpi.num_copy_templates > 0)
-                                                ? dpi.num_copy_templates : 1];
+  /* Allocate these on the heap rather than with alloca/VLAs: they can be
+     large for deeply-nested templates, and alloca overflows the stack
+     when the process has a small committed stack (e.g. Windows threads).  */
+  if (dpi.num_saved_scopes > 0)
+    dpi.saved_scopes = XNEWVEC (struct d_saved_scope, dpi.num_saved_scopes);
+  if (dpi.num_copy_templates > 0)
+    dpi.copy_templates = XNEWVEC (struct d_print_template,
+				  dpi.num_copy_templates);
 
-    dpi.saved_scopes = scopes;
-    dpi.copy_templates = temps;
-#else
-    dpi.saved_scopes = alloca (dpi.num_saved_scopes
-			       * sizeof (*dpi.saved_scopes));
-    dpi.copy_templates = alloca (dpi.num_copy_templates
-				 * sizeof (*dpi.copy_templates));
-#endif
+  d_print_comp (&dpi, options, dc);
 
-    d_print_comp (&dpi, options, dc);
-  }
+  if (dpi.saved_scopes != NULL)
+    XDELETEVEC (dpi.saved_scopes);
+  if (dpi.copy_templates != NULL)
+    XDELETEVEC (dpi.copy_templates);
 
   d_print_flush (&dpi);
 
@@ -6853,6 +6848,9 @@ d_demangle_callback (const char *mangled, int options,
   type;
   struct d_info di;
   struct demangle_component *dc;
+  struct demangle_component *comps;
+  struct demangle_component **subs;
+  size_t len;
   int status;
 
   if (mangled[0] == '_' && mangled[1] == 'Z')
@@ -6869,82 +6867,72 @@ d_demangle_callback (const char *mangled, int options,
       type = DCT_TYPE;
     }
 
+  len = strlen (mangled);
+
+  /* We cannot need more components than twice the number of chars in
+     the mangled string, nor more substitutions than chars in it.  These
+     arrays used to be stack-allocated with alloca/VLAs, which overflowed
+     the stack on deeply-templated symbols when the process had a small
+     committed stack (e.g. Windows threads).  Allocate them on the heap
+     instead, so demangling does not depend on the stack size.  */
+  comps = XNEWVEC (struct demangle_component, 2 * len);
+  subs = XNEWVEC (struct demangle_component *, len);
+
   di.unresolved_name_state = 1;
 
  again:
-  cplus_demangle_init_info (mangled, options, strlen (mangled), &di);
+  cplus_demangle_init_info (mangled, options, len, &di);
 
-  /* PR 87675 - Check for a mangled string that is so long
-     that we do not have enough stack space to demangle it.  */
-  if (((options & DMGL_NO_RECURSE_LIMIT) == 0)
-      /* This check is a bit arbitrary, since what we really want to do is to
-	 compare the sizes of the di.comps and di.subs arrays against the
-	 amount of stack space remaining.  But there is no portable way to do
-	 this, so instead we use the recursion limit as a guide to the maximum
-	 size of the arrays.  */
-      && (unsigned long) di.num_comps > DEMANGLE_RECURSION_LIMIT)
+  di.comps = comps;
+  di.subs = subs;
+
+  switch (type)
     {
-      /* FIXME: We need a way to indicate that a stack limit has been reached.  */
-      return 0;
+    case DCT_TYPE:
+      dc = cplus_demangle_type (&di);
+      break;
+    case DCT_MANGLED:
+      dc = cplus_demangle_mangled_name (&di, 1);
+      break;
+    case DCT_GLOBAL_CTORS:
+    case DCT_GLOBAL_DTORS:
+      d_advance (&di, 11);
+      dc = d_make_comp (&di,
+			(type == DCT_GLOBAL_CTORS
+			 ? DEMANGLE_COMPONENT_GLOBAL_CONSTRUCTORS
+			 : DEMANGLE_COMPONENT_GLOBAL_DESTRUCTORS),
+			d_make_demangle_mangled_name (&di, d_str (&di)),
+			NULL);
+      d_advance (&di, strlen (d_str (&di)));
+      break;
+    default:
+      abort (); /* We have listed all the cases.  */
     }
 
-  {
-#ifdef CP_DYNAMIC_ARRAYS
-    __extension__ struct demangle_component comps[di.num_comps];
-    __extension__ struct demangle_component *subs[di.num_subs];
+  /* If DMGL_PARAMS is set, then if we didn't consume the entire
+     mangled string, then we didn't successfully demangle it.  If
+     DMGL_PARAMS is not set, we didn't look at the trailing
+     parameters.  */
+  if (((options & DMGL_PARAMS) != 0) && d_peek_char (&di) != '\0')
+    dc = NULL;
 
-    di.comps = comps;
-    di.subs = subs;
-#else
-    di.comps = alloca (di.num_comps * sizeof (*di.comps));
-    di.subs = alloca (di.num_subs * sizeof (*di.subs));
-#endif
-
-    switch (type)
-      {
-      case DCT_TYPE:
-	dc = cplus_demangle_type (&di);
-	break;
-      case DCT_MANGLED:
-	dc = cplus_demangle_mangled_name (&di, 1);
-	break;
-      case DCT_GLOBAL_CTORS:
-      case DCT_GLOBAL_DTORS:
-	d_advance (&di, 11);
-	dc = d_make_comp (&di,
-			  (type == DCT_GLOBAL_CTORS
-			   ? DEMANGLE_COMPONENT_GLOBAL_CONSTRUCTORS
-			   : DEMANGLE_COMPONENT_GLOBAL_DESTRUCTORS),
-			  d_make_demangle_mangled_name (&di, d_str (&di)),
-			  NULL);
-	d_advance (&di, strlen (d_str (&di)));
-	break;
-      default:
-	abort (); /* We have listed all the cases.  */
-      }
-
-    /* If DMGL_PARAMS is set, then if we didn't consume the entire
-       mangled string, then we didn't successfully demangle it.  If
-       DMGL_PARAMS is not set, we didn't look at the trailing
-       parameters.  */
-    if (((options & DMGL_PARAMS) != 0) && d_peek_char (&di) != '\0')
-      dc = NULL;
-
-    /* See discussion in d_unresolved_name.  */
-    if (dc == NULL && di.unresolved_name_state == -1)
-      {
-	di.unresolved_name_state = 0;
-	goto again;
-      }
+  /* See discussion in d_unresolved_name.  */
+  if (dc == NULL && di.unresolved_name_state == -1)
+    {
+      di.unresolved_name_state = 0;
+      goto again;
+    }
 
 #ifdef CP_DEMANGLE_DEBUG
-    d_dump (dc, 0);
+  d_dump (dc, 0);
 #endif
 
-    status = (dc != NULL)
-             ? cplus_demangle_print_callback (options, dc, callback, opaque)
-             : 0;
-  }
+  status = (dc != NULL)
+           ? cplus_demangle_print_callback (options, dc, callback, opaque)
+           : 0;
+
+  XDELETEVEC (comps);
+  XDELETEVEC (subs);
 
   return status;
 }
@@ -7169,65 +7157,68 @@ is_ctor_or_dtor (const char *mangled,
 {
   struct d_info di;
   struct demangle_component *dc;
+  struct demangle_component *comps;
+  struct demangle_component **subs;
+  size_t len;
   int ret;
 
   *ctor_kind = (enum gnu_v3_ctor_kinds) 0;
   *dtor_kind = (enum gnu_v3_dtor_kinds) 0;
 
-  cplus_demangle_init_info (mangled, DMGL_GNU_V3, strlen (mangled), &di);
+  len = strlen (mangled);
 
-  {
-#ifdef CP_DYNAMIC_ARRAYS
-    __extension__ struct demangle_component comps[di.num_comps];
-    __extension__ struct demangle_component *subs[di.num_subs];
+  /* Allocate on the heap rather than with alloca/VLAs (see comment in
+     d_demangle_callback).  */
+  comps = XNEWVEC (struct demangle_component, 2 * len);
+  subs = XNEWVEC (struct demangle_component *, len);
 
-    di.comps = comps;
-    di.subs = subs;
-#else
-    di.comps = alloca (di.num_comps * sizeof (*di.comps));
-    di.subs = alloca (di.num_subs * sizeof (*di.subs));
-#endif
+  cplus_demangle_init_info (mangled, DMGL_GNU_V3, len, &di);
 
-    dc = cplus_demangle_mangled_name (&di, 1);
+  di.comps = comps;
+  di.subs = subs;
 
-    /* Note that because we did not pass DMGL_PARAMS, we don't expect
-       to demangle the entire string.  */
+  dc = cplus_demangle_mangled_name (&di, 1);
 
-    ret = 0;
-    while (dc != NULL)
-      {
-	switch (dc->type)
-	  {
-	    /* These cannot appear on a constructor or destructor.  */
-	  case DEMANGLE_COMPONENT_RESTRICT_THIS:
-	  case DEMANGLE_COMPONENT_VOLATILE_THIS:
-	  case DEMANGLE_COMPONENT_CONST_THIS:
-	  case DEMANGLE_COMPONENT_REFERENCE_THIS:
-	  case DEMANGLE_COMPONENT_RVALUE_REFERENCE_THIS:
-	  default:
-	    dc = NULL;
-	    break;
-	  case DEMANGLE_COMPONENT_TYPED_NAME:
-	  case DEMANGLE_COMPONENT_TEMPLATE:
-	    dc = d_left (dc);
-	    break;
-	  case DEMANGLE_COMPONENT_QUAL_NAME:
-	  case DEMANGLE_COMPONENT_LOCAL_NAME:
-	    dc = d_right (dc);
-	    break;
-	  case DEMANGLE_COMPONENT_CTOR:
-	    *ctor_kind = dc->u.s_ctor.kind;
-	    ret = 1;
-	    dc = NULL;
-	    break;
-	  case DEMANGLE_COMPONENT_DTOR:
-	    *dtor_kind = dc->u.s_dtor.kind;
-	    ret = 1;
-	    dc = NULL;
-	    break;
-	  }
-      }
-  }
+  /* Note that because we did not pass DMGL_PARAMS, we don't expect
+     to demangle the entire string.  */
+
+  ret = 0;
+  while (dc != NULL)
+    {
+      switch (dc->type)
+	{
+	  /* These cannot appear on a constructor or destructor.  */
+	case DEMANGLE_COMPONENT_RESTRICT_THIS:
+	case DEMANGLE_COMPONENT_VOLATILE_THIS:
+	case DEMANGLE_COMPONENT_CONST_THIS:
+	case DEMANGLE_COMPONENT_REFERENCE_THIS:
+	case DEMANGLE_COMPONENT_RVALUE_REFERENCE_THIS:
+	default:
+	  dc = NULL;
+	  break;
+	case DEMANGLE_COMPONENT_TYPED_NAME:
+	case DEMANGLE_COMPONENT_TEMPLATE:
+	  dc = d_left (dc);
+	  break;
+	case DEMANGLE_COMPONENT_QUAL_NAME:
+	case DEMANGLE_COMPONENT_LOCAL_NAME:
+	  dc = d_right (dc);
+	  break;
+	case DEMANGLE_COMPONENT_CTOR:
+	  *ctor_kind = dc->u.s_ctor.kind;
+	  ret = 1;
+	  dc = NULL;
+	  break;
+	case DEMANGLE_COMPONENT_DTOR:
+	  *dtor_kind = dc->u.s_dtor.kind;
+	  ret = 1;
+	  dc = NULL;
+	  break;
+	}
+    }
+
+  XDELETEVEC (comps);
+  XDELETEVEC (subs);
 
   return ret;
 }
