@@ -141,7 +141,7 @@ get_reflection (location_t loc, tree t, reflect_kind kind/*=REFLECT_UNDEF*/)
 
   /* Constant template parameters and pack-index-expressions cannot
      appear as operands of the reflection operator.  */
-  if (PACK_INDEX_P (t))
+  if (TREE_CODE (t) == PACK_INDEX_EXPR)
     {
       error_at (loc, "%<^^%> cannot be applied to a pack index");
       return error_mark_node;
@@ -179,7 +179,7 @@ get_reflection (location_t loc, tree t, reflect_kind kind/*=REFLECT_UNDEF*/)
 	       || parsing_lambda_declarator ()))
     {
       auto_diagnostic_group d;
-      error_at (loc, "%<^^%> cannot be applied a local entity for which "
+      error_at (loc, "%<^^%> cannot be applied to a local entity for which "
 		"there is an intervening lambda expression");
       inform (DECL_SOURCE_LOCATION (t), "%qD declared here", t);
       return error_mark_node;
@@ -8790,6 +8790,11 @@ splice (tree refl)
      it comes from e.g. members_of it is not.  */
   if (DECL_FUNCTION_TEMPLATE_P (refl))
     refl = ovl_make (refl, NULL_TREE);
+  /* Also add a BASELINK so that we handle &[:R:].  Since R was already
+     resolved (e.g. via members_of), we don't want to consider the enclosing
+     class for the access path.  */
+  if (is_overloaded_fn (refl))
+    refl = baselink_for_fns (refl, /*ignore_current_class_p=*/true);
 
   return refl;
 }
