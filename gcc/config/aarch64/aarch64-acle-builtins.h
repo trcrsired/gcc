@@ -111,10 +111,10 @@ const unsigned int CP_WRITE_ZT0 = 1U << 10;
    "vector types" for brevity.  */
 enum vector_type_index
 {
-#define DEF_SVE_TYPE(ACLE_NAME, NCHARS, ABI_NAME, SCALAR_TYPE) \
-  VECTOR_TYPE_ ## ACLE_NAME,
+#define DEF_SVE_TYPE(ACLE_NAME, ...) VECTOR_TYPE_##ACLE_NAME,
 #include "aarch64-sve-builtins.def"
-  NUM_VECTOR_TYPES
+  VECTOR_TYPE_none,
+  NUM_VECTOR_TYPES = VECTOR_TYPE_none,
 };
 
 /* Classifies the available measurement units for an address displacement.  */
@@ -199,7 +199,7 @@ enum type_class_index
    and the first type suffix.  */
 enum mode_suffix_index
 {
-#define DEF_SVE_MODE(NAME, BASE, DISPLACEMENT, UNITS) MODE_##NAME,
+#define DEF_SVE_MODE(NAME, ...) MODE_##NAME,
 #include "aarch64-sve-builtins.def"
   MODE_none
 };
@@ -209,10 +209,8 @@ enum mode_suffix_index
    element size.  */
 enum type_suffix_index
 {
-#define DEF_SVE_TYPE_SUFFIX(NAME, ACLE_TYPE, CLASS, BITS, MODE) \
-  TYPE_SUFFIX_ ## NAME,
-#define DEF_SME_ZA_SUFFIX(NAME, BITS, MODE) \
-  TYPE_SUFFIX_ ## NAME,
+#define DEF_SVE_NEON_TYPE_SUFFIX(NAME, ...) TYPE_SUFFIX_##NAME,
+#define DEF_SME_ZA_SUFFIX(NAME, ...) TYPE_SUFFIX_##NAME,
 #include "aarch64-sve-builtins.def"
   NUM_TYPE_SUFFIXES
 };
@@ -222,7 +220,7 @@ enum type_suffix_index
    and the number of vectors in the largest tuple argument.  */
 enum group_suffix_index
 {
-#define DEF_SVE_GROUP_SUFFIX(NAME, VG, VECTORS_PER_TUPLE) GROUP_##NAME,
+#define DEF_SVE_GROUP_SUFFIX(NAME, ...) GROUP_##NAME,
 #include "aarch64-sve-builtins.def"
   GROUP_none,
   NUM_GROUP_SUFFIXES
@@ -254,13 +252,12 @@ struct mode_suffix_info
   units_index displacement_units;
 };
 
-#define ENTRY(E, M, Q, G) E,
+#define DEF_SIMD_TYPE(E, M, Q, G) E,
 enum aarch64_simd_type
 {
 #include "aarch64-simd-builtin-types.def"
   ARM_NEON_H_TYPES_LAST
 };
-#undef ENTRY
 
 /* Static information about a type suffix.  */
 struct type_suffix_info
@@ -733,9 +730,11 @@ public:
   rtx use_contiguous_prefetch_insn (insn_code);
   rtx use_contiguous_store_insn (insn_code);
 
-  rtx map_to_rtx_codes (rtx_code, rtx_code, int, int,
+  rtx map_to_rtx_codes (rtx_code, rtx_code, unspec = UNSPEC_NONE,
+			unspec = UNSPEC_NONE,
 			unsigned int = DEFAULT_MERGE_ARGNO);
-  rtx map_to_unspecs (int, int, int, unsigned int = DEFAULT_MERGE_ARGNO);
+  rtx map_to_unspecs (unspec, unspec = UNSPEC_NONE, unspec = UNSPEC_NONE,
+		      unsigned int = DEFAULT_MERGE_ARGNO);
 
   /* The function call expression.  */
   tree call_expr;

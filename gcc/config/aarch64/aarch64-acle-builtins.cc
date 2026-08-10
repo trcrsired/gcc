@@ -105,9 +105,11 @@ struct registered_function_hasher : ggc_ptr_hash <registered_function>
 };
 
 /* Information about each single-predicate or single-vector type.  */
-static constexpr const vector_type_info vector_types[] = {
+static constexpr vector_type_info vector_types[] = {
 #define DEF_SVE_TYPE(ACLE_NAME, NCHARS, ABI_NAME, SCALAR_TYPE) \
-  { #ACLE_NAME, #ABI_NAME, "u" #NCHARS #ABI_NAME },
+  { /* .acle_name    = */ #ACLE_NAME,			       \
+    /* .abi_name     = */ #ABI_NAME,			       \
+    /* .mangled_name = */ "u" #NCHARS #ABI_NAME },
 #include "aarch64-sve-builtins.def"
 };
 
@@ -123,60 +125,63 @@ static const char *const pred_suffixes[NUM_PREDS + 1] = {
 };
 
 /* Static information about each mode_suffix_index.  */
-constexpr const mode_suffix_info mode_suffixes[] = {
-#define VECTOR_TYPE_none NUM_VECTOR_TYPES
-#define DEF_SVE_MODE(NAME, BASE, DISPLACEMENT, UNITS) \
-  { "_" #NAME, VECTOR_TYPE_##BASE, VECTOR_TYPE_##DISPLACEMENT, UNITS_##UNITS },
+constexpr mode_suffix_info mode_suffixes[] = {
+#define DEF_SVE_MODE(NAME, BASE, DISPLACEMENT, UNITS)		  \
+  { /* .string			 = */ "_" #NAME,		  \
+    /* .base_vector_type	 = */ VECTOR_TYPE_##BASE,	  \
+    /* .displacement_vector_type = */ VECTOR_TYPE_##DISPLACEMENT, \
+    /* .displacement_units	 = */ UNITS_##UNITS },
 #include "aarch64-sve-builtins.def"
-#undef VECTOR_TYPE_none
-  {"", NUM_VECTOR_TYPES, NUM_VECTOR_TYPES, UNITS_none}};
-
-/* Static information about each type_suffix_index.  */
-constexpr const type_suffix_info type_suffixes[NUM_TYPE_SUFFIXES + 1] = {
-#define DEF_SVE_NEON_TYPE_SUFFIX(NAME, ACLE_TYPE, CLASS, BITS, MODE, \
-				 NEON64, NEON128) \
-  { "_" #NAME, \
-    VECTOR_TYPE_##ACLE_TYPE, \
-    TYPE_##CLASS, \
-    BITS, \
-    BITS / BITS_PER_UNIT, \
-    TYPE_##CLASS == TYPE_signed || TYPE_##CLASS == TYPE_unsigned, \
-    TYPE_##CLASS == TYPE_unsigned, \
-    TYPE_##CLASS == TYPE_float || TYPE_##CLASS == TYPE_bfloat, \
-    TYPE_##CLASS != TYPE_bool, \
-    TYPE_##CLASS == TYPE_bool, \
-    false, \
-    0, \
-    MODE, \
-    NEON64, \
-    NEON128 },
-#define DEF_SVE_TYPE_SUFFIX(NAME, ACLE_TYPE, CLASS, BITS, MODE) \
-  DEF_SVE_NEON_TYPE_SUFFIX (NAME, ACLE_TYPE, CLASS, BITS, MODE, \
-			    ARM_NEON_H_TYPES_LAST, ARM_NEON_H_TYPES_LAST)
-#define DEF_SME_ZA_SUFFIX(NAME, BITS, MODE) \
-  { "_" #NAME, \
-    NUM_VECTOR_TYPES, \
-    NUM_TYPE_CLASSES, \
-    BITS, \
-    BITS / BITS_PER_UNIT, \
-    false, \
-    false, \
-    false, \
-    false, \
-    false, \
-    true, \
-    0, \
-    MODE, \
-    ARM_NEON_H_TYPES_LAST, \
-    ARM_NEON_H_TYPES_LAST },
-#include "aarch64-sve-builtins.def"
-  { "", NUM_VECTOR_TYPES, TYPE_bool, 0, 0, false, false, false, false,
-    false, false, 0, VOIDmode, ARM_NEON_H_TYPES_LAST, ARM_NEON_H_TYPES_LAST }
+  { "", VECTOR_TYPE_none, VECTOR_TYPE_none, UNITS_none }
 };
 
-constexpr const group_suffix_info group_suffixes[] = {
+/* Static information about each type_suffix_index.  */
+constexpr type_suffix_info type_suffixes[NUM_TYPE_SUFFIXES + 1] = {
+#define DEF_SVE_NEON_TYPE_SUFFIX(NAME, ACLE_TYPE, CLASS, BITS, MODE, \
+				 NEON64, NEON128)	  \
+  { /* .string	      = */ "_" #NAME,			  \
+    /* .vector_type   = */ VECTOR_TYPE_##ACLE_TYPE,	  \
+    /* .tclass	      = */ TYPE_##CLASS,		  \
+    /* .element_bits  = */ BITS,			  \
+    /* .element_bytes = */ BITS / BITS_PER_UNIT,	  \
+    /* .integer_p     = */ TYPE_##CLASS == TYPE_signed    \
+			|| TYPE_##CLASS == TYPE_unsigned, \
+    /* .unsigned_p    = */ TYPE_##CLASS == TYPE_unsigned, \
+    /* .float_p	      = */ TYPE_##CLASS == TYPE_float     \
+			|| TYPE_##CLASS == TYPE_bfloat,   \
+    /* .vector_p      = */ TYPE_##CLASS != TYPE_bool,     \
+    /* .bool_p	      = */ TYPE_##CLASS == TYPE_bool,     \
+    /* .za_p	      = */ false,			  \
+    /* .spare	      = */ 0,				  \
+    /* .vector_mode   = */ MODE,			  \
+    /* .neon64_type   = */ NEON64,			  \
+    /* .neon128_type  = */ NEON128 },
+#define DEF_SME_ZA_SUFFIX(NAME, BITS, MODE)	  \
+  { /* .string	      = */ "_" #NAME,		  \
+    /* .vector_type   = */ NUM_VECTOR_TYPES,	  \
+    /* .tclass	      = */ NUM_TYPE_CLASSES,	  \
+    /* .element_bits  = */ BITS,		  \
+    /* .element_bytes = */ BITS / BITS_PER_UNIT,  \
+    /* .integer_p     = */ false,		  \
+    /* .unsigned_p    = */ false,		  \
+    /* .float_p       = */ false,		  \
+    /* .vector_p      = */ false,		  \
+    /* .bool_p	      = */ false,		  \
+    /* .za_p	      = */ true,		  \
+    /* .spare	      = */ 0,			  \
+    /* .vector_mode   = */ MODE,		  \
+    /* .neon64_type   = */ ARM_NEON_H_TYPES_LAST, \
+    /* .neon128_type  = */ ARM_NEON_H_TYPES_LAST },
+#include "aarch64-sve-builtins.def"
+  { "", NUM_VECTOR_TYPES, TYPE_bool, 0, 0, false, false, false, false, false,
+   false, 0, VOIDmode, ARM_NEON_H_TYPES_LAST, ARM_NEON_H_TYPES_LAST }
+};
+
+constexpr group_suffix_info group_suffixes[] = {
 #define DEF_SVE_GROUP_SUFFIX(NAME, VG, VECTORS_PER_TUPLE) \
-  { "_" #NAME, VG, VECTORS_PER_TUPLE },
+  { /* .string		  = */ "_" #NAME,		  \
+    /* .vectors_per_group = */ VG,			  \
+    /* .vectors_per_tuple = */ VECTORS_PER_TUPLE },
 #include "aarch64-sve-builtins.def"
   { "", 0, 1 }
 };
@@ -197,34 +202,54 @@ constexpr const aarch64_acle::function_group_info neon_function_groups[] = {
 };
 
 /* A list of all arm_sve.h functions.  */
-static constexpr const function_group_info function_groups[] = {
+static constexpr function_group_info function_groups[] = {
 #define DEF_SVE_FUNCTION_GS_FPM(NAME, SHAPE, TYPES, GROUPS, PREDS, FPM_MODE) \
-  { #NAME, &functions::NAME, &shapes::SHAPE, types_##TYPES, groups_##GROUPS, \
-    preds_##PREDS, aarch64_required_extensions::REQUIRED_EXTENSIONS, \
-    FPM_##FPM_MODE },
+  { /* .base_name  = */ #NAME,						\
+    /* .base       = */ &functions::NAME,				\
+    /* .shape      = */ &shapes::SHAPE,					\
+    /* .types      = */ types_##TYPES,					\
+    /* .groups     = */ groups_##GROUPS,				\
+    /* .preds      = */ preds_##PREDS,					\
+    /* .extensions = */ aarch64_required_extensions::REQUIRED_EXTENSIONS, \
+    /* .fpm_mode   = */ FPM_##FPM_MODE },
 #include "aarch64-sve-builtins.def"
 };
 
 /* A list of all arm_neon_sve_bridge.h ACLE functions.  */
-static constexpr const function_group_info neon_sve_function_groups[] = {
+static constexpr function_group_info neon_sve_function_groups[] = {
 #define DEF_NEON_SVE_FUNCTION(NAME, SHAPE, TYPES, GROUPS, PREDS) \
-  { #NAME, &neon_sve_bridge_functions::NAME, &shapes::SHAPE, types_##TYPES, \
-    groups_##GROUPS, preds_##PREDS, aarch64_required_extensions::ssve (0), \
-    FPM_unused },
+  { /* .base_name  = */ #NAME,					 \
+    /* .base       = */ &neon_sve_bridge_functions::NAME,	 \
+    /* .shape      = */ &shapes::SHAPE,				 \
+    /* .types      = */ types_##TYPES,				 \
+    /* .groups     = */ groups_##GROUPS,			 \
+    /* .preds      = */ preds_##PREDS,				 \
+    /* .extensions = */ aarch64_required_extensions::ssve (0),	 \
+    /* .fpm_mode   = */ FPM_unused },
 #include "aarch64-neon-sve-bridge-builtins.def"
 };
 
 /* A list of all arm_sme.h functions.  */
-static constexpr const function_group_info sme_function_groups[] = {
+static constexpr function_group_info sme_function_groups[] = {
 #define DEF_SME_FUNCTION_GS_FPM(NAME, SHAPE, TYPES, GROUPS, PREDS, FPM_MODE) \
-  { #NAME, &functions::NAME, &shapes::SHAPE, types_##TYPES, groups_##GROUPS, \
-    preds_##PREDS, aarch64_required_extensions::REQUIRED_EXTENSIONS, \
-    FPM_##FPM_MODE },
+  { /* .base_name  = */ #NAME,						\
+    /* .base       = */ &functions::NAME,				\
+    /* .shape      = */ &shapes::SHAPE,					\
+    /* .types      = */ types_##TYPES,					\
+    /* .groups     = */ groups_##GROUPS,				\
+    /* .preds      = */ preds_##PREDS,					\
+    /* .extensions = */ aarch64_required_extensions::REQUIRED_EXTENSIONS, \
+    /* .fpm_mode   = */ FPM_##FPM_MODE },
 #define DEF_SME_ZA_FUNCTION_GS_FPM(NAME, SHAPE, TYPES, GROUPS, PREDS, FPM_MODE) \
-  { #NAME, &functions::NAME##_za, &shapes::SHAPE, types_##TYPES, \
-    groups_##GROUPS, preds_##PREDS, \
-    aarch64_required_extensions::REQUIRED_EXTENSIONS \
-      .and_also (AARCH64_FL_ZA_ON), FPM_##FPM_MODE },
+  { /* .base_name  = */ #NAME,					  \
+    /* .base       = */ &functions::NAME##_za,			  \
+    /* .shape      = */ &shapes::SHAPE,				  \
+    /* .types      = */ types_##TYPES,				  \
+    /* .groups     = */ groups_##GROUPS,			  \
+    /* .preds      = */ preds_##PREDS,				  \
+    /* .extensions = */ aarch64_required_extensions::REQUIRED_EXTENSIONS \
+			.and_also (AARCH64_FL_ZA_ON),		  \
+    /* .fpm_mode   = */ FPM_##FPM_MODE },
 #include "aarch64-sve-builtins-sme.def"
 };
 
@@ -3737,8 +3762,8 @@ function_expander::use_contiguous_store_insn (insn_code icode)
 rtx
 function_expander::map_to_rtx_codes (rtx_code code_for_sint,
 				     rtx_code code_for_uint,
-				     int unspec_for_cond_fp,
-				     int unspec_for_uncond_fp,
+				     unspec unspec_for_cond_fp,
+				     unspec unspec_for_uncond_fp,
 				     unsigned int merge_argno)
 {
   machine_mode mode = tuple_mode (0);
@@ -3814,13 +3839,13 @@ function_expander::map_to_rtx_codes (rtx_code code_for_sint,
    MERGE_ARGNO is the argument that provides the values of inactive lanes for
    _m functions, or DEFAULT_MERGE_ARGNO if we should apply the usual rules.  */
 rtx
-function_expander::map_to_unspecs (int unspec_for_sint, int unspec_for_uint,
-				   int unspec_for_fp, unsigned int merge_argno)
+function_expander::map_to_unspecs (unspec unspec_for_sint, unspec unspec_for_uint,
+				   unspec unspec_for_fp, unsigned int merge_argno)
 {
   machine_mode mode = tuple_mode (0);
-  int unspec = (!type_suffix (0).integer_p ? unspec_for_fp
-		: type_suffix (0).unsigned_p ? unspec_for_uint
-		: unspec_for_sint);
+  unspec unspec = (!type_suffix (0).integer_p ? unspec_for_fp
+		   : type_suffix (0).unsigned_p ? unspec_for_uint
+						: unspec_for_sint);
 
   if (mode_suffix_id == MODE_single)
     {
