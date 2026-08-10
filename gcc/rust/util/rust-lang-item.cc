@@ -55,6 +55,7 @@ const BiMap<std::string, LangItem::Kind> Rust::LangItem::lang_items = {{
   {"RangeTo", Kind::RANGE_TO},
   {"RangeInclusive", Kind::RANGE_INCLUSIVE},
   {"RangeToInclusive", Kind::RANGE_TO_INCLUSIVE},
+  {"range_inclusive_new", Kind::RANGE_INCLUSIVE_NEW},
   {"phantom_data", Kind::PHANTOM_DATA},
   {"fn", Kind::FN},
   {"fn_mut", Kind::FN_MUT},
@@ -123,9 +124,23 @@ const BiMap<std::string, LangItem::Kind> Rust::LangItem::lang_items = {{
   {"discriminant_kind", Kind::DISCRIMINANT_KIND},
   {"discriminant_type", Kind::DISCRIMINANT_TYPE},
   {"manually_drop", Kind::MANUALLY_DROP},
+  {"drop_in_place", Kind::DROP_IN_PLACE},
 
   {"exchange_malloc", Kind::EXCHANGE_MALLOC},
   {"owned_box", Kind::OWNED_BOX},
+  {"oom", Kind::OOM},
+  {"alloc_layout", Kind::ALLOC_LAYOUT},
+  {"box_free", Kind::BOX_FREE},
+  {"maybe_uninit", Kind::MAYBE_UNINIT},
+
+  {"unsafe_cell", Kind::UNSAFE_CELL},
+
+  {"future_trait", Kind::FUTURE_TRAIT},
+  {"poll", Kind::POLL},
+  {"Ready", Kind::READY},
+  {"Pending", Kind::PENDING},
+  {"generator", Kind::GENERATOR},
+  {"generator_state", Kind::GENERATOR_STATE},
 }};
 
 tl::optional<LangItem::Kind>

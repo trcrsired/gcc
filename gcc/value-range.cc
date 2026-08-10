@@ -292,9 +292,9 @@ unsupported_range::zero_p () const
 }
 
 bool
-unsupported_range::nonzero_p () const
+unsupported_range::contains_zero_p () const
 {
-  return false;
+  return varying_p ();
 }
 
 void
@@ -1691,29 +1691,12 @@ frange::set_nonzero (tree type)
   set (type, dconstm0, dconst0, VR_ANTI_RANGE);
 }
 
-// Return TRUE when this range is exactly the "everything but zero" set that
-// set_nonzero builds, mirroring irange::nonzero_p.  Callers wanting "does not
-// contain zero" should use the !contains_p (0) idiom.
-//
-// A NAN is not a zero, so nonzero-ness depends only on the intervals, not on
-// whether the range may also be a NAN.  We therefore recognize the nonzero
-// range by comparing intervals against set_nonzero's with the NAN state
-// ignored.  A strict *this == set_nonzero () would be wrong: set_nonzero
-// leaves the NAN able to be either sign, so a range that is otherwise exactly
-// nonzero but whose NAN has been cleared would compare unequal.
+// Return TRUE if the range contains zero (+0.0 or -0.0).
 
 bool
-frange::nonzero_p () const
+frange::contains_zero_p () const
 {
-  if (undefined_p () || known_isnan ())
-    return false;
-
-  frange nz;
-  nz.set_nonzero (type ());
-  nz.clear_nan ();
-  frange tmp = *this;
-  tmp.clear_nan ();
-  return tmp == nz;
+  return contains_p (dconst0) || contains_p (dconstm0);
 }
 
 // Set range to [+0.0, +0.0] if honoring signed zeros, or [0.0, 0.0]
@@ -1765,6 +1748,92 @@ tree
 frange::ubound () const
 {
   return build_real (type (), upper_bound ());
+}
+
+/* Widen a single bound of a sub-range by 1ulp (or 0.5ulp) in the direction of
+   DIR.  */
+
+static REAL_VALUE_TYPE
+float_widen_bound (tree type, const REAL_VALUE_TYPE &bound,
+		   const REAL_VALUE_TYPE &dir)
+{
+  REAL_VALUE_TYPE res = bound;
+  if (!real_isfinite (&bound) && real_isneg (&bound) == real_isneg (&dir))
+    return res;
+  frange_nextafter (TYPE_MODE (type), res, dir);
+  if (real_isinf (&res))
+    {
+      /* For +-DBL_MAX, instead of +-Inf use nexttoward (+-DBL_MAX, +-LDBL_MAX)
+	 in a hypothetical wider type with the same mantissa precision but
+	 larger exponent range; it is outside of range of double values, but
+	 makes it clear it is just one ulp larger rather than infinite amount
+	 larger.  */
+      res = real_isneg (&dir) ? dconstm1 : dconst1;
+      SET_REAL_EXP (&res, FLOAT_MODE_FORMAT (TYPE_MODE (type))->emax + 1);
+    }
+  if (!flag_rounding_math
+      && !MODE_COMPOSITE_P (TYPE_MODE (type))
+      && real_isfinite (&bound))
+    {
+      /* If not -frounding-math nor IBM double double, actually widen
+	 just by 0.5ulp rather than 1ulp.  */
+      REAL_VALUE_TYPE tem;
+      real_arithmetic (&tem, PLUS_EXPR, &bound, &res);
+      real_arithmetic (&res, RDIV_EXPR, &tem, &dconst2);
+    }
+  return res;
+}
+
+/* Extend the *this range by 1ulp in each direction.  For op1_range
+   or op2_range of binary operations just computing the inverse
+   operation on ranges isn't sufficient.  Consider e.g.
+   [1., 1.] = op1 + [1., 1.].  op1's range is not [0., 0.], but
+   [-0x1.0p-54, 0x1.0p-53] (when not -frounding-math), any value for
+   which adding 1. to it results in 1. after rounding to nearest.
+   So, for op1_range/op2_range extend the lhs range by 1ulp (or 0.5ulp)
+   in each direction.  See PR109008 for more details.  */
+
+void
+frange::widen (tree type)
+{
+  if (known_isnan ())
+    return;
+  /* Temporarily disable -ffinite-math-only, so that frange::set doesn't
+     reduce the range back to real_min_representable (type) as lower bound
+     or real_max_representable (type) as upper bound.  */
+  bool save_flag_finite_math_only = flag_finite_math_only;
+  flag_finite_math_only = false;
+  unsigned j = 0;
+  for (unsigned i = 0; i < num_pairs (); ++i)
+    {
+      REAL_VALUE_TYPE lb = float_widen_bound (type, lower_bound (i),
+					      dconstninf);
+      REAL_VALUE_TYPE ub = float_widen_bound (type, upper_bound (i),
+					      dconstinf);
+      /* The result of float_widen_bound is often not representable in
+	 type (could be smaller by 1ulp from representable finite minimum,
+	 0.5ulp from some representable finite value or 1ulp larger than
+	 representable finite maximum).  On such values calling e.g.
+	 frange_nextafter doesn't work properly, so avoid merging the
+	 pairs with union_ because that calls frange_fusible_p etc.
+	 This range is often just something that should have the
+	 real values passed to frange_arithmetic etc. and have the result
+	 of that converted to something actually representable in the
+	 type.  See PR126641 and PR109008.  As lhs should have been
+	 canonicalized before, the slightly adjusted range should have
+	 similar properties, just merge pairs where max would be >= than
+	 min of the next pair.  */
+      if (j && !real_less (&m_pairs[j - 1].max, &lb))
+	m_pairs[j - 1].max = ub;
+      else
+	{
+	  m_pairs[j].min = lb;
+	  m_pairs[j].max = ub;
+	  ++j;
+	}
+    }
+  m_num_ranges = j;
+  flag_finite_math_only = save_flag_finite_math_only;
 }
 
 // Here we copy between any two irange's.
@@ -1857,7 +1926,10 @@ get_legacy_range (const prange &r, tree &min, tree &max)
       min = max = r.lbound ();
       return VR_RANGE;
     }
-  if (r.nonzero_p ())
+  prange nonzero (type);
+  nonzero.set_nonzero (type);
+  if (r.lower_bound () == nonzero.lower_bound ()
+      && r.upper_bound () == nonzero.upper_bound ())
     {
       min = max = build_zero_cst (type);
       return VR_ANTI_RANGE;
@@ -3583,10 +3655,10 @@ range_tests_misc ()
   r0 = range_int (0, 0);
   ASSERT_TRUE (r0.zero_p ());
 
-  // Test nonzero_p().
+  // Test contains_zero_p().
   r0 = range_int (0, 0);
   r0.invert ();
-  ASSERT_TRUE (r0.nonzero_p ());
+  ASSERT_FALSE (r0.contains_zero_p ());
 
   // r0 = ~[1,1]
   r0 = range_int (1, 1, VR_ANTI_RANGE);
@@ -3844,26 +3916,25 @@ range_tests_sub_ranges_zero ()
 
   // Excluding zero from [-0.0, 5.0] eats the lower end entirely.
   r0.set_nonzero (float_type_node);
-  ASSERT_TRUE (r0.nonzero_p ());
+  ASSERT_FALSE (r0.contains_zero_p ());
   ASSERT_FALSE (r0.contains_p (dconst0));
   ASSERT_FALSE (r0.contains_p (dconstm0));
 
-  // A NAN is not a zero, so clearing the NAN leaves a nonzero range nonzero.
+  // A NAN is not a zero, so clearing the NAN leaves the range nonzero.
   r0.clear_nan ();
-  ASSERT_TRUE (r0.nonzero_p ());
+  ASSERT_FALSE (r0.contains_zero_p ());
 
-  // A range that merely avoids zero is not the nonzero range.
+  // A range that avoids zero does not contain zero.
   r0 = frange_float ("1.0", "10.0");
-  ASSERT_FALSE (r0.nonzero_p ());
+  ASSERT_FALSE (r0.contains_zero_p ());
 
-  // Excluding zero from [-0.0, 5.0] leaves (0, 5]: it avoids zero but is not
-  // the whole nonzero range.
+  // Excluding zero from [-0.0, 5.0] leaves (0, 5], which does not contain zero.
   r0 = frange_float ("-0.0", "5.0");
   r0.clear_nan ();
   r1 = frange_float_excluding ("0.0");
   r0.intersect (r1);
   ASSERT_EQ (r0.num_pairs (), 1);
-  ASSERT_FALSE (r0.nonzero_p ());
+  ASSERT_FALSE (r0.contains_zero_p ());
   ASSERT_FALSE (r0.contains_p (dconst0));
   ASSERT_FALSE (r0.contains_p (dconstm0));
   ASSERT_TRUE (r0.contains_p (real_from_str ("5.0")));

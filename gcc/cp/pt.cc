@@ -14379,33 +14379,40 @@ tsubst_pack_expansion (tree t, tree args, tsubst_flags_t complain,
       else if (DECL_DECOMPOSITION_P (parm_pack))
 	{
 	  orig_arg = retrieve_local_specialization (parm_pack);
-	expand_sb_pack:
-	  gcc_assert (DECL_DECOMPOSITION_P (orig_arg));
-	  if (TREE_TYPE (orig_arg) == error_mark_node)
-	    return error_mark_node;
-	  gcc_assert (DECL_HAS_VALUE_EXPR_P (orig_arg));
-	  arg_pack = DECL_VALUE_EXPR (orig_arg);
-	  if (TREE_CODE (arg_pack) != ARRAY_REF)
+	  if (DECL_DECOMPOSITION_P (orig_arg))
 	    {
-	      /* Structured binding packs when initializer is non-dependent
-		 should have their DECL_VALUE_EXPR set to a TREE_VEC.  See
-		 cp_finish_decomp comment above the packv variable for
-		 details.  */
-	      tree vec = make_tree_vec (TREE_VEC_LENGTH (arg_pack) - 2);
-	      if (TREE_VEC_LENGTH (vec))
-		memcpy (TREE_VEC_BEGIN (vec), &TREE_VEC_ELT (arg_pack, 2),
-			TREE_VEC_LENGTH (vec) * sizeof (tree));
-	      arg_pack = make_node (NONTYPE_ARGUMENT_PACK);
-	      ARGUMENT_PACK_ARGS (arg_pack) = vec;
+	    expand_sb_pack:
+	      if (TREE_TYPE (orig_arg) == error_mark_node)
+		return error_mark_node;
+	      gcc_assert (DECL_HAS_VALUE_EXPR_P (orig_arg));
+	      arg_pack = DECL_VALUE_EXPR (orig_arg);
+	      if (TREE_CODE (arg_pack) != ARRAY_REF)
+		{
+		  /* Structured binding packs when initializer is non-dependent
+		     should have their DECL_VALUE_EXPR set to a TREE_VEC.  See
+		     cp_finish_decomp comment above the packv variable for
+		     details.  */
+		  tree vec = make_tree_vec (TREE_VEC_LENGTH (arg_pack) - 2);
+		  if (TREE_VEC_LENGTH (vec))
+		    memcpy (TREE_VEC_BEGIN (vec), &TREE_VEC_ELT (arg_pack, 2),
+			    TREE_VEC_LENGTH (vec) * sizeof (tree));
+		  arg_pack = make_node (NONTYPE_ARGUMENT_PACK);
+		  ARGUMENT_PACK_ARGS (arg_pack) = vec;
+		}
+	      else
+		{
+		  /* If the structured binding pack has type dependent
+		     base, we can't expand it yet.  */
+		  tree base = TREE_OPERAND (arg_pack, 0);
+		  gcc_assert (VAR_P (base)
+			      && type_dependent_expression_p (base));
+		  arg_pack = NULL_TREE;
+		}
 	    }
 	  else
 	    {
-	      /* If the structured binding pack has type dependent
-		 base, we can't expand it yet.  */
-	      tree base = TREE_OPERAND (arg_pack, 0);
-	      gcc_assert (VAR_P (base)
-			  && type_dependent_expression_p (base));
-	      arg_pack = NULL_TREE;
+	      gcc_assert (TREE_CODE (orig_arg) == ARGUMENT_PACK_SELECT);
+	      arg_pack = orig_arg;
 	    }
 	}
       else
@@ -33866,6 +33873,7 @@ finish_expansion_stmt (tree expansion_stmt, tree args,
       DECL_NAME (decl) = NULL_TREE;
     }
 
+  tree stmt_list = push_stmt_list ();
   expansion_stmt_bc bc_data = { NULL_TREE, NULL_TREE, NULL, loc, false };
 
   for (unsigned HOST_WIDE_INT i = 0; i < n; ++i)
@@ -34065,7 +34073,19 @@ finish_expansion_stmt (tree expansion_stmt, tree args,
 	}
     }
   if (bc_data.break_label)
-    add_stmt (build1 (LABEL_EXPR, void_type_node, bc_data.break_label));
+    {
+      /* If break; is seen, wrap all the expansion stmt bodies in
+	 a single artificial do ... while (0); statement, so that
+	 constant evaluation handles break; correctly.  */
+      tree do_stmt
+	= build_stmt (loc, DO_STMT, NULL_TREE, NULL_TREE, NULL_TREE);
+      DO_COND (do_stmt) = boolean_false_node;
+      DO_BODY (do_stmt) = pop_stmt_list (stmt_list);
+      add_stmt (do_stmt);
+      add_stmt (build1 (LABEL_EXPR, void_type_node, bc_data.break_label));
+    }
+  else
+    add_stmt (pop_stmt_list (stmt_list));
   if (args == NULL_TREE)
     {
       TREE_TYPE (range_decl) = error_mark_node;

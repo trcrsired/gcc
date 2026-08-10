@@ -256,6 +256,10 @@ public:
   // primitives
   bool is_concrete () const;
 
+  // returns if the type is a zero-sized type, which is a type that occupies no
+  // space in memory
+  bool is_zero_sized () const;
+
   // return the type-kind
   TypeKind get_kind () const;
 
@@ -351,6 +355,8 @@ public:
   // Overridden by const types that also inherit from BaseConstType
   virtual BaseConstType *as_const_type () { return nullptr; }
   virtual const BaseConstType *as_const_type () const { return nullptr; }
+
+  virtual bool contains_unsafe_cell () const { return false; }
 
 protected:
   BaseType (HirId ref, HirId ty_ref, TypeKind kind, RustIdent ident,
@@ -775,6 +781,8 @@ public:
 
   bool is_equal (const BaseType &other) const override;
 
+  bool is_zero_sized () const;
+
   size_t num_fields () const;
 
   BaseType *get_field (size_t index) const;
@@ -786,6 +794,8 @@ public:
   std::string get_name () const override final;
 
   TupleType *handle_substitions (SubstitutionArgumentMappings &mappings);
+
+  bool contains_unsafe_cell () const override;
 
 private:
   std::vector<TyVar> fields;
@@ -910,7 +920,7 @@ public:
     INT,
     ALIGN,
     PACKED,
-    // TRANSPARENT,
+    TRANSPARENT,
     // SIMD,
     // ...
   };
@@ -974,6 +984,8 @@ public:
 
   bool is_equal (const BaseType &other) const override;
 
+  bool is_zero_sized () const;
+
   std::string get_identifier () const { return identifier; }
 
   std::string get_name () const override final
@@ -1026,6 +1038,8 @@ public:
 
   ADTType *
   handle_substitions (SubstitutionArgumentMappings &mappings) override final;
+
+  bool contains_unsafe_cell () const override;
 
 private:
   DefId id;
@@ -1375,6 +1389,8 @@ public:
 
   bool is_equal (const BaseType &other) const override;
 
+  bool is_zero_sized () const;
+
   BaseType *get_element_type () const;
   const TyVar &get_var_element_type () const;
 
@@ -1384,6 +1400,8 @@ public:
   const TyVar &get_capacity_var () const { return capacity; }
 
   ArrayType *handle_substitions (SubstitutionArgumentMappings &mappings);
+
+  bool contains_unsafe_cell () const override;
 
 private:
   TyVar element_type;
@@ -1424,6 +1442,8 @@ public:
   BaseType *clone () const final override;
 
   SliceType *handle_substitions (SubstitutionArgumentMappings &mappings);
+
+  bool contains_unsafe_cell () const override;
 
 private:
   TyVar element_type;

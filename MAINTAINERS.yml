@@ -612,6 +612,7 @@ users:
   cn: Tobias Burnus
   email:
   - tburnus@baylibre.com
+  - burnus@net-b.de
   - burnus@gcc.gnu.org
   roles:
   - Maintainer: libgomp
@@ -2235,6 +2236,7 @@ users:
   - jskumari@linux.ibm.com
   - jskumari@gcc.gnu.org
   roles:
+  - Reviewer: rs6000/powerpc port
   - WriteAfter
   account: jskumari
 - sn: Jayakar
@@ -3313,11 +3315,10 @@ users:
 - sn: Meissner
   cn: Michael Meissner
   email:
-  - gnu@the-meissners.org
   - meissner@gcc.gnu.org
   roles:
   - Global
-  - Maintainer: scheduler (+ haifa)
+  - Maintainer: rs6000/powerpc port
   - WriteAfter
   account: meissner
   inactive: true

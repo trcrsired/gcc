@@ -74,6 +74,7 @@
   UNSPECV_MCOUNT
   UNSPECV_FORCE_MOV
   UNSPECV_LDGP1
+  UNSPECV_LDGP2
   UNSPECV_PLDGP2	; prologue ldgp
   UNSPECV_SET_TP
   UNSPECV_RPCC
@@ -2236,21 +2237,28 @@
    (use (match_operand:TF 1 "general_operand"))]
   "TARGET_FP && TARGET_HAS_XFLOATING_LIBS"
 {
-  rtx tmpf, sticky, arg, lo, hi;
+  rtx tmpf, sticky, arg, lo, discarded, kept;
+  HOST_WIDE_INT mask = ((HOST_WIDE_INT) 1 << 60) - 1;
 
   tmpf = gen_reg_rtx (DFmode);
   sticky = gen_reg_rtx (DImode);
   arg = copy_to_mode_reg (TFmode, operands[1]);
   lo = gen_lowpart (DImode, arg);
-  hi = gen_highpart (DImode, arg);
 
-  /* Convert the low word of the TFmode value into a sticky rounding bit,
-     then or it into the low bit of the high word.  This leaves the sticky
-     bit at bit 48 of the fraction, which is representable in DFmode,
-     which prevents rounding error in the final conversion to SFmode.  */
+  /* Round to odd at the last fraction bit DFmode keeps, so that the
+     conversion to DFmode is exact and the one to SFmode is the only
+     rounding.  DFmode keeps 52 fraction bits; the high word holds the first
+     48 of the 112 and the low word the rest, so that is bit 60 of the low
+     word.  Replace everything below it with a sticky bit.  */
 
-  emit_insn (gen_rtx_SET (sticky, gen_rtx_NE (DImode, lo, const0_rtx)));
-  emit_insn (gen_iordi3 (hi, hi, sticky));
+  discarded = expand_binop (DImode, and_optab, lo, GEN_INT (mask),
+			    NULL_RTX, 1, OPTAB_LIB_WIDEN);
+  emit_insn (gen_rtx_SET (sticky, gen_rtx_NE (DImode, discarded, const0_rtx)));
+  kept = expand_binop (DImode, and_optab, lo, GEN_INT (~mask),
+		       NULL_RTX, 1, OPTAB_LIB_WIDEN);
+  sticky = expand_shift (LSHIFT_EXPR, DImode, sticky, 60, NULL_RTX, 1);
+  emit_move_insn (lo, expand_binop (DImode, ior_optab, kept, sticky,
+				    NULL_RTX, 1, OPTAB_LIB_WIDEN));
   emit_insn (gen_trunctfdf2 (tmpf, arg));
   emit_insn (gen_truncdfsf2 (operands[0], tmpf));
   DONE;
@@ -5081,6 +5089,20 @@
   "lda %0,0(%1)\t\t!gpdisp!%2"
   [(set_attr "cannot_copy" "true")])
 
+;; Same as *ldgp_er_2, but for the pairs whose first half is the
+;; unspec_volatile *ldgp_er_1.  Both halves of a gpdisp pair have to be
+;; equally deletable: a plain unspec here is removed by DCE as soon as $29
+;; turns out to be unused, and the ldah left behind makes the assembler
+;; complain about a missing lda.
+(define_insn "*ldgp_er_2_v"
+  [(set (match_operand:DI 0 "register_operand" "=r")
+	(unspec_volatile:DI [(match_operand:DI 1 "register_operand" "r")
+			     (match_operand 2 "const_int_operand")]
+			    UNSPECV_LDGP2))]
+  "TARGET_EXPLICIT_RELOCS && TARGET_ABI_OSF"
+  "lda %0,0(%1)\t\t!gpdisp!%2"
+  [(set_attr "cannot_copy" "true")])
+
 (define_insn "*prologue_ldgp_er_2"
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(unspec_volatile:DI [(match_operand:DI 1 "register_operand" "r")
@@ -5213,7 +5235,7 @@
   [(set (match_dup 1)
 	(unspec_volatile:DI [(match_dup 2) (match_dup 3)] UNSPECV_LDGP1))
    (set (match_dup 1)
-	(unspec:DI [(match_dup 1) (match_dup 3)] UNSPEC_LDGP2))]
+	(unspec_volatile:DI [(match_dup 1) (match_dup 3)] UNSPECV_LDGP2))]
 {
   if (prev_nonnote_insn (curr_insn) != XEXP (operands[0], 0))
     emit_insn (gen_rtx_UNSPEC_VOLATILE (VOIDmode, gen_rtvec (1, operands[0]),
@@ -5266,7 +5288,7 @@
   [(set (match_dup 0)
 	(unspec_volatile:DI [(match_dup 1) (match_dup 2)] UNSPECV_LDGP1))
    (set (match_dup 0)
-	(unspec:DI [(match_dup 0) (match_dup 2)] UNSPEC_LDGP2))]
+	(unspec_volatile:DI [(match_dup 0) (match_dup 2)] UNSPECV_LDGP2))]
 {
   operands[0] = pic_offset_table_rtx;
   operands[1] = gen_rtx_REG (Pmode, 26);

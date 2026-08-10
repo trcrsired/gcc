@@ -2533,6 +2533,9 @@ extern bool vect_is_simple_use (vec_info *, slp_tree,
 				unsigned, tree *, slp_tree *,
 				enum vect_def_type *,
 				tree *, stmt_vec_info * = NULL);
+extern bool vect_is_simple_use (vec_info *, slp_tree,
+				unsigned, slp_tree *,
+				enum vect_def_type *, tree *);
 extern bool vect_maybe_update_slp_op_vectype (slp_tree, tree);
 extern tree perm_mask_for_reverse (tree);
 extern bool supportable_widening_operation (code_helper, tree, tree, bool,
@@ -2544,7 +2547,6 @@ extern bool supportable_narrowing_operation (code_helper, tree, tree,
 extern bool supportable_indirect_convert_operation (code_helper,
 						    tree, tree,
 						    vec<std::pair<tree, tree_code> > &,
-						    tree = NULL_TREE,
 						    slp_tree = NULL);
 extern int compare_step_with_zero (vec_info *, stmt_vec_info);
 
@@ -2590,10 +2592,10 @@ extern void vect_finish_stmt_generation (vec_info *, stmt_vec_info, gimple *,
 extern opt_result vect_mark_stmts_to_be_vectorized (loop_vec_info, bool *);
 extern tree vect_get_store_rhs (stmt_vec_info);
 void vect_get_vec_defs (vec_info *, slp_tree,
-			tree, vec<tree> *,
-			tree = NULL, vec<tree> * = NULL,
-			tree = NULL, vec<tree> * = NULL,
-			tree = NULL, vec<tree> * = NULL);
+			bool, vec<tree> *,
+			bool = false, vec<tree> * = NULL,
+			bool = false, vec<tree> * = NULL,
+			bool = false, vec<tree> * = NULL);
 extern tree vect_init_vector (vec_info *, stmt_vec_info, tree, tree,
                               gimple_stmt_iterator *);
 extern tree vect_get_slp_vect_def (slp_tree, unsigned);

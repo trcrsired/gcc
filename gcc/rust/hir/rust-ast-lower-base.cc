@@ -504,12 +504,6 @@ void
 ASTLoweringBase::visit (AST::GroupedPattern &)
 {}
 void
-ASTLoweringBase::visit (AST::SlicePatternItemsNoRest &)
-{}
-void
-ASTLoweringBase::visit (AST::SlicePatternItemsHasRest &)
-{}
-void
 ASTLoweringBase::visit (AST::SlicePattern &)
 {}
 void
@@ -853,6 +847,28 @@ ASTLoweringBase::handle_doc_item_attribute (const ItemWrapper &,
   rust_assert (meta_item);
 }
 
+static void
+warn_if_stub_lang_item (location_t locus, LangItem::Kind kind)
+{
+  switch (kind)
+    {
+    case LangItem::Kind::FUTURE_TRAIT:
+    case LangItem::Kind::POLL:
+    case LangItem::Kind::READY:
+    case LangItem::Kind::PENDING:
+    case LangItem::Kind::GENERATOR:
+    case LangItem::Kind::GENERATOR_STATE:
+    case LangItem::Kind::MAYBE_UNINIT:
+    case LangItem::Kind::BOX_FREE:
+    case LangItem::Kind::DROP_IN_PLACE:
+      rust_warning_at (locus, 0, "%qs is not implemented and has no effect",
+		       LangItem::PrettyString (kind).c_str ());
+      break;
+    default:
+      break;
+    }
+}
+
 void
 ASTLoweringBase::handle_lang_item_attribute (const ItemWrapper &item,
 					     const AST::Attribute &attr)
@@ -863,8 +879,11 @@ ASTLoweringBase::handle_lang_item_attribute (const ItemWrapper &item,
   auto lang_item_type = LangItem::Parse (*lang_item_type_str);
 
   if (lang_item_type)
-    mappings.insert_lang_item (*lang_item_type,
-			       item.get_mappings ().get_defid ());
+    {
+      mappings.insert_lang_item (*lang_item_type,
+				 item.get_mappings ().get_defid ());
+      warn_if_stub_lang_item (attr.get_locus (), *lang_item_type);
+    }
   else
     rust_error_at (attr.get_locus (), "unknown lang item");
 }
@@ -914,41 +933,6 @@ ASTLoweringBase::lower_tuple_pattern_ranged (
 
   return std::unique_ptr<HIR::TuplePatternItems> (
     new HIR::TuplePatternItemsHasRest (std::move (lower_patterns),
-				       std::move (upper_patterns)));
-}
-
-std::unique_ptr<HIR::SlicePatternItems>
-ASTLoweringBase::lower_slice_pattern_no_rest (
-  AST::SlicePatternItemsNoRest &pattern)
-{
-  std::vector<std::unique_ptr<HIR::Pattern>> patterns;
-  patterns.reserve (pattern.get_patterns ().size ());
-  for (auto &p : pattern.get_patterns ())
-    patterns.emplace_back (ASTLoweringPattern::translate (*p));
-
-  return std::unique_ptr<HIR::SlicePatternItems> (
-    new HIR::SlicePatternItemsNoRest (std::move (patterns)));
-}
-
-std::unique_ptr<HIR::SlicePatternItems>
-ASTLoweringBase::lower_slice_pattern_has_rest (
-  AST::SlicePatternItemsHasRest &pattern)
-{
-  std::vector<std::unique_ptr<HIR::Pattern>> lower_patterns;
-  lower_patterns.reserve (pattern.get_lower_patterns ().size ());
-  std::vector<std::unique_ptr<HIR::Pattern>> upper_patterns;
-  upper_patterns.reserve (pattern.get_upper_patterns ().size ());
-
-  for (auto &p : pattern.get_lower_patterns ())
-    lower_patterns.emplace_back (
-      std::unique_ptr<HIR::Pattern> (ASTLoweringPattern::translate (*p)));
-
-  for (auto &p : pattern.get_upper_patterns ())
-    upper_patterns.emplace_back (
-      std::unique_ptr<HIR::Pattern> (ASTLoweringPattern::translate (*p)));
-
-  return std::unique_ptr<HIR::SlicePatternItems> (
-    new HIR::SlicePatternItemsHasRest (std::move (lower_patterns),
 				       std::move (upper_patterns)));
 }
 

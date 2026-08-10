@@ -55,6 +55,7 @@ const BiMap<std::string, BuiltinMacro> MacroBuiltin::builtins = {{
   {"env", BuiltinMacro::Env},
   {"option_env", BuiltinMacro::OptionEnv},
   {"cfg", BuiltinMacro::Cfg},
+  {"cfg_select", BuiltinMacro::CfgSelect},
   {"include", BuiltinMacro::Include},
   {"format_args", BuiltinMacro::FormatArgs},
   {"format_args_nl", BuiltinMacro::FormatArgsNl},
@@ -164,6 +165,8 @@ std::unordered_map<std::string, AST::MacroTranscriberFunc>
     /* offset_of is not declared in Rust 1.49 but still needed for
        Rust-for-Linux, so we still create a transcriber and warn the user */
     {"offset_of", MacroBuiltin::offset_of_handler},
+    /* cfg_select! is also not declared in Rust 1.49 but also needed for RfL */
+    {"cfg_select", MacroBuiltin::cfg_select_handler},
 };
 
 tl::optional<BuiltinMacro>

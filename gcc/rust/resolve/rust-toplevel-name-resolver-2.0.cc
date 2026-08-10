@@ -192,7 +192,8 @@ TopLevel::visit_extern_crate (AST::ExternCrate &extern_crate, AST::Crate &crate,
 	mappings.insert_bang_proc_macro_def (macro);
     }
 
-  visit (crate);
+  // We do *NOT* visit the crate because loaded crates are resolved
+  // independently.
 }
 
 static bool
@@ -390,6 +391,15 @@ TopLevel::visit (AST::TypeAlias &type_item)
   DefaultResolver::visit (type_item);
 }
 
+void
+TopLevel::visit (AST::ExternalTypeItem &type_item)
+{
+  insert_or_error_out (type_item.get_identifier (), type_item,
+		       Namespace::Types);
+
+  DefaultResolver::visit (type_item);
+}
+
 static void flatten_rebind (
   const AST::UseTreeRebind &glob,
   std::vector<std::pair<AST::SimplePath, AST::UseTreeRebind>> &rebind_paths);
@@ -430,7 +440,6 @@ flatten (
 	flatten_glob (*glob, glob_paths, ctx);
 	break;
       }
-      break;
     }
 }
 

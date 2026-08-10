@@ -59,6 +59,7 @@ public:
 
   // as well as lexical scopes
   void visit (AST::BlockExpr &) override;
+  void maybe_prelude_import () override;
   void visit (AST::Module &) override;
 
   void visit (AST::MacroInvocation &) override;
@@ -155,17 +156,6 @@ public:
       // we then access the second member of the pair to get access to the
       // vector directly.
       return iter.first->second;
-    }
-
-    void insert (NodeId path_id, std::vector<ImportPair> &&pairs)
-    {
-      mappings.insert ({{path_id}, std::move (pairs)});
-    }
-
-    // Same as `insert`, but with just one node
-    void insert (NodeId path_id, ImportPair &&pair)
-    {
-      mappings.insert ({{path_id}, {pair}});
     }
 
     std::vector<ImportPair> &get (NodeId use_id) { return mappings[use_id]; }

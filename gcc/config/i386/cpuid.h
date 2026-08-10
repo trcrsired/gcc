@@ -170,6 +170,10 @@
 /* Sub leaf (%eax == 0x21) */
 #define bit_AVX512BMM	( 1<<23 )
 
+/* AVX10 sub leaf (%eax == 0x24, %ecx == 1) */
+/* %ecx */
+#define bit_AVX10V2AUX	(1 << 3)
+
 /* AMX sub leaf (%eax == 0x1e, %ecx == 1) */
 /* %eax */
 #define bit_AMX_FP8	(1 << 4)
@@ -267,8 +271,9 @@
 
 
 /* Return highest supported input value for cpuid instruction.  ext can
-   be either 0x0 or 0x80000000 to return highest supported value for
-   basic or extended cpuid information.  Function returns 0 if cpuid
+   be either 0x0, 0x40000000, 0x80000000, or 0xC0000000 to return
+   highest supported value for basic, hypervisor, extended, or
+   Centaur/Zhaoxin cpuid information.  Function returns 0 if cpuid
    is not supported or whatever cpuid returns in eax register.  If sig
    pointer is non-null, then first four bytes of the signature
    (as found in ebx register) are returned in location pointed by sig.  */
@@ -333,7 +338,17 @@ __get_cpuid (unsigned int __leaf,
 	     unsigned int *__eax, unsigned int *__ebx,
 	     unsigned int *__ecx, unsigned int *__edx)
 {
-  unsigned int __ext = __leaf & 0x80000000;
+  unsigned int __ext;
+
+  if (__leaf >= 0xC0000000)
+    __ext = 0xC0000000;
+  else if (__leaf >= 0x80000000)
+    __ext = 0x80000000;
+  else if (__leaf >= 0x40000000)
+    __ext = 0x40000000;
+  else
+    __ext = 0x00000000;
+
   unsigned int __maxlevel = __get_cpuid_max (__ext, 0);
 
   if (__maxlevel == 0 || __maxlevel < __leaf)
@@ -350,7 +365,17 @@ __get_cpuid_count (unsigned int __leaf, unsigned int __subleaf,
 		   unsigned int *__eax, unsigned int *__ebx,
 		   unsigned int *__ecx, unsigned int *__edx)
 {
-  unsigned int __ext = __leaf & 0x80000000;
+  unsigned int __ext;
+
+  if (__leaf >= 0xC0000000)
+    __ext = 0xC0000000;
+  else if (__leaf >= 0x80000000)
+    __ext = 0x80000000;
+  else if (__leaf >= 0x40000000)
+    __ext = 0x40000000;
+  else
+    __ext = 0x00000000;
+
   unsigned int __maxlevel = __get_cpuid_max (__ext, 0);
 
   if (__builtin_expect (__maxlevel == 0, 0) || __maxlevel < __leaf)

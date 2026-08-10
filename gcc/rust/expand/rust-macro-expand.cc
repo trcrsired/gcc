@@ -29,6 +29,7 @@
 #include "rust-cfg-strip.h"
 #include "rust-proc-macro.h"
 #include "rust-token-tree-desugar.h"
+#include "rust-session-manager.h"
 
 namespace Rust {
 
@@ -311,7 +312,7 @@ MacroExpander::expand_invoc (AST::MacroInvocation &invoc,
   // We special case the `offset_of!()` macro if the flag is here and manually
   // resolve to the builtin transcriber we have specified
   auto assume_builtin_offset_of
-    = flag_assume_builtin_offset_of
+    = Session::get_instance ().should_support_offset_of ()
       && (invoc.get_invoc_data ().get_path ().as_string () == "offset_of")
       && !rules_def;
 
@@ -321,6 +322,24 @@ MacroExpander::expand_invoc (AST::MacroInvocation &invoc,
     {
       fragment = MacroBuiltin::offset_of_handler (invoc.get_locus (),
 						  invoc_data, semicolon)
+		   .value_or (AST::Fragment::create_empty ());
+
+      set_expanded_fragment (std::move (fragment));
+
+      return;
+    }
+
+  // TODO: Also remove code below as we progress to Rust 1.90, when cfg_select
+  // gets added to nightly.
+  auto assume_builtin_cfg_select
+    = Session::get_instance ().should_support_cfg_select ()
+      && (invoc.get_invoc_data ().get_path ().as_string () == "cfg_select")
+      && !rules_def;
+
+  if (assume_builtin_cfg_select)
+    {
+      fragment = MacroBuiltin::cfg_select_handler (invoc.get_locus (),
+						   invoc_data, semicolon)
 		   .value_or (AST::Fragment::create_empty ());
 
       set_expanded_fragment (std::move (fragment));
@@ -1011,9 +1030,14 @@ transcribe_expression (Parser<MacroInvocLexer> &parser)
   // FIXME: make this an error for some edititons
   if (parser.peek_current_token ()->get_id () == SEMICOLON)
     {
-      rust_warning_at (
-	parser.peek_current_token ()->get_locus (), 0,
-	"trailing semicolon in macro used in expression context");
+      // TODO bandaid for now, make this a member for MacroExpander instead in
+      // the future
+      static std::unordered_set<location_t> warned_loc;
+      auto locus = parser.peek_current_token ()->get_locus ();
+      if (warned_loc.insert (locus).second)
+	rust_warning_at (
+	  parser.peek_current_token ()->get_locus (), 0,
+	  "trailing semicolon in macro used in expression context");
       parser.skip_token ();
     }
 

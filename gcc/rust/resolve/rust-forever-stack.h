@@ -395,156 +395,6 @@ this pass's documentation for more details on this resolution process.
 
 **/
 
-/**
- * Intended for use by ForeverStack to store Nodes
- * Unlike ForeverStack, does not store a cursor reference
- * Intended to make path resolution in multiple namespaces simpler
- **/
-class ForeverStackStore
-{
-public:
-  ForeverStackStore (NodeId crate_id) : root (Rib::Kind::Normal, crate_id)
-  {
-    rust_assert (root.is_root ());
-    rust_assert (root.is_leaf ());
-  }
-
-private:
-  /**
-   * A link between two Nodes in our trie data structure. This class represents
-   * the edges of the graph
-   */
-  class Link
-  {
-  public:
-    Link (NodeId id, tl::optional<Identifier> path) : id (id), path (path) {}
-
-    bool compare (const Link &other) const { return id < other.id; }
-
-    NodeId id;
-    tl::optional<Identifier> path;
-  };
-
-  /* Link comparison class, which we use in a Node's `children` map */
-  class LinkCmp
-  {
-  public:
-    bool operator() (const Link &lhs, const Link &rhs) const
-    {
-      return lhs.compare (rhs);
-    }
-  };
-
-public:
-  class Node;
-
-  struct DfsResult
-  {
-    Node &first;
-    std::string second;
-  };
-
-  struct ConstDfsResult
-  {
-    const Node &first;
-    std::string second;
-  };
-
-  /* Should we keep going upon seeing a Rib? */
-  enum class KeepGoing
-  {
-    Yes,
-    No,
-  };
-
-  class Node
-  {
-  private:
-    friend class ForeverStackStore::ForeverStackStore;
-
-    Node (Rib::Kind rib_kind, NodeId id, tl::optional<Node &> parent)
-      : value_rib (rib_kind), type_rib (rib_kind), label_rib (rib_kind),
-	macro_rib (rib_kind), id (id), parent (parent)
-    {}
-    Node (Rib::Kind rib_kind, NodeId id) : Node (rib_kind, id, tl::nullopt) {}
-    Node (Rib::Kind rib_kind, NodeId id, Node &parent)
-      : Node (rib_kind, id, tl::optional<Node &> (parent))
-    {}
-
-  public:
-    Node (const Node &) = default;
-    Node (Node &&) = default;
-    Node &operator= (const Node &) = delete;
-    Node &operator= (Node &&) = default;
-
-    bool is_root () const;
-    bool is_leaf () const;
-
-    NodeId get_id () const;
-
-    Node &insert_child (NodeId id, tl::optional<Identifier> path,
-			Rib::Kind kind);
-
-    tl::optional<Node &> get_child (const Identifier &path);
-    tl::optional<const Node &> get_child (const Identifier &path) const;
-
-    tl::optional<Node &> get_parent ();
-    tl::optional<const Node &> get_parent () const;
-
-    // finds the identifier, if any, used to link
-    // this node's parent to this node
-    tl::optional<const Identifier &> get_parent_path () const;
-
-    Rib &get_rib (Namespace ns);
-    const Rib &get_rib (Namespace ns) const;
-
-    tl::expected<NodeId, DuplicateNameError> insert (const Identifier &name,
-						     NodeId node, Namespace ns);
-    tl::expected<NodeId, DuplicateNameError>
-    insert_shadowable (const Identifier &name, NodeId node, Namespace ns);
-    tl::expected<NodeId, DuplicateNameError>
-    insert_globbed (const Identifier &name, NodeId node, Namespace ns);
-
-    void reverse_iter (std::function<KeepGoing (Node &)> lambda);
-    void reverse_iter (std::function<KeepGoing (const Node &)> lambda) const;
-
-    void child_iter (std::function<KeepGoing (
-		       NodeId, tl::optional<const Identifier &>, Node &)>
-		       lambda);
-    void child_iter (std::function<KeepGoing (
-		       NodeId, tl::optional<const Identifier &>, const Node &)>
-		       lambda) const;
-
-    Node &find_closest_module ();
-    const Node &find_closest_module () const;
-
-    tl::optional<Node &> dfs_node (NodeId to_find);
-    tl::optional<const Node &> dfs_node (NodeId to_find) const;
-
-  private:
-    // per-namespace ribs
-    Rib value_rib;
-    Rib type_rib;
-    Rib label_rib;
-    Rib macro_rib;
-    // all linked nodes
-    std::map<Link, Node, LinkCmp> children;
-
-    NodeId id; // The node id of the Node's scope
-
-    tl::optional<Node &> parent; // `None` only if the node is a root
-  };
-
-  Node &get_root ();
-  const Node &get_root () const;
-
-  tl::optional<Node &> get_node (NodeId node_id);
-  tl::optional<const Node &> get_node (NodeId node_id) const;
-
-private:
-  Node root;
-};
-
 enum class ResolutionMode
 {
   Normal,
@@ -634,13 +484,112 @@ enum class LookupFinalizeError
   Loop,
 };
 
-template <Namespace N> class ForeverStack
+class ForeverStackBase
 {
 public:
-  ForeverStack ()
-    : root (Node (Rib (Rib::Kind::Normal), UNKNOWN_NODEID)),
-      lang_prelude (Node (Rib (Rib::Kind::Prelude), UNKNOWN_NODEID, root)),
-      extern_prelude (Node (Rib (Rib::Kind::Prelude), UNKNOWN_NODEID)),
+  /**
+   * A link between two Nodes in our trie data structure. This class represents
+   * the edges of the graph
+   */
+  class Link
+  {
+  public:
+    Link (NodeId id, tl::optional<Identifier> path) : id (id), path (path) {}
+
+    bool compare (const Link &other) const { return id < other.id; }
+
+    NodeId id;
+    tl::optional<Identifier> path;
+  };
+
+  /* Link comparison class, which we use in a Node's `children` map */
+  class LinkCmp
+  {
+  public:
+    bool operator() (const Link &lhs, const Link &rhs) const
+    {
+      return lhs.compare (rhs);
+    }
+  };
+
+  class Node
+  {
+  public:
+    Node (Rib::Kind rib_kind, NodeId id)
+      : rib_values (rib_kind), rib_types (rib_kind), rib_labels (rib_kind),
+	rib_macros (rib_kind), id (id)
+    {}
+    Node (Rib::Kind rib_kind, NodeId id, Node &parent)
+      : rib_values (rib_kind), rib_types (rib_kind), rib_labels (rib_kind),
+	rib_macros (rib_kind), id (id), parent (parent)
+    {}
+
+    const Rib &rib (Namespace n) const
+    {
+      switch (n)
+	{
+	case Namespace::Values:
+	  return rib_values;
+	case Namespace::Types:
+	  return rib_types;
+	case Namespace::Labels:
+	  return rib_labels;
+	case Namespace::Macros:
+	  return rib_macros;
+	default:
+	  rust_unreachable ();
+	}
+    }
+
+    Rib &rib (Namespace n)
+    {
+      return const_cast<Rib &> (const_cast<const Node *> (this)->rib (n));
+    }
+
+    inline bool is_root () const;
+    inline bool is_prelude () const;
+    inline bool is_leaf () const;
+
+    inline void insert_child (Link link, Node child);
+
+    // these are the "values" of the node - the data it keeps.
+    Rib rib_values;
+    Rib rib_types;
+    Rib rib_labels;
+    Rib rib_macros;
+
+    std::map<Link, Node, LinkCmp> children; // all the other nodes it links to
+
+    NodeId id; // The node id of the Node's scope
+
+    tl::optional<Node &> parent; // `None` only if the node is a root
+  };
+
+  ForeverStackBase (Node &root, Node &lang_prelude, Node &extern_prelude)
+    : root (root), lang_prelude (lang_prelude), extern_prelude (extern_prelude)
+  {}
+
+  /* The forever stack's actual nodes */
+  Node &root;
+
+  /*
+   * A special prelude node used currently for resolving language builtins
+   * It has the root node as a parent, and acts as a "special case" for name
+   * resolution
+   */
+  Node &lang_prelude;
+
+  /*
+   * The extern prelude, used for resolving external crates
+   */
+  Node &extern_prelude;
+};
+
+template <Namespace N> class ForeverStack : public ForeverStackBase
+{
+public:
+  ForeverStack (Node &root, Node &lang_prelude, Node &extern_prelude)
+    : ForeverStackBase (root, lang_prelude, extern_prelude),
       cursor_reference (root)
   {
     rust_assert (root.is_root ());
@@ -775,53 +724,6 @@ public:
    */
   bool is_module_descendant (NodeId parent, NodeId child) const;
 
-  /**
-   * A link between two Nodes in our trie data structure. This class represents
-   * the edges of the graph
-   */
-  class Link
-  {
-  public:
-    Link (NodeId id, tl::optional<Identifier> path) : id (id), path (path) {}
-
-    bool compare (const Link &other) const { return id < other.id; }
-
-    NodeId id;
-    tl::optional<Identifier> path;
-  };
-
-  /* Link comparison class, which we use in a Node's `children` map */
-  class LinkCmp
-  {
-  public:
-    bool operator() (const Link &lhs, const Link &rhs) const
-    {
-      return lhs.compare (rhs);
-    }
-  };
-
-  class Node
-  {
-  public:
-    Node (Rib rib, NodeId id) : rib (rib), id (id) {}
-    Node (Rib rib, NodeId id, Node &parent)
-      : rib (rib), id (id), parent (parent)
-    {}
-
-    bool is_root () const;
-    bool is_prelude () const;
-    bool is_leaf () const;
-
-    void insert_child (Link link, Node child);
-
-    Rib rib; // this is the "value" of the node - the data it keeps.
-    std::map<Link, Node, LinkCmp> children; // all the other nodes it links to
-
-    NodeId id; // The node id of the Node's scope
-
-    tl::optional<Node &> parent; // `None` only if the node is a root
-  };
-
   tl::optional<Rib::Definition> get (Node &start, const Identifier &name);
 
   /* Should we keep going upon seeing a Rib? */
@@ -832,7 +734,7 @@ public:
   };
 
   /* Add a new Rib to the stack. This is an internal method */
-  void push_inner (Rib rib, Link link);
+  void push_inner (Rib::Kind rib, Link link);
 
   /* Reverse iterate on `Node`s from the cursor, in an outwards fashion */
   void reverse_iter (std::function<KeepGoing (Node &)> lambda);
@@ -847,20 +749,6 @@ public:
   const Node &cursor () const;
 
   void update_cursor (Node &new_cursor);
-
-  /* The forever stack's actual nodes */
-  Node root;
-  /*
-   * A special prelude node used currently for resolving language builtins
-   * It has the root node as a parent, and acts as a "special case" for name
-   * resolution
-   */
-  Node lang_prelude;
-
-  /*
-   * The extern prelude, used for resolving external crates
-   */
-  Node extern_prelude;
 
   std::reference_wrapper<Node> cursor_reference;
 
@@ -907,6 +795,10 @@ public:
   tl::optional<Node &> dfs_node (Node &starting_point, NodeId to_find);
   tl::optional<const Node &> dfs_node (const Node &starting_point,
 				       NodeId to_find) const;
+
+  std::unordered_map<NodeId, Node &> dfs_cache;
+  tl::optional<Node &> check_cache (NodeId to_find);
+  void cache (NodeId found, Node &result);
 
   bool forward_declared (NodeId definition, NodeId usage)
   {

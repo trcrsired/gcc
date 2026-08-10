@@ -1570,7 +1570,7 @@ expand_const_vector_single_step_npatterns (rtx target, rvv_builder *builder)
 	  rtx tmp2 = gen_reg_rtx (builder->mode ());
 	  rtx step
 	    = simplify_binary_operation (MINUS, builder->inner_mode (),
-					 builder->elt (v.npatterns()),
+					 builder->elt (builder->npatterns ()),
 					 builder->elt (0));
 	  expand_vec_series (tmp2, const0_rtx, step, tmp1);
 
@@ -1735,6 +1735,18 @@ expand_const_vector (rtx target, rtx src)
   rtx base, step;
   if (const_vec_series_p (src, &base, &step))
     return expand_const_vec_series (target, base, step);
+
+  /* It's often better to just load a constant vector rather than
+     trying to synthesize is.  For now, do that when we know we're
+     dealing with a VLS mode.  */
+  machine_mode mode = GET_MODE (src);
+  if (GET_MODE_NUNITS (mode).is_constant ()
+      && !targetm.cannot_force_const_mem (mode, src))
+    {
+      src = force_const_mem (mode, src);
+      emit_move_insn (target, src);
+      return;
+    }
 
   /* Handle variable-length vector.  */
   unsigned int nelts_per_pattern = CONST_VECTOR_NELTS_PER_PATTERN (src);

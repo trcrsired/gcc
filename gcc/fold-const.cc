@@ -14693,6 +14693,19 @@ tree_single_nonnegative_p (tree t, int depth)
       return RECURSE (TREE_OPERAND (t, 1)) && RECURSE (TREE_OPERAND (t, 2));
 
     case SSA_NAME:
+      /* For integral types, query the range if possible. */
+      if (INTEGRAL_TYPE_P (TREE_TYPE (t)))
+	{
+	  int_range_max r;
+	  get_range_query (cfun)->range_of_expr (r, t);
+	  if (!r.undefined_p () && !r.varying_p())
+	    {
+	      if (r.nonnegative_p ())
+		return true;
+	      if (r.nonpositive_p () && !range_includes_zero_p (r))
+		return false;
+	    }
+	}
       /* Limit the depth of recursion to avoid quadratic behavior.
 	 This is expected to catch almost all occurrences in practice.
 	 If this code misses important cases that unbounded recursion
@@ -16166,6 +16179,8 @@ split_address_to_core_and_offset (tree exp,
   poly_int64 bitsize;
   location_t loc = EXPR_LOCATION (exp);
 
+  STRIP_NOPS (exp);
+
   if (TREE_CODE (exp) == SSA_NAME)
     if (gassign *def = dyn_cast <gassign *> (SSA_NAME_DEF_STMT (exp)))
       if (gimple_assign_rhs_code (def) == ADDR_EXPR)
@@ -16995,7 +17010,7 @@ test_vnx4si_v4si (machine_mode vnx4si_mode, machine_mode v4si_mode)
 	poly_uint64 mask_elems[] = { 0, 4, 1, 5 };
 	builder_push_elems (builder, mask_elems);
 
-	vec_perm_indices sel (builder, 2, res_len);
+	vec_perm_indices sel (builder, 2, 4);
 	tree res = fold_vec_perm_cst (res_type, arg0, arg1, sel);
 
 	tree expected_res[] = { ARG0(0), ARG1(0), ARG0(1), ARG1(1) };
@@ -17019,7 +17034,7 @@ test_vnx4si_v4si (machine_mode vnx4si_mode, machine_mode v4si_mode)
 	poly_uint64 mask_elems[] = { 0, 8, 4, 12 };
 	builder_push_elems (builder, mask_elems);
 
-	vec_perm_indices sel (builder, 2, res_len);
+	vec_perm_indices sel (builder, 2, 4);
 	tree res = fold_vec_perm_cst (res_type, arg0, arg1, sel);
 
 	tree expected_res[] = { ARG0(0), ARG0(0), ARG1(0), ARG1(0) };
@@ -17051,7 +17066,8 @@ test_v4si_vnx4si (machine_mode v4si_mode, machine_mode vnx4si_mode)
 	poly_uint64 mask_elems[] = {0, 1, 2, 3};
 	builder_push_elems (builder, mask_elems);
 
-	vec_perm_indices sel (builder, 2, res_len);
+	vec_perm_indices sel (builder, 2,
+			      TYPE_VECTOR_SUBPARTS (TREE_TYPE (arg0)));
 	tree res = fold_vec_perm_cst (res_type, arg0, arg1, sel);
 
 	tree expected_res[] = { ARG0(0), ARG0(1), ARG0(2), ARG0(3) };
@@ -17076,7 +17092,8 @@ test_v4si_vnx4si (machine_mode v4si_mode, machine_mode vnx4si_mode)
 	poly_uint64 mask_elems[] = {0, 2, 4, 6};
 	builder_push_elems (builder, mask_elems);
 
-	vec_perm_indices sel (builder, 2, res_len);
+	vec_perm_indices sel (builder, 2,
+			      TYPE_VECTOR_SUBPARTS (TREE_TYPE (arg0)));
 	const char *reason;
 	tree res = fold_vec_perm_cst (res_type, arg0, arg1, sel, &reason);
 

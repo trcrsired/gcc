@@ -61,6 +61,9 @@ public:
 
   static constexpr auto &TARGET_FEATURE = "target_feature";
   static constexpr auto &FEATURE = "feature";
+
+  static constexpr auto &GLOBAL_ALLOCATOR = "global_allocator";
+
   // From now on, these are reserved by the compiler and gated through
   // #![feature(rustc_attrs)]
   static constexpr auto &RUSTC_DEPRECATED = "rustc_deprecated";
@@ -108,8 +111,13 @@ public:
   static constexpr auto &RUSTC_ARGS_REQUIRED_CONST
     = "rustc_args_required_const";
 
+  static constexpr auto &NEEDS_ALLOCATOR = "needs_allocator";
+
   static constexpr auto &RUSTC_ALLOCATOR = "rustc_allocator";
   static constexpr auto &RUSTC_ALLOCATOR_NOUNWIND = "rustc_allocator_nounwind";
+
+  static constexpr auto &RUSTC_CONVERSION_SUGGESTION
+    = "rustc_conversion_suggestion";
 };
 } // namespace Values
 } // namespace Rust

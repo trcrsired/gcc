@@ -39,10 +39,11 @@ public:
    * which all need to be integrated to the existing AST
    */
   static std::vector<std::unique_ptr<Item>>
-  derive (Item &item, const Attribute &derive, BuiltinMacro to_derive);
+  derive (Item &item, const Attribute &derive, BuiltinMacro to_derive,
+	  Builder::Source item_source);
 
 protected:
-  DeriveVisitor (location_t loc);
+  DeriveVisitor (location_t loc, Builder::Source item_source);
 
   location_t loc;
   Builder builder;
@@ -231,8 +232,6 @@ private:
   virtual void visit (TuplePatternItemsHasRest &tuple_items) override final{};
   virtual void visit (TuplePattern &pattern) override final{};
   virtual void visit (GroupedPattern &pattern) override final{};
-  virtual void visit (SlicePatternItemsNoRest &items) override final{};
-  virtual void visit (SlicePatternItemsHasRest &items) override final{};
   virtual void visit (SlicePattern &pattern) override final{};
   virtual void visit (AltPattern &pattern) override final{};
   virtual void visit (EmptyStmt &stmt) override final{};

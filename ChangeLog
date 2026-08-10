@@ -1,3 +1,28 @@
+2026-08-07  Michael Meissner  <meissner@linux.ibm.com>
+
+	* MAINTAINERS.yml: Update Michael Meissner's information.
+	* MAINTAINERS: Regenerate.
+
+2026-08-07  Michael Meissner  <meissner@linux.ibm.com>
+
+	* MAINTAINERS: Update Michael Meissner to be a PowerPC maintainer.
+	Update to use meissner@gcc.gnu.org email address instead of
+	gnu@the-meissners.org.  Drop Michael Meissner being a scheduler maintainer.
+	* MAINTAINERS.yml: Update.
+
+2026-08-04  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	* Makefile.tpl ([+compare-target+]): Run object comparisons through an
+	invocation-specific parallel sub-make.  Collect sorted failure shards
+	and clean temporary state on exit.
+	* Makefile.in: Regenerate.
+	* configure: Regenerate.
+
+2026-08-04  Jim Lin  <jim@andestech.com>
+
+	* MAINTAINERS: Add myself.
+	* MAINTAINERS.yml: Regenerate.
+
 2026-07-25  Egas Ribeiro  <egas.g.ribeiro@gmail.com>
 
 	* MAINTAINERS: Add myself.

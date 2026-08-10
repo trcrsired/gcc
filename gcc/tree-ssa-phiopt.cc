@@ -3689,17 +3689,22 @@ cond_store_replacement_limited (basic_block middle_bb, basic_block join_bb,
 	  tree vuse = gimple_vuse (store_middle);
 	  imm_use_iterator iter;
 	  gimple *use_stmt;
-	  /* There can't be any loads between the store and
-	     the previous store as that might depend on the store.
-	     FIXME: use alias oracle to check dependancies.  */
+	  bool has_load = false;
+	  /* If there is a load, then just reuse the value and not
+	     remove the old store as that might be used by the load.  */
 	  FOR_EACH_IMM_USE_STMT (use_stmt, iter, vuse)
 	    {
 	      if (use_stmt != store_middle
 		  && use_stmt != vphi)
-		return false;
+		{
+		  has_load = true;
+		  break;
+		}
 	    }
 	  other_rhs = gimple_assign_rhs1 (vdef_before);
-	  beforestore = vdef_before;
+	  /* If there is no load, then keep the reference to the store stmt.  */
+	  if (!has_load)
+	    beforestore = vdef_before;
 	}
     }
   /*
@@ -3788,6 +3793,7 @@ cond_store_replacement_limited (basic_block middle_bb, basic_block join_bb,
   gsi_remove (&gsi, true);
   release_defs (store_middle);
 
+  /* Remove the store before the conditional if possible.  */
   if (beforestore)
     {
       gsi = gsi_for_stmt (beforestore);
@@ -4171,11 +4177,14 @@ factor_out_conditional_load (edge e0, edge e1, basic_block merge, gphi *phi,
   tree index = nullptr;
   tree step = nullptr;
   tree index2 = nullptr;
+  bool rev_order = false;
 
   /* Both must be *P loads of a compatible value type.  The
      TBAA alias-ptr type carried by MEM_REF operand 1 need not match; it is
      merged the way get_alias_type_for_stmts does when the load is built.  */
-  if (TREE_CODE (ref0) != MEM_REF)
+  if (TREE_CODE (ref0) == MEM_REF)
+    rev_order = REF_REVERSE_STORAGE_ORDER (ref0);
+  else
     {
       if (TREE_CODE (ref0) != TARGET_MEM_REF)
 	return false;
@@ -4187,10 +4196,14 @@ factor_out_conditional_load (edge e0, edge e1, basic_block merge, gphi *phi,
     {
       if (index || step || index2)
 	return false;
+      if (rev_order != REF_REVERSE_STORAGE_ORDER (ref1))
+	return false;
     }
   else
     {
       if (TREE_CODE (ref1) != TARGET_MEM_REF)
+	return false;
+      if (rev_order)
 	return false;
       if (!safe_operand_equal_p (index, TMR_INDEX (ref1)))
 	return false;
@@ -4329,7 +4342,10 @@ factor_out_conditional_load (edge e0, edge e1, basic_block merge, gphi *phi,
     nref = build5 (TARGET_MEM_REF, TREE_TYPE (ref0), newptr,
 		   newindex, index, step, index2);
   else
-    nref = build2 (MEM_REF, TREE_TYPE (ref0), newptr, newindex);
+    {
+      nref = build2 (MEM_REF, TREE_TYPE (ref0), newptr, newindex);
+      REF_REVERSE_STORAGE_ORDER (nref) = rev_order;
+    }
   MR_DEPENDENCE_CLIQUE (nref) = clique;
   MR_DEPENDENCE_BASE (nref) = base;
   tree res = gimple_phi_result (phi);

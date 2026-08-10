@@ -295,7 +295,48 @@ void
 TyTyResolveCompile::visit (const TyTy::ADTType &type)
 {
   tree type_record = error_mark_node;
-  if (!type.is_enum ())
+
+  TyTy::ADTType::ReprOptions repr = type.get_repr_options ();
+  if (repr.repr_kind == TyTy::ADTType::ReprKind::TRANSPARENT)
+    {
+      rust_assert (type.number_of_variants () == 1);
+      TyTy::VariantDef &variant = *type.get_variants ().at (0);
+
+      if (variant.num_fields () == 0)
+	{
+	  // 0-field transparent repr
+	  // Rustonomicon states that transparent structs should have a single
+	  // non-zero-sized field, but rustc compiles one with 0 fields happily
+	  // without errors, so not sure what's the correct treatment.
+	  //
+	  // For now, treat it as a unit struct
+	  type_record = Backend::struct_type ({});
+	}
+      else if (variant.num_fields () == 1)
+	{
+	  // single field transparent repr
+	  const TyTy::StructFieldType *field = variant.get_field_at_index (0);
+	  type_record
+	    = TyTyResolveCompile::compile (ctx, field->get_field_type ());
+	}
+      else
+	{
+	  // more than one field - typechecking already ensures there's only one
+	  // non-zero-sized field, just compile accessor for that
+	  // non-zero-sized.
+	  for (size_t i = 0; i < variant.num_fields (); i++)
+	    {
+	      auto field_ty = variant.get_field_at_index (i)->get_field_type ();
+	      if (!field_ty->is_zero_sized ())
+		{
+		  type_record = TyTyResolveCompile::compile (ctx, field_ty);
+		}
+	    }
+	}
+    }
+
+  // compilation of non-transparent ADTs below
+  else if (!type.is_enum ())
     {
       rust_assert (type.number_of_variants () == 1);
 
@@ -442,22 +483,24 @@ TyTyResolveCompile::visit (const TyTy::ADTType &type)
   // TODO: "packed" should only narrow type alignment and "align" should only
   // widen it. Do we need to check and enforce this here, or is it taken care of
   // later on in the gcc middle-end?
-  TyTy::ADTType::ReprOptions repr = type.get_repr_options ();
-  if (repr.pack)
+  if (repr.repr_kind != TyTy::ADTType::ReprKind::TRANSPARENT)
     {
-      TYPE_PACKED (type_record) = 1;
-      if (repr.pack > 1)
+      if (repr.pack)
 	{
-	  SET_TYPE_ALIGN (type_record, repr.pack * 8);
+	  TYPE_PACKED (type_record) = 1;
+	  if (repr.pack > 1)
+	    {
+	      SET_TYPE_ALIGN (type_record, repr.pack * 8);
+	      TYPE_USER_ALIGN (type_record) = 1;
+	    }
+	}
+      else if (repr.align)
+	{
+	  SET_TYPE_ALIGN (type_record, repr.align * 8);
 	  TYPE_USER_ALIGN (type_record) = 1;
 	}
+      layout_type (type_record);
     }
-  else if (repr.align)
-    {
-      SET_TYPE_ALIGN (type_record, repr.align * 8);
-      TYPE_USER_ALIGN (type_record) = 1;
-    }
-  layout_type (type_record);
 
   std::string named_struct_str
     = type.get_ident ().path.get () + type.subst_as_string ();
@@ -730,7 +773,17 @@ TyTyResolveCompile::visit (const TyTy::ReferenceType &type)
     }
   else
     {
-      auto base = Backend::immutable_type (base_compiled_type);
+      // https://doc.rust-lang.org/core/cell/struct.UnsafeCell.html
+      // If you have a reference &T, then normally in Rust the compiler performs
+      // optimizations based on the knowledge that &T points to immutable data.
+      // Mutating that data, for example through an alias or by transmuting a &T
+      // into a &mut T, is considered undefined behavior. UnsafeCell<T> opts-out
+      // of the immutability guarantee for &T: a shared reference &UnsafeCell<T>
+      // may point to data that is being mutated. This is called “interior
+      // mutability”.
+      auto base = type.get_base ()->contains_unsafe_cell ()
+		    ? base_compiled_type
+		    : Backend::immutable_type (base_compiled_type);
       translated = Backend::reference_type (base);
     }
 }

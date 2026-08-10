@@ -30,6 +30,7 @@
 #include "rust-finalize-imports-2.0.h"
 #include "rust-attribute-values.h"
 #include "rust-identifier-path.h"
+#include "rust-session-manager.h"
 
 namespace Rust {
 namespace Resolver2_0 {
@@ -98,14 +99,15 @@ Early::resolve_glob_import (NodeId use_dec_id, TopLevel::ImportKind &&glob)
   if (!result)
     return false;
 
+  auto &imports = import_mappings.new_or_access (use_dec_id);
+
   // here, we insert the module's NodeId into the import_mappings and will look
   // up the module proper in `FinalizeImports`
   // The namespace does not matter here since we are dealing with a glob
   // FIXME: Does the namespace not matter? Is that valid?
   // TODO: Ugly
-  import_mappings.insert (use_dec_id,
-			  ImportPair (std::move (glob),
-				      ImportData::Glob (resolved->definition)));
+  imports.emplace_back (
+    ImportPair (std::move (glob), ImportData::Glob (resolved->definition)));
 
   return true;
 }
@@ -312,14 +314,35 @@ Early::visit (AST::Module &module)
 }
 
 void
+Early::maybe_prelude_import ()
+{
+  // handle prelude import
+  if (ctx.prelude)
+    {
+      auto container = Analysis::Mappings::get ().lookup_glob_container (
+	ctx.prelude.value ());
+      rust_assert (container);
+
+      GlobbingVisitor glob_visit (ctx);
+      glob_visit.go (container.value ());
+      dirty |= glob_visit.is_dirty ();
+    }
+}
+
+void
 Early::visit (AST::MacroInvocation &invoc)
 {
   auto &path = invoc.get_invoc_data ().get_path ();
 
   // We special case the `offset_of!()` macro if the flag is here, otherwise
   // we accept whatever `offset_of!()` definition we resolved to.
-  auto resolve_offset_of
-    = flag_assume_builtin_offset_of && (path.as_string () == "offset_of");
+  auto resolve_offset_of = Session::get_instance ().should_support_offset_of ()
+			   && (path.as_string () == "offset_of");
+
+  // Ditto, but for `cfg_select!()`.
+  auto resolve_cfg_select
+    = Session::get_instance ().should_support_cfg_select ()
+      && (path.as_string () == "cfg_select");
 
   if (invoc.get_kind () == AST::MacroInvocation::InvocKind::Builtin)
     for (auto &pending_invoc : invoc.get_pending_eager_invocations ())
@@ -348,10 +371,10 @@ Early::visit (AST::MacroInvocation &invoc)
     ns_def = ctx.resolve_path (path, Namespace::Macros);
 
   // if the definition still does not have a value, then it's an error - unless
-  // we should automatically resolve offset_of!() calls
+  // we should automatically resolve offset_of!() or cfg_select!() calls
   if (!ns_def.has_value ())
     {
-      if (!resolve_offset_of)
+      if (!resolve_offset_of && !resolve_cfg_select)
 	collect_error (Error (invoc.get_locus (), ErrorCode::E0433,
 			      "could not resolve macro invocation %qs",
 			      path.as_string ().c_str ()));
@@ -487,10 +510,16 @@ Early::finalize_glob_import (NameResolutionContext &ctx,
       rust_assert (container.value ()->get_glob_container_kind ()
 		   == AST::GlobContainer::Kind::Module);
 
+      // TODO: catch multiple attempted prelude imports
+      if (!ctx.prelude)
+	dirty = true;
+
       ctx.prelude = mapping.data.container ().get_node_id ();
     }
 
-  GlobbingVisitor (ctx).go (container.value ());
+  GlobbingVisitor glob_visit (ctx);
+  glob_visit.go (container.value ());
+  dirty |= glob_visit.is_dirty ();
 }
 
 void

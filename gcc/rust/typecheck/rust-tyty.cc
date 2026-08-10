@@ -927,6 +927,58 @@ BaseType::is_concrete () const
 }
 
 bool
+BaseType::is_zero_sized () const
+{
+  const TyTy::BaseType *x = destructure ();
+  switch (x->get_kind ())
+    {
+    // primitives that are always non-zero size
+    case FNPTR:
+    case FNDEF:
+    case SLICE:
+    case POINTER:
+    case REF:
+    case CLOSURE:
+    case INFER:
+    case BOOL:
+    case CHAR:
+    case INT:
+    case UINT:
+    case FLOAT:
+    case USIZE:
+    case ISIZE:
+    case OPAQUE:
+    case STR:
+    case DYNAMIC:
+    case CONST:
+    case PARAM:
+    case PROJECTION:
+    case PLACEHOLDER:
+    case ERROR:
+      return false;
+
+    case NEVER:
+      return true;
+    case TUPLE:
+      {
+	const TupleType *tuple_ty = static_cast<const TupleType *> (x);
+	return tuple_ty->is_zero_sized ();
+      }
+    case ARRAY:
+      {
+	const ArrayType *array_ty = static_cast<const ArrayType *> (x);
+	return array_ty->is_zero_sized ();
+      }
+    case ADT:
+      {
+	const ADTType *adt_ty = static_cast<const ADTType *> (x);
+	return adt_ty->is_zero_sized ();
+      }
+    }
+  return false;
+}
+
+bool
 BaseType::has_substitutions_defined () const
 {
   const auto x = this;
@@ -1881,6 +1933,27 @@ ADTType::is_equal (const BaseType &other) const
   return true;
 }
 
+bool
+ADTType::is_zero_sized () const
+{
+  auto phantom = Analysis::Mappings::get ().lookup_lang_item (
+    LangItem::Kind::PHANTOM_DATA);
+  if (phantom.has_value () && phantom.value () == get_id ())
+    return true;
+
+  for (auto *variant : get_variants ())
+    {
+      for (size_t i = 0; i < variant->num_fields (); i++)
+	{
+	  if (!variant->get_field_at_index (i)
+		 ->get_field_type ()
+		 ->is_zero_sized ())
+	    return false;
+	}
+    }
+  return true;
+}
+
 DefId
 ADTType::get_id () const
 {
@@ -1978,6 +2051,23 @@ ADTType::handle_substitions (SubstitutionArgumentMappings &subst_mappings)
     }
 
   return adt;
+}
+
+bool
+ADTType::contains_unsafe_cell () const
+{
+  if (auto unsafe_cell
+      = mappings.lookup_lang_item (LangItem::Kind::UNSAFE_CELL))
+    {
+      if (get_id () == *unsafe_cell)
+	return true;
+
+      for (auto &variant : get_variants ())
+	for (auto &field : variant->get_fields ())
+	  if (field->get_field_type ()->contains_unsafe_cell ())
+	    return true;
+    }
+  return false;
 }
 
 // TupleType
@@ -2084,6 +2174,19 @@ TupleType::is_equal (const BaseType &other) const
   return true;
 }
 
+bool
+TupleType::is_zero_sized () const
+{
+  if (num_fields () == 0)
+    return true;
+  for (size_t i = 0; i < num_fields (); i++)
+    {
+      if (!get_field (i)->is_zero_sized ())
+	return false;
+    }
+  return true;
+}
+
 BaseType *
 TupleType::clone () const
 {
@@ -2118,6 +2221,15 @@ TupleType::handle_substitions (SubstitutionArgumentMappings &mappings)
     }
 
   return tuple;
+}
+
+bool
+TupleType::contains_unsafe_cell () const
+{
+  for (auto &field : get_fields ())
+    if (field.get_tyty ()->contains_unsafe_cell ())
+      return true;
+  return false;
 }
 
 void
@@ -2513,6 +2625,29 @@ ArrayType::is_equal (const BaseType &other) const
   return this_element_type->is_equal (*other_element_type);
 }
 
+bool
+ArrayType::is_zero_sized () const
+{
+  if (element_type.get_tyty ()->is_zero_sized ())
+    return true;
+
+  auto *capacity_ty = get_capacity ();
+  if (capacity_ty != nullptr
+      && capacity_ty->get_kind () == TyTy::TypeKind::CONST)
+    {
+      auto *capacity_const = capacity_ty->as_const_type ();
+      auto &capacity_value
+	= *static_cast<TyTy::ConstValueType *> (capacity_const);
+      auto cap_tree = capacity_value.get_value ();
+      size_t cap_wi = (size_t) wi::to_wide (cap_tree).to_uhwi ();
+      if (cap_wi == 0)
+	{
+	  return true;
+	}
+    }
+  return false;
+}
+
 BaseType *
 ArrayType::get_element_type () const
 {
@@ -2559,6 +2694,12 @@ ArrayType::handle_substitions (SubstitutionArgumentMappings &mappings)
   ref->capacity = TyVar::subst_covariant_var (cap, concrete_cap);
 
   return ref;
+}
+
+bool
+ArrayType::contains_unsafe_cell () const
+{
+  return get_element_type ()->contains_unsafe_cell ();
 }
 
 void
@@ -2626,6 +2767,12 @@ SliceType::handle_substitions (SubstitutionArgumentMappings &mappings)
   ref->element_type = TyVar::subst_covariant_var (base, concrete);
 
   return ref;
+}
+
+bool
+SliceType::contains_unsafe_cell () const
+{
+  return get_element_type ()->contains_unsafe_cell ();
 }
 
 // BoolType

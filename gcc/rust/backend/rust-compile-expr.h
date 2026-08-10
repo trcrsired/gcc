@@ -19,6 +19,7 @@
 #ifndef RUST_COMPILE_EXPR
 #define RUST_COMPILE_EXPR
 
+#include "optional.h"
 #include "rust-compile-base.h"
 #include "rust-gcc.h"
 #include "rust-hir-expr.h"
@@ -71,7 +72,6 @@ public:
   void visit (HIR::RangeFromExpr &expr) override;
   void visit (HIR::RangeToExpr &expr) override;
   void visit (HIR::RangeFullExpr &expr) override;
-  void visit (HIR::RangeFromToInclExpr &expr) override;
   void visit (HIR::ClosureExpr &expr) override;
   void visit (HIR::InlineAsm &expr) override;
   void visit (HIR::LlvmInlineAsm &expr) override;
@@ -145,6 +145,9 @@ protected:
 			  const TyTy::ArrayType &array_tyty, tree array_type,
 			  HIR::ArrayElemsCopied &elems);
 
+  tree compile_transparent_field_access (TyTy::VariantDef *variant,
+					 location_t locus, tree source_expr);
+
 protected:
   tree generate_closure_function (HIR::ClosureExpr &expr,
 				  TyTy::ClosureType &closure_tyty,
@@ -162,6 +165,8 @@ protected:
   tree lookup_label (NodeId to_be_resolved);
   Bvariable *lookup_label_temp_var (NodeId to_be_resolved);
   HirId resolve_nodeid (NodeId to_be_resolved, Resolver2_0::Namespace ns);
+  std::pair<tree, tree>
+  construct_loop_labels (tl::optional<HIR::LoopLabel> loop_label);
 
 private:
   CompileExpr (Context *ctx);

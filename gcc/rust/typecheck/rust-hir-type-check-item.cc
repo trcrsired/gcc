@@ -339,6 +339,11 @@ TypeCheckItem::visit (HIR::StructStruct &struct_decl)
       ResolveWhereClauseItem::Resolve (*where_clause_item, region_constraints);
     }
 
+  // Process #[repr(X)] attribute, if any
+  const AST::AttrVec &attrs = struct_decl.get_outer_attrs ();
+  TyTy::ADTType::ReprOptions repr
+    = parse_repr_options (attrs, struct_decl.get_locus ());
+
   std::vector<TyTy::StructFieldType *> fields;
   for (auto &field : struct_decl.get_fields ())
     {
@@ -360,6 +365,24 @@ TypeCheckItem::visit (HIR::StructStruct &struct_decl)
       context->insert_type (field.get_mappings (), ty_field->get_field_type ());
     }
 
+  if (repr.repr_kind == TyTy::ADTType::ReprKind::TRANSPARENT)
+    {
+      size_t num_non_zst = 0;
+      for (auto &field : fields)
+	{
+	  if (!field->get_field_type ()->is_zero_sized ())
+	    num_non_zst++;
+	}
+      if (num_non_zst > 1)
+	{
+	  rust_error_at (struct_decl.get_locus (), ErrorCode::E0690,
+			 "transparent struct needs at most one field with "
+			 "non-trivial size or alignment, but has %lu",
+			 (unsigned long) num_non_zst);
+	  return;
+	}
+    }
+
   auto &nr_ctx = Resolver2_0::FinalizedNameResolutionContext::get ();
 
   CanonicalPath path
@@ -378,11 +401,6 @@ TypeCheckItem::visit (HIR::StructStruct &struct_decl)
 			  struct_decl.get_mappings ().get_defid (),
 			  struct_decl.get_identifier ().as_string (), ident,
 			  variant_type, tl::nullopt, std::move (fields)));
-
-  // Process #[repr(X)] attribute, if any
-  const AST::AttrVec &attrs = struct_decl.get_outer_attrs ();
-  TyTy::ADTType::ReprOptions repr
-    = parse_repr_options (attrs, struct_decl.get_locus ());
 
   auto *type = new TyTy::ADTType (
     struct_decl.get_mappings ().get_defid (),

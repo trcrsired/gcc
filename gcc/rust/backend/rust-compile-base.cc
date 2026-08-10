@@ -21,6 +21,7 @@
 #include "rust-compile-stmt.h"
 #include "rust-compile-expr.h"
 #include "rust-compile-drop.h"
+#include "rust-compile-drop-builder.h"
 #include "rust-compile-fnparam.h"
 #include "rust-compile-var-decl.h"
 #include "rust-compile-type.h"
@@ -708,10 +709,28 @@ HIRCompileBase::compile_function_body (tree fndecl,
 	  return_value = coercion_site (id, return_value, actual, expected,
 					lvalue_locus, rvalue_locus);
 
-	  CompileDrop (ctx).emit_current_scope_drop_calls ();
+	  /* Save the non-unit tail expression result before emitting scope
+	    drops, so a tail call like foo() is evaluated before locals are
+	    dropped.  Conceptually, this changes lowering from:
 
+	      drop (_x);
+	      return foo ();
+
+	    to:
+
+	      ret_slot = foo ();
+	      drop (_x);
+	      return ret_slot; */
+	  fncontext fnctx = ctx->peek_fn ();
+	  tree result_reference
+	    = Backend::var_expression (fnctx.ret_addr, lvalue_locus);
+	  tree assignment = Backend::assignment_statement (result_reference,
+							   return_value, locus);
+	  ctx->add_statement (assignment);
+
+	  result_reference = Backend::var_expression (fnctx.ret_addr, locus);
 	  tree return_stmt
-	    = Backend::return_statement (fndecl, return_value, locus);
+	    = Backend::return_statement (fndecl, result_reference, locus);
 	  ctx->add_statement (return_stmt);
 	}
       else
@@ -732,7 +751,7 @@ HIRCompileBase::compile_function_body (tree fndecl,
       // errors should have occurred
       location_t locus = function_body.get_locus ();
       tree return_value = unit_expression (locus);
-      CompileDrop (ctx).emit_current_scope_drop_calls ();
+
       tree return_stmt
 	= Backend::return_statement (fndecl, return_value, locus);
       ctx->add_statement (return_stmt);
@@ -823,6 +842,17 @@ HIRCompileBase::compile_function (
   // setup the params
   TyTy::BaseType *tyret = fntype->get_return_type ();
   std::vector<Bvariable *> param_vars;
+
+  tree enclosing_scope = NULL_TREE;
+  location_t start_location = function_body->get_locus ();
+  location_t end_location = function_body->get_end_locus ();
+
+  tree arg_scope_block = Backend::block (fndecl, enclosing_scope, {} /*locals*/,
+					 start_location, end_location);
+  ctx->push_block (arg_scope_block);
+
+  DropBuilder drop_builder (*ctx);
+
   if (self_param)
     {
       rust_assert (fntype->is_method ());
@@ -858,18 +888,18 @@ HIRCompileBase::compile_function (
       const HIR::Pattern &param_pattern = referenced_param.get_param_name ();
       ctx->insert_var_decl (param_pattern.get_mappings ().get_hirid (),
 			    compiled_param_var);
+
+      if (CompileDrop (ctx).type_has_drop_impl (param_tyty))
+	drop_builder.note_simple_drop_candidate (
+	  param_pattern.get_mappings ().get_hirid (),
+	  param_pattern.get_locus ());
     }
 
   if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  tree enclosing_scope = NULL_TREE;
-  location_t start_location = function_body->get_locus ();
-  location_t end_location = function_body->get_end_locus ();
-
-  tree code_block = Backend::block (fndecl, enclosing_scope, {} /*locals*/,
-				    start_location, end_location);
-  ctx->push_block (code_block);
+    {
+      ctx->pop_block ();
+      return error_mark_node;
+    }
 
   Bvariable *return_address = nullptr;
   tree return_type = TyTyResolveCompile::compile (ctx, tyret);
@@ -877,14 +907,27 @@ HIRCompileBase::compile_function (
   bool address_is_taken = false;
   tree ret_var_stmt = NULL_TREE;
   return_address
-    = Backend::temporary_variable (fndecl, code_block, return_type, NULL,
+    = Backend::temporary_variable (fndecl, arg_scope_block, return_type, NULL,
 				   address_is_taken, locus, &ret_var_stmt);
 
   ctx->add_statement (ret_var_stmt);
 
   ctx->push_fn (fndecl, return_address, tyret);
+  tree body_scope_block
+    = Backend::block (fndecl, arg_scope_block, {} /*locals*/, start_location,
+		      end_location);
+  ctx->push_block (body_scope_block);
+
   compile_function_body (fndecl, *function_body, tyret);
-  tree bind_tree = ctx->pop_block ();
+
+  tree body_cleanup = CompileDrop (ctx).build_current_scope_drop_cleanup ();
+  tree body_bind_tree
+    = ctx->pop_block_with_cleanup (body_cleanup, function_body->get_locus ());
+  ctx->add_statement (body_bind_tree);
+
+  tree arg_cleanup = CompileDrop (ctx).build_current_scope_drop_cleanup ();
+  tree bind_tree
+    = ctx->pop_block_with_cleanup (arg_cleanup, function_body->get_locus ());
 
   gcc_assert (TREE_CODE (bind_tree) == BIND_EXPR);
   DECL_SAVED_TREE (fndecl) = bind_tree;
@@ -969,7 +1012,9 @@ HIRCompileBase::compile_constant_item (
       ctx->add_statement (return_expr);
     }
 
-  tree bind_tree = ctx->pop_block ();
+  tree cleanup = CompileDrop (ctx).build_current_scope_drop_cleanup ();
+  tree bind_tree
+    = ctx->pop_block_with_cleanup (cleanup, const_value_expr.get_locus ());
 
   gcc_assert (TREE_CODE (bind_tree) == BIND_EXPR);
   DECL_SAVED_TREE (fndecl) = bind_tree;

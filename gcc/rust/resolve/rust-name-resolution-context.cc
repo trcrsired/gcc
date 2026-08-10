@@ -144,7 +144,8 @@ Resolver::CanonicalPath
 CanonicalPathRecordNormal::as_path (const NameResolutionContext &ctx,
 				    Namespace ns)
 {
-  auto parent_path = get_parent ().as_path (ctx, ns);
+  auto &parent = ctx.canonical_ctx.get_record (get_parent ());
+  auto parent_path = parent.as_path (ctx, ns);
   return parent_path.append (Resolver::CanonicalPath::new_seg (node_id, seg));
 }
 
@@ -177,7 +178,8 @@ Resolver::CanonicalPath
 CanonicalPathRecordImpl::as_path (const NameResolutionContext &ctx,
 				  Namespace ns)
 {
-  auto parent_path = get_parent ().as_path (ctx, ns);
+  auto parent_path
+    = ctx.canonical_ctx.get_record (get_parent ()).as_path (ctx, ns);
   return parent_path.append (
     Resolver::CanonicalPath::inherent_impl_seg (impl_id,
 						type_record.as_path (ctx, ns)));
@@ -188,7 +190,8 @@ CanonicalPathRecordTraitImpl::as_path (const NameResolutionContext &ctx,
 				       Namespace ns)
 {
   // Maybe this doesn't need the namespace and will always be in the types NS?
-  auto parent_path = get_parent ().as_path (ctx, ns);
+  auto parent_path
+    = ctx.canonical_ctx.get_record (get_parent ()).as_path (ctx, ns);
   return parent_path.append (
     Resolver::CanonicalPath::trait_impl_projection_seg (
       impl_id, trait_path_record.as_path (ctx, ns),
@@ -196,7 +199,16 @@ CanonicalPathRecordTraitImpl::as_path (const NameResolutionContext &ctx,
 }
 
 NameResolutionContext::NameResolutionContext ()
-  : mappings (Analysis::Mappings::get ()), canonical_ctx (*this)
+  : root (std::make_unique<Node> (Rib::Kind::Normal, UNKNOWN_NODEID)),
+    lang_prelude (
+      std::make_unique<Node> (Rib::Kind::Prelude, UNKNOWN_NODEID, *root)),
+    extern_prelude (
+      std::make_unique<Node> (Rib::Kind::Prelude, UNKNOWN_NODEID)),
+    values (*root, *lang_prelude, *extern_prelude),
+    types (*root, *lang_prelude, *extern_prelude),
+    macros (*root, *lang_prelude, *extern_prelude),
+    labels (*root, *lang_prelude, *extern_prelude),
+    mappings (Analysis::Mappings::get ()), canonical_ctx (*this)
 {}
 
 tl::expected<NodeId, DuplicateNameError>
@@ -212,7 +224,7 @@ NameResolutionContext::insert (Identifier name, NodeId id, Namespace ns)
       return macros.insert (name, id);
     case Namespace::Labels:
     default:
-      // return labels.insert (name, id);
+      return labels.insert (name, id);
       rust_unreachable ();
     }
 }
@@ -240,8 +252,8 @@ NameResolutionContext::insert_shadowable (Identifier name, NodeId id,
     case Namespace::Macros:
       return macros.insert_shadowable (name, id);
     case Namespace::Labels:
+      return labels.insert (name, id);
     default:
-      // return labels.insert (name, id);
       rust_unreachable ();
     }
 }
@@ -258,8 +270,8 @@ NameResolutionContext::insert_globbed (Identifier name, NodeId id, Namespace ns)
     case Namespace::Macros:
       return macros.insert_globbed (name, id);
     case Namespace::Labels:
+      return labels.insert (name, id);
     default:
-      // return labels.insert (name, id);
       rust_unreachable ();
     }
 }
@@ -336,14 +348,14 @@ NameResolutionContext::scoped (Rib::Kind rib_kind, NodeId id,
   values.push (rib_kind, id, path);
   types.push (rib_kind, id, path);
   macros.push (rib_kind, id, path);
-  // labels.push (rib, id);
+  labels.push (rib_kind, id, path);
 
   lambda ();
 
   values.pop ();
   types.pop ();
   macros.pop ();
-  // labels.pop (rib);
+  labels.pop ();
 }
 
 void
@@ -364,6 +376,8 @@ NameResolutionContext::scoped (Rib::Kind rib_kind, Namespace ns,
       types.push (rib_kind, scope_id, path);
       break;
     case Namespace::Labels:
+      labels.push (rib_kind, scope_id, path);
+      break;
     case Namespace::Macros:
       gcc_unreachable ();
     }
@@ -379,9 +393,46 @@ NameResolutionContext::scoped (Rib::Kind rib_kind, Namespace ns,
       types.pop ();
       break;
     case Namespace::Labels:
+      labels.pop ();
+      break;
     case Namespace::Macros:
       gcc_unreachable ();
     }
+}
+
+void
+NameResolutionContext::merge (NameResolutionContext &other, NodeId at)
+{
+  // TODO: merge once, for all namespaces at once
+
+  auto merge_fstack = [&] (auto &stack, auto &other_stack, Namespace ns) {
+    auto node = stack.dfs_node (stack.root, at);
+    if (node)
+      {
+	auto &extern_crate_node = node.value ();
+	for (auto kv : other_stack.root.children)
+	  {
+	    auto link = kv.first;
+	    auto child = kv.second;
+	    extern_crate_node.insert_child (link, child);
+	    child.parent = extern_crate_node;
+	  }
+	for (auto kv : other_stack.root.rib (ns).get_values ())
+	  {
+	    auto name = kv.first;
+	    auto def = kv.second;
+	    extern_crate_node.rib (ns).insert (name, def);
+	  }
+      }
+    stack.resolved_nodes.insert (other_stack.resolved_nodes.begin (),
+				 other_stack.resolved_nodes.end ());
+  };
+
+  merge_fstack (values, other.values, Namespace::Values);
+  merge_fstack (types, other.types, Namespace::Types);
+  merge_fstack (macros, other.macros, Namespace::Macros);
+  merge_fstack (labels, other.labels, Namespace::Labels);
+  canonical_ctx.merge (std::move (other.canonical_ctx));
 }
 
 #if 0

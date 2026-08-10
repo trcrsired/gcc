@@ -17,6 +17,7 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "rust-hir-type-check-base.h"
+#include "options.h"
 #include "rust-compile-base.h"
 #include "rust-hir-item.h"
 #include "rust-hir-type-check-expr.h"
@@ -516,12 +517,21 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 	  bool is_align = false;
 	  bool is_c = false;
 	  bool is_integer = false;
+	  bool is_transparent = false;
 	  unsigned char value = 1;
 
 	  if (oparen == std::string::npos)
 	    {
+	      if (inline_option.compare ("align") == 0)
+		{
+		  rust_error_at (attr.get_locus (), ErrorCode::E0589,
+				 "invalid %<repr(align)%> attribute: %<align%> "
+				 "needs an argument");
+		  delete meta_items;
+		  break;
+		}
+
 	      is_pack = inline_option.compare ("packed") == 0;
-	      is_align = inline_option.compare ("align") == 0;
 	      is_c = inline_option.compare ("C") == 0;
 	      is_integer = (inline_option.compare ("isize") == 0
 			    || inline_option.compare ("i8") == 0
@@ -535,6 +545,7 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 			    || inline_option.compare ("u32") == 0
 			    || inline_option.compare ("u64") == 0
 			    || inline_option.compare ("u128") == 0);
+	      is_transparent = inline_option.compare ("transparent") == 0;
 	    }
 
 	  else
@@ -553,13 +564,26 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 	      value = strtoul (value_str.c_str () + 1, NULL, 10);
 	    }
 
-	  if (is_pack)
+	  if (is_transparent)
+	    {
+	      if (is_pack || is_align || is_c || is_integer)
+		rust_error_at (
+		  locus, ErrorCode::E0692,
+		  "transparent struct cannot have other repr hints");
+
+	      repr.repr_kind = TyTy::ADTType::ReprKind::TRANSPARENT;
+	    }
+	  else if (is_pack)
 	    {
 	      repr.repr_kind = TyTy::ADTType::ReprKind::PACKED;
 	      repr.pack = value;
 	    }
 	  else if (is_align)
 	    {
+	      if (value == 0 || (value & (value - 1)) != 0)
+		rust_error_at (
+		  attr.get_locus (), ErrorCode::E0589,
+		  "invalid %<repr(align)%> attribute: not a power of two");
 	      repr.repr_kind = TyTy::ADTType::ReprKind::ALIGN;
 	      repr.align = value;
 	    }
@@ -573,8 +597,14 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 	      bool ok = context->lookup_builtin (inline_option, &repr.repr);
 	      if (!ok)
 		{
-		  rust_error_at (attr.get_locus (), "Invalid repr type");
+		  rust_error_at (attr.get_locus (), ErrorCode::E0552,
+				 "unrecognized representation hint");
 		}
+	    }
+	  else
+	    {
+	      rust_error_at (attr.get_locus (), ErrorCode::E0552,
+			     "unrecognized representation hint");
 	    }
 
 	  delete meta_items;
@@ -715,6 +745,18 @@ TypeCheckBase::resolve_generic_params (
       auto pty = static_cast<TyTy::ParamType *> (bpty);
 
       TypeResolveGenericParam::ApplyAnyTraitBounds (type_param, pty);
+
+      // The drop_bounds lint: a `T: Drop` bound is most likely a mistake, as
+      // `Drop` bounds do not constrain a generic parameter in a useful way.
+      if (flag_unused_check_2_0)
+	if (auto drop = mappings.lookup_lang_item (LangItem::Kind::DROP))
+	  for (auto &bound : pty->get_specified_bounds ())
+	    if (bound.get_id () == drop.value ())
+	      rust_warning_at (
+		type_param.get_locus (), OPT_Wunused_variable,
+		"bounds on %<Drop%> are most likely incorrect, "
+		"use %<core::mem::needs_drop%> to detect whether "
+		"a type has a destructor");
     }
 }
 

@@ -12684,6 +12684,8 @@ ix86_expand_args_builtin (const struct builtin_description *d,
     case V16BF_FTYPE_V16SF:
     case V8BF_FTYPE_V8SF:
     case V8BF_FTYPE_V4SF:
+    case V16QI_FTYPE_V32QI:
+    case V32QI_FTYPE_V64QI:
       nargs = 1;
       break;
     case V4SF_FTYPE_V4SF_VEC_MERGE:
@@ -13058,6 +13060,13 @@ ix86_expand_args_builtin (const struct builtin_description *d,
     case V8DI_FTYPE_V8SF_V8DI_UQI:
     case V8DI_FTYPE_V8DF_V8DI_UQI:
     case V8SI_FTYPE_V8DF_V8SI_UQI:
+    case V16QI_FTYPE_V4SF_V16QI_UQI:
+    case V16QI_FTYPE_V8SF_V16QI_UQI:
+    case V16QI_FTYPE_V16SF_V16QI_UHI:
+    case V4SF_FTYPE_V16QI_V4SF_UQI:
+    case V8SF_FTYPE_V16QI_V8SF_UQI:
+    case V16SF_FTYPE_V16QI_V16SF_UHI:
+    case V64QI_FTYPE_V32QI_V64QI_UDI:
       nargs = 3;
       break;
     case V32QI_FTYPE_V32QI_V32QI_INT:
@@ -13222,6 +13231,9 @@ ix86_expand_args_builtin (const struct builtin_description *d,
     case V16QI_FTYPE_V16QI_V8HF_V16QI_UHI:
     case V16QI_FTYPE_V32QI_V16HF_V16QI_UHI:
     case V32QI_FTYPE_V64QI_V32HF_V32QI_USI:
+    case V16QI_FTYPE_V4SI_V4SF_V16QI_UQI:
+    case V16QI_FTYPE_V8SI_V8SF_V16QI_UQI:
+    case V16QI_FTYPE_V16SI_V16SF_V16QI_UHI:
       nargs = 4;
       break;
     case V2DF_FTYPE_V2DF_V2DF_V2DI_INT:

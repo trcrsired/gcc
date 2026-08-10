@@ -131,6 +131,7 @@ static tree handle_no_limit_stack_attribute (tree *, tree, tree, int,
 static tree handle_pure_attribute (tree *, tree, tree, int, bool *);
 static tree handle_tm_attribute (tree *, tree, tree, int, bool *);
 static tree handle_tm_wrap_attribute (tree *, tree, tree, int, bool *);
+static tree handle_callback_only_attribute (tree *, tree, tree, int, bool *);
 static tree handle_novops_attribute (tree *, tree, tree, int, bool *);
 static tree handle_unavailable_attribute (tree *, tree, tree, int,
 					  bool *);
@@ -485,8 +486,8 @@ const struct attribute_spec c_common_gnu_attributes[] =
 			      handle_tm_attribute, NULL },
   { "transaction_may_cancel_outer", 0, 0, false, true, false, false,
 			      handle_tm_attribute, NULL },
-  { CALLBACK_ATTR_IDENT,      1, -1, true, false, false, false,
-			      handle_callback_attribute, NULL },
+  { "callback_only",          1, -1, true, false, false, false,
+			      handle_callback_only_attribute, NULL },
   /* ??? These two attributes didn't make the transition from the
      Intel language document to the multi-vendor language document.  */
   { "transaction_pure",       0, 0, false, true,  false, false,
@@ -4668,6 +4669,155 @@ handle_tm_wrap_attribute (tree *node, tree name, tree args,
 	    error ("%qE argument is not a function", name);
 	}
     }
+
+  return NULL_TREE;
+}
+
+/* Handle a "callback_only" attribute; arguments as in
+   struct attribute_spec.handler.  */
+tree
+handle_callback_only_attribute (tree *node, tree name, tree args,
+				int ARG_UNUSED (flags), bool *no_add_attrs)
+{
+  tree decl = *node;
+  if (TREE_CODE (decl) != FUNCTION_DECL)
+    {
+      warning_at (DECL_SOURCE_LOCATION (decl), OPT_Wattributes,
+		  "%qE attribute can only be used on functions", name);
+      *no_add_attrs = true;
+    }
+
+  tree val = positional_argument (decl, name, TREE_VALUE (args), POINTER_TYPE,
+				  1, POSARG_ZERO);
+  if (!val)
+    {
+      *no_add_attrs = true;
+      return NULL_TREE;
+    }
+  TREE_VALUE (args) = val;
+
+  /* We have to use the function type for validation, as
+     DECL_ARGUMENTS returns NULL at this point.  */
+  int callback_fn_idx = TREE_INT_CST_LOW (val);
+  tree decl_type_args = TYPE_ARG_TYPES (TREE_TYPE (decl));
+  tree it;
+  for (it = decl_type_args; it != NULL_TREE; it = TREE_CHAIN (it))
+    if (it == void_list_node)
+      break;
+
+  if (callback_fn_idx == CB_UNKNOWN_POS)
+    {
+      warning_at (DECL_SOURCE_LOCATION (decl), OPT_Wattributes,
+		  "callback function position cannot be marked as unknown");
+      *no_add_attrs = true;
+      return NULL_TREE;
+    }
+
+  --callback_fn_idx;
+
+  /* Search for the type of the callback function in parameters of the original
+     function.  We know it's there because it's been validated by
+     positional_argument.  */
+  tree cfn = chain_index (callback_fn_idx, decl_type_args);
+  gcc_checking_assert (cfn != NULL_TREE);
+  cfn = TREE_VALUE (cfn);
+  tree cfn_pointee_type = TREE_TYPE (cfn);
+  if (TREE_CODE (cfn) != POINTER_TYPE
+      || TREE_CODE (cfn_pointee_type) != FUNCTION_TYPE)
+    {
+      warning_at (DECL_SOURCE_LOCATION (decl), OPT_Wattributes,
+		  "argument no. %d is not an address of a function",
+		  callback_fn_idx + 1);
+      *no_add_attrs = true;
+      return NULL_TREE;
+    }
+
+  tree type_args = TYPE_ARG_TYPES (cfn_pointee_type);
+  /* Compare the length of the list of argument indices
+     and the real number of parameters the callback takes.  */
+  unsigned cfn_nargs = list_length (TREE_CHAIN (args));
+  unsigned type_nargs = list_length (type_args);
+  for (it = type_args; it != NULL_TREE; it = TREE_CHAIN (it))
+    if (it == void_list_node)
+      {
+	--type_nargs;
+	break;
+      }
+  if (cfn_nargs != type_nargs)
+    {
+      warning_at (DECL_SOURCE_LOCATION (decl), OPT_Wattributes,
+		  "argument number mismatch, %d expected, got %d", type_nargs,
+		  cfn_nargs);
+      *no_add_attrs = true;
+      return NULL_TREE;
+    }
+
+  unsigned curr = 0;
+  tree cfn_it;
+  /* Validate type compatibility of the arguments passed
+     from caller function to callback.  "it" is used to step
+     through the parameters of the caller, "cfn_it" is
+     stepping through the parameters of the callback.  */
+  for (it = type_args, cfn_it = TREE_CHAIN (args); curr < type_nargs;
+       it = TREE_CHAIN (it), cfn_it = TREE_CHAIN (cfn_it), curr++)
+    {
+      if (TREE_CODE (TREE_VALUE (cfn_it)) != INTEGER_CST)
+	{
+	  warning_at (DECL_SOURCE_LOCATION (decl), OPT_Wattributes,
+		      "argument no. %d is not an integer constant", curr + 1);
+	  *no_add_attrs = true;
+	  continue;
+	}
+
+      tree expected_type = TREE_VALUE (it);
+      tree arg_val = positional_argument (decl, name, TREE_VALUE (cfn_it),
+					  TREE_CODE (expected_type), curr + 1,
+					  POSARG_ZERO);
+      if (!arg_val)
+	{
+	  *no_add_attrs = true;
+	  return NULL_TREE;
+	}
+
+      TREE_VALUE (cfn_it) = arg_val;
+      int arg_idx = TREE_INT_CST_LOW (TREE_VALUE (cfn_it));
+
+      /* No need to check for type compatibility,
+	 if we don't know what we are passing.  */
+      if (arg_idx == CB_UNKNOWN_POS)
+	continue;
+
+      arg_idx -= 1;
+      tree arg_type = chain_index (arg_idx, decl_type_args);
+      gcc_checking_assert (arg_type != NULL_TREE);
+      arg_type = TREE_VALUE (arg_type);
+      /* Check the type of the value we are about to pass ("arg_type")
+	 for compatibility with the actual type the callback function
+	 expects ("expected_type").  */
+      if (!types_compatible_p (expected_type, arg_type))
+	{
+	  warning_at (DECL_SOURCE_LOCATION (decl), OPT_Wattributes,
+		      "argument type at index %d is not compatible with "
+		      "callback argument type at index %d",
+		      arg_idx + 1, curr + 1);
+	  *no_add_attrs = true;
+	  continue;
+	}
+    }
+
+  /* Check that the decl does not already have a callback attribute describing
+     the same argument.  */
+  it = lookup_attribute ("callback_only", DECL_ATTRIBUTES (decl));
+  for (; it; it = lookup_attribute ("callback_only", TREE_CHAIN (it)))
+    if (callback_get_fn_index (it) == callback_fn_idx)
+      {
+	warning_at (DECL_SOURCE_LOCATION (decl), OPT_Wattributes,
+		    "function declaration has multiple callback attributes "
+		    "describing argument no. %d",
+		    callback_fn_idx + 1);
+	*no_add_attrs = true;
+	break;
+      }
 
   return NULL_TREE;
 }

@@ -31,10 +31,13 @@ public:
 
   bool type_has_drop_impl (TyTy::BaseType *ty);
 
-  void emit_current_scope_drop_calls ();
+  tree build_current_scope_drop_cleanup ();
 
 private:
   tree compile_drop_call (Bvariable *var, TyTy::BaseType *ty, location_t locus);
+
+  void
+  emit_drop_candidate_calls (const std::vector<DropCandidate> &drop_candidates);
 
   Context *ctx;
 };

@@ -1,3 +1,30 @@
+2026-08-07  Tomasz Kamiński  <tkaminsk@redhat.com>
+
+	* config/os/djgpp/error_constants.h (errc::no_message_available)
+	(errc::no_stream_resources, errc:not_a_stream)
+	(errc::stream_timeout): Mark as _GLIBCXX23_DEPRECATED
+	* config/os/generic/error_constants.h
+	(errc::no_message_available, errc::no_stream_resources)
+	(errc:not_a_stream, errc::stream_timeout): Likewise.
+	* config/os/mingw32-w64/error_constants.h
+	(errc::no_message_available, errc::no_stream_resources)
+	(errc:not_a_stream, errc::stream_timeout): Likewise.
+	* testsuite/19_diagnostics/headers/system_error/errc_std_c++0x.cc:
+	Add dg-warning attributes for expected deprecation warnings.
+
+2026-08-05  Tomasz Kamiński  <tkaminsk@redhat.com>
+
+	PR libstdc++/119739
+	* include/bits/random.tcc (__generate_canonical_any):
+	Rewrite to support generator with different ranges.
+	* testsuite/26_numerics/random/uniform_real_distribution/operators/gencanon.cc:
+	Add test for previously unsupported generator.
+	* testsuite/26_numerics/random/uniform_real_distribution/operators/gencanon_eng.cc:
+	Add test for previously unsupported-generator ranges.
+	* testsuite/26_numerics/random/uniform_real_distribution/operators/gencanon_eng_neg.cc:
+	Moved (now-supported) generator test to gencanon_eng.cc, and removed
+	the file.
+
 2026-08-03  Tomasz Kamiński  <tkaminsk@redhat.com>
 	    Jonathan Wakely  <jwakely@redhat.com>
 

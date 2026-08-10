@@ -45,8 +45,12 @@ public:
   // these nodes create new scopes and ribs - they are often used to declare new
   // variables, such as a for loop's iterator, or a function's arguments
   void visit (AST::BlockExpr &) override;
+  virtual void maybe_prelude_import () {}
   void visit (AST::Module &) override;
   void visit (AST::Function &) override;
+  void visit (AST::LoopExpr &expr) override;
+  void visit (AST::WhileLoopExpr &expr) override;
+  void visit (AST::WhileLetLoopExpr &expr) override;
   void visit (AST::ForLoopExpr &expr) override;
   virtual void visit_if_let_patterns (AST::IfLetExpr &expr);
   void visit (AST::IfLetExpr &expr) override;

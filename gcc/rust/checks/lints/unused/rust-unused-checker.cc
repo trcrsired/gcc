@@ -24,6 +24,7 @@
 
 #include "options.h"
 #include "rust-keyword-values.h"
+#include "rust-attribute-values.h"
 #include "rust-rib.h"
 
 namespace Rust {
@@ -54,14 +55,6 @@ void
 UnusedChecker::visit (HIR::ConstantItem &item)
 {
   std::string var_name = item.get_identifier ().as_string ();
-  auto id = item.get_mappings ().get_hirid ();
-  if (!unused_context.is_variable_used (id) && var_name[0] != '_')
-    rust_warning_at (item.get_locus (), OPT_Wunused_variable,
-		     "unused variable %qs",
-		     item.get_identifier ().as_string ().c_str ());
-
-  // The unused_visibilities lint: a visibility qualifier on a `const _` item
-  // has no effect.
   if (var_name == "_" && item.get_visibility ().is_public ())
     rust_warning_at (item.get_locus (), OPT_Wunused_variable,
 		     "visibility qualifier on a %<const _%> item is unused");
@@ -71,12 +64,6 @@ void
 UnusedChecker::visit (HIR::StaticItem &item)
 {
   std::string var_name = item.get_identifier ().as_string ();
-  auto id = item.get_mappings ().get_hirid ();
-  if (!unused_context.is_variable_used (id) && var_name[0] != '_')
-    rust_warning_at (item.get_locus (), OPT_Wunused_variable,
-		     "unused variable %qs",
-		     item.get_identifier ().as_string ().c_str ());
-
   if (!std::all_of (var_name.begin (), var_name.end (), [] (unsigned char c) {
 	return ISUPPER (c) || ISDIGIT (c) || c == '_';
       }))
@@ -165,6 +152,22 @@ UnusedChecker::visit (HIR::Function &fct)
     rust_warning_at (fct.get_locus (), OPT_Wunused_variable,
 		     "function %qs should have a snake case name",
 		     fct.get_function_name ().as_string ().c_str ());
+
+  // The no_mangle_generic_items lint: a generic function cannot be exported
+  // with a fixed symbol, so `#[no_mangle]`/`#[export_name]` has no effect.
+  if (fct.has_generics ())
+    for (auto &attr : fct.get_outer_attrs ())
+      {
+	auto name = attr.get_path ().as_string ();
+	if (name == "no_mangle" || name == "export_name")
+	  {
+	    rust_warning_at (fct.get_locus (), OPT_Wattributes,
+			     "generic functions must be mangled, %qs has no "
+			     "effect",
+			     name.c_str ());
+	    break;
+	  }
+      }
   walk (fct);
 }
 
@@ -330,6 +333,48 @@ UnusedChecker::visit (HIR::MatchExpr &expr)
 			 "multiple ranges are one apart");
     }
 
+  walk (expr);
+}
+
+void
+UnusedChecker::visit (HIR::LetStmt &stmt)
+{
+  for (auto &attr : stmt.get_outer_attrs ())
+    if (attr.get_path ().as_string () == Values::Attributes::DOC)
+      {
+	rust_warning_at (stmt.get_locus (), OPT_Wunused_variable,
+			 "unused doc comment");
+	break;
+      }
+  if (stmt.has_init_expr ()
+      && stmt.get_init_expr ().get_expression_type ()
+	   == HIR::Expr::ExprType::Block)
+    {
+      auto &block = static_cast<HIR::BlockExpr &> (stmt.get_init_expr ());
+      if (block.get_statements ().empty () && block.has_expr ())
+	rust_warning_at (block.get_locus (), OPT_Wunused,
+			 "unnecessary braces around assigned value");
+    }
+  walk (stmt);
+}
+
+void
+UnusedChecker::visit (HIR::BorrowExpr &expr)
+{
+  // The static_mut_refs lint: taking a reference to a mutable static is
+  // discouraged as it can easily lead to undefined behaviour.
+  NodeId ast_node_id = expr.get_expr ().get_mappings ().get_nodeid ();
+  if (auto def
+      = nr_context.lookup (ast_node_id, Resolver2_0::Namespace::Values))
+    if (auto id = mappings.lookup_node_to_hir (*def))
+      if (auto item = mappings.lookup_hir_item (*id))
+	if (item.value ()->get_item_kind () == HIR::Item::ItemKind::Static)
+	  {
+	    auto &static_item = static_cast<HIR::StaticItem &> (*item.value ());
+	    if (static_item.is_mut ())
+	      rust_warning_at (expr.get_locus (), OPT_Wunused,
+			       "creating a reference to a mutable static");
+	  }
   walk (expr);
 }
 

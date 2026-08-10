@@ -19,7 +19,8 @@ enum class whitelist_std {
   cxx20 = 1 << 0,
   cxx23 = 1 << 1,
   cxx26 = 1 << 2,
-  all = (1 << 3) - 1
+  cxx29 = 1 << 3,
+  all = (1 << 4) - 1
 };
 struct {
   const char *name;
@@ -98,6 +99,8 @@ plugin_dump_decl (tree decl, char *scope, hash_set<tree> **exported_usings)
     this_std = whitelist_std::cxx23;
   else if (cxx_dialect == cxx26)
     this_std = whitelist_std::cxx26;
+  else if (cxx_dialect == cxx29)
+    this_std = whitelist_std::cxx29;
   for (int i = 0; i < ARRAY_SIZE (whitelist); ++i)
     if (strncmp (whitelist[i].name, scope, scope_len) == 0
 	&& strcmp (whitelist[i].name + scope_len,
@@ -106,13 +109,19 @@ plugin_dump_decl (tree decl, char *scope, hash_set<tree> **exported_usings)
 	if (((int) whitelist[i].enabled_in & (int) this_std) != 0)
 	  {
 	    inform (DECL_SOURCE_LOCATION (decl),
-		    "missing using %s%D; whitelisted", scope, name);
+		    "missing %<using %s%D;%> whitelisted", scope, name);
 	    return;
 	  }
 	break;
       }
 
-  error_at (DECL_SOURCE_LOCATION (decl), "missing using %s%D;", scope, name);
+  auto_diagnostic_group d;
+  error_at (DECL_SOURCE_LOCATION (decl),
+	    "missing %<using %s%D;%> in libstdc++-v3/src/c++23/std*.cc.in",
+	    scope, name);
+  inform (DECL_SOURCE_LOCATION (decl),
+	  "%<%s%D%> found in std namespace but not exported from std module",
+	  scope, name);
 }
 
 void

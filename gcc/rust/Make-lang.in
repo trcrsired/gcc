@@ -87,6 +87,7 @@ GRS_OBJS = \
     rust/rust-hir-visitor.o \
     rust/rust-hir-dump.o \
     rust/rust-session-manager.o \
+    rust/rust-extern-crate-loader.o \
     rust/rust-compile.o \
     rust/rust-mangle.o \
     rust/rust-mangle-v0.o \
@@ -152,7 +153,6 @@ GRS_OBJS = \
 	rust/rust-finalized-name-resolution-context.o \
     rust/rust-name-resolver.o \
     rust/rust-resolve-builtins.o \
-    rust/rust-forever-stack.o \
     rust/rust-hir-type-check.o \
     rust/rust-privacy-check.o \
     rust/rust-privacy-ctx.o \
@@ -210,6 +210,7 @@ GRS_OBJS = \
     rust/rust-hir-type-check-path.o \
     rust/rust-unsafe-checker.o \
     rust/rust-hir-pattern-analysis.o \
+    rust/rust-hir-pattern-abstract.o \
     rust/rust-intrinsic-handlers.o \
     rust/rust-compile-intrinsic.o \
     rust/rust-compile-pattern.o \
