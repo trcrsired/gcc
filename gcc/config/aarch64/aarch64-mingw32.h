@@ -28,4 +28,11 @@ along with GCC; see the file COPYING3.  If not see
 #undef LINK_SPEC_DISABLE_DYNAMICBASE
 #define LINK_SPEC_DISABLE_DYNAMICBASE ""
 
+/* Windows on ARM64 is increasingly run on systems with 16K pages
+   (Apple Silicon, Android).  Align every section to 64K by default so
+   the loader can map images directly regardless of the page size; this
+   matches what Wine uses when building WoA binaries.  */
+#undef LINK_SPEC_SECTION_ALIGNMENT
+#define LINK_SPEC_SECTION_ALIGNMENT " --section-alignment=0x10000"
+
 #endif /* GCC_AARCH64_MINGW32_H */
