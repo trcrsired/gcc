@@ -6,3 +6,8 @@ LIBGCC2_CFLAGS += -D__NO_BINARY80__
 
 # Include LSE atomics in the shared libgcc (needed by mingw-w64 CRT).
 libgcc-s-objects += $(LSE_OBJS) lse-init$(objext)
+
+# Provide the Windows stack probe helper __chkstk (called by the compiler
+# for large stack frames, and by clang/MSVC-compiled code via -lgcc).
+LIB1ASMSRC = aarch64/chkstk.S
+LIB1ASMFUNCS = _chkstk
