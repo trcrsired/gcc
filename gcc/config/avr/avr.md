@@ -382,7 +382,7 @@
 
 ;; Map RTX code to its standard insn name
 (define_code_attr code_stdname
-  [(ashift   "ashl")
+  [(ashift   "ashl")  (ss_ashift "ssashl")  (us_ashift "usashl")
    (ashiftrt "ashr")
    (lshiftrt "lshr")
    (ior      "ior")
@@ -2310,6 +2310,7 @@
   }
   [(set_attr "adjust_len" "add_<code>0")])
 
+;; Also emit by the muluqq3_nomul expander.
 (define_insn_and_split "*umulqihi3.call_split"
   [(set (reg:HI 24)
         (mult:HI (zero_extend:HI (reg:QI 22))
