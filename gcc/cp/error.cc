@@ -2163,16 +2163,41 @@ dump_exception_spec (cxx_pretty_printer *pp, tree t, int flags)
 {
   if (t && TREE_PURPOSE (t))
     {
-      pp_cxx_ws_string (pp, "noexcept");
-      if (!integer_onep (TREE_PURPOSE (t)))
+      if (tree h = herbceptions_spec (t))
 	{
-	  pp_cxx_whitespace (pp);
-	  pp_cxx_left_paren (pp);
-	  if (DEFERRED_NOEXCEPT_SPEC_P (t))
-	    pp_cxx_ws_string (pp, "<uninstantiated>");
-	  else
-	    dump_expr (pp, TREE_PURPOSE (t), flags);
-	  pp_cxx_right_paren (pp);
+	  switch (HERBCEPTION_SPEC_KIND (h))
+	    {
+	    case hsk_throws:
+	      pp_cxx_ws_string (pp, "throws");
+	      break;
+	    case hsk_throws_expr:
+	      pp_cxx_ws_string (pp, "throws");
+	      pp_cxx_whitespace (pp);
+	      pp_cxx_left_paren (pp);
+	      dump_expr (pp, HERBCEPTION_SPEC_EXPR (h), flags);
+	      pp_cxx_right_paren (pp);
+	      break;
+	    case hsk_return_failure:
+	      pp_cxx_ws_string (pp, "return_failure");
+	      pp_cxx_left_brace (pp);
+	      dump_type (pp, HERBCEPTION_SPEC_ERROR_TYPE (h), flags);
+	      pp_cxx_right_brace (pp);
+	      break;
+	    }
+	}
+      else
+	{
+	  pp_cxx_ws_string (pp, "noexcept");
+	  if (!integer_onep (TREE_PURPOSE (t)))
+	    {
+	      pp_cxx_whitespace (pp);
+	      pp_cxx_left_paren (pp);
+	      if (DEFERRED_NOEXCEPT_SPEC_P (t))
+		pp_cxx_ws_string (pp, "<uninstantiated>");
+	      else
+		dump_expr (pp, TREE_PURPOSE (t), flags);
+	      pp_cxx_right_paren (pp);
+	    }
 	}
     }
   else if (t)

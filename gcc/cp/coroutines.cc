@@ -1112,6 +1112,22 @@ coro_common_keyword_context_valid_p (tree fndecl, location_t kw_loc,
       return false;
     }
 
+  /* A coroutine may only use `throws': its failure is delivered through
+     the coroutine's own error channel, so `return_failure{E}' cannot be
+     declared on one.  */
+  if (flag_herbceptions)
+    {
+      tree hspec
+	= herbceptions_spec (TYPE_RAISES_EXCEPTIONS (TREE_TYPE (fndecl)));
+      if (hspec && HERBCEPTION_SPEC_KIND (hspec) == hsk_return_failure)
+	{
+	  error_at (kw_loc,
+		    "%qs cannot be used in a function declared "
+		    "%<return_failure{E}%>", kw_name);
+	  return false;
+	}
+    }
+
   if (DECL_DECLARED_CONSTEXPR_P (fndecl))
     {
       cp_function_chain->invalid_constexpr = true;

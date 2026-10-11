@@ -224,6 +224,13 @@ DEFTREECODE (DEFERRED_PARSE, "deferred_parse", tcc_exceptional, 0)
    the exception-specification.  */
 DEFTREECODE (DEFERRED_NOEXCEPT, "deferred_noexcept", tcc_exceptional, 0)
 
+/* A herbceptions function specifier: `throws', `throws (expr)' with a
+   possibly dependent condition, or `return_failure{E}' with an explicit
+   error type.  It appears in the TREE_PURPOSE slot of the raises
+   TREE_LIST, the same slot used by noexcept expressions.  The layout is
+   tree_herbception_spec.  */
+DEFTREECODE (HERBCEPTION_SPEC, "herbception_spec", tcc_exceptional, 0)
+
 /* A template-id, like foo<int>.  The first operand is the template.
    The second is NULL if there are no explicit arguments, or a
    TREE_VEC of arguments.  The template will be a FUNCTION_DECL,

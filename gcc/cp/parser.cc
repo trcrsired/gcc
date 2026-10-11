@@ -2919,6 +2919,8 @@ static tree cp_parser_type_id_list
   (cp_parser *);
 static tree cp_parser_noexcept_specification_opt
   (cp_parser *, cp_parser_flags, bool, bool *, bool);
+static tree cp_parser_herbception_specification_opt
+  (cp_parser *, cp_parser_flags);
 
 /* GNU Extensions */
 
@@ -30305,6 +30307,12 @@ cp_parser_class_specifier (cp_parser* parser)
 	  /* Update the fn's type directly -- it might have escaped
 	     beyond this decl :(  */
 	  fixup_deferred_exception_variants (TREE_TYPE (decl), spec);
+
+	  /* With the spec resolved, enforce the herbceptions specifier
+	     restrictions that could not be checked at grokdeclarator
+	     time.  */
+	  if (flag_herbceptions)
+	    check_herbceptions_fn_spec (decl);
 	  /* Update any instantiations we've already created.  We must
 	     keep the new noexcept-specifier wrapped in a DEFERRED_NOEXCEPT
 	     so that maybe_instantiate_noexcept can tsubst the NOEXCEPT_EXPR
@@ -32380,13 +32388,22 @@ cp_parser_late_noexcept_specifier (cp_parser *parser, tree default_arg)
   cp_token_cache *tokens = DEFPARSE_TOKENS (default_arg);
   cp_parser_push_lexer_for_tokens (parser, tokens);
 
-  /* Parse the cached noexcept-specifier.  */
-  tree parsed_arg
-    = cp_parser_noexcept_specification_opt (parser,
-					    CP_PARSER_FLAGS_NONE,
-					    /*require_constexpr=*/true,
-					    /*consumed_expr=*/NULL,
-					    /*return_cond=*/false);
+  /* Parse the cached specifier: a noexcept-specifier or a herbceptions
+     specifier, depending on the leading keyword.  */
+  cp_token *first = cp_lexer_peek_token (parser->lexer);
+  tree parsed_arg;
+  if (cp_parser_is_keyword (first, RID_THROWS)
+      || cp_parser_is_keyword (first, RID_RETURN_FAILURE))
+    parsed_arg
+      = cp_parser_herbception_specification_opt (parser,
+						 CP_PARSER_FLAGS_NONE);
+  else
+    parsed_arg
+      = cp_parser_noexcept_specification_opt (parser,
+					      CP_PARSER_FLAGS_NONE,
+					      /*require_constexpr=*/true,
+					      /*consumed_expr=*/NULL,
+					      /*return_cond=*/false);
 
   /* Revert to the main lexer.  */
   cp_parser_pop_lexer (parser);
@@ -32422,6 +32439,138 @@ noexcept_override_late_checks (tree fndecl, tree class_type)
       if (fn)
 	maybe_check_overriding_exception_spec (fndecl, fn);
     }
+}
+
+/* Save the tokens that make up a herbceptions exception-specifier for a
+   member-function -- `throws (expr)' or `return_failure{E}' -- and
+   return a DEFERRED_PARSE wrapped in a spec TREE_LIST.  CLOSING is the
+   delimiter that ends the spec.  Mirrors cp_parser_save_noexcept.  */
+
+static tree
+cp_parser_save_herbception (cp_parser *parser, enum cpp_ttype closing)
+{
+  cp_token *first = parser->lexer->next_token;
+  /* We want everything up to, including, the final delimiter.  */
+  cp_parser_cache_group (parser, closing, /*depth=*/0);
+  cp_token *last = parser->lexer->next_token;
+
+  tree expr = make_node (DEFERRED_PARSE);
+  /* Save away the specifier; we will process it when the class is
+     complete.  */
+  DEFPARSE_TOKENS (expr) = cp_token_cache_new (first, last);
+  DEFPARSE_INSTANTIATIONS (expr) = nullptr;
+  expr = build_tree_list (expr, NULL_TREE);
+  return expr;
+}
+
+/* Parse an (optional) herbceptions exception-specification.
+
+     throws
+     throws ( constant-expression )
+     return_failure { type-id }
+
+   Returns a raises TREE_LIST, or NULL_TREE if no spec is present.
+   `throws' and `throws (expr)' carry the implicit std::error channel;
+   `return_failure{E}' carries an explicit error type E.  The parser
+   flags FLAGS is used to control parsing, as for the noexcept
+   specifier.  */
+
+static tree
+cp_parser_herbception_specification_opt (cp_parser *parser,
+					 cp_parser_flags flags)
+{
+  cp_token *token = cp_lexer_peek_token (parser->lexer);
+  bool throws_p = cp_parser_is_keyword (token, RID_THROWS);
+  if (!throws_p && !cp_parser_is_keyword (token, RID_RETURN_FAILURE))
+    return NULL_TREE;
+
+  /* [class.mem]/6: like a noexcept-specifier, a herbceptions spec in a
+     member-specification is a complete-class context: `throws (expr)'
+     may reference members and `return_failure{E}' may name a member
+     type (on a friend declaration), so delay parsing it.  A bare
+     `throws' names nothing and needs no delay.  */
+  if ((flags & CP_PARSER_FLAGS_DELAY_NOEXCEPT)
+      && at_class_scope_p ()
+      && TYPE_BEING_DEFINED (current_class_type)
+      && !LAMBDA_TYPE_P (current_class_type))
+    {
+      if (throws_p)
+	{
+	  if (cp_lexer_nth_token_is (parser->lexer, 2, CPP_OPEN_PAREN)
+	      /* No need to delay for a number literal or true/false.  */
+	      && !((cp_lexer_nth_token_is (parser->lexer, 3, CPP_NUMBER)
+		    || cp_lexer_nth_token_is (parser->lexer, 3, CPP_KEYWORD))
+		   && cp_lexer_nth_token_is (parser->lexer, 4,
+					     CPP_CLOSE_PAREN)))
+	    return cp_parser_save_herbception (parser, CPP_CLOSE_PAREN);
+	}
+      else if (cp_lexer_nth_token_is (parser->lexer, 2, CPP_OPEN_BRACE))
+	return cp_parser_save_herbception (parser, CPP_CLOSE_BRACE);
+    }
+
+  location_t loc = token->location;
+
+  if (throws_p)
+    {
+      const char *saved_message;
+
+      cp_lexer_consume_token (parser->lexer);
+
+      if (cp_lexer_next_token_is (parser->lexer, CPP_OPEN_PAREN))
+	{
+	  matching_parens parens;
+	  parens.consume_open (parser);
+
+	  /* Types may not be defined in an exception-specification.  */
+	  saved_message = parser->type_definition_forbidden_message;
+	  parser->type_definition_forbidden_message
+	    = G_("types may not be defined in an exception-specification");
+
+	  tree expr
+	    = cp_parser_constant_expression (parser,
+					     /*allow_non_constant=*/true,
+					     NULL);
+
+	  parser->type_definition_forbidden_message = saved_message;
+	  parens.require_close (parser);
+	  return build_throws_spec (expr, tf_warning_or_error);
+	}
+      return throws_spec;
+    }
+
+  /* `return_failure{E}': the explicit error type in braces.  */
+  cp_lexer_consume_token (parser->lexer);
+
+  if (cp_lexer_next_token_is (parser->lexer, CPP_OPEN_PAREN))
+    {
+      /* `return_failure (E)' is invalid; braces are mandatory.  */
+      error_at (loc, "%<return_failure%> requires a brace-enclosed "
+		     "error type, not parentheses");
+      matching_parens parens;
+      parens.consume_open (parser);
+      cp_parser_skip_to_closing_parenthesis (parser, /*recovering=*/true,
+					     /*or_comma=*/false,
+					     /*consume_paren=*/true);
+      return error_mark_node;
+    }
+  if (!cp_parser_require (parser, CPP_OPEN_BRACE, RT_OPEN_BRACE))
+    return error_mark_node;
+  if (cp_lexer_next_token_is (parser->lexer, CPP_CLOSE_BRACE))
+    {
+      error_at (cp_lexer_peek_token (parser->lexer)->location,
+		"expected error type in %<return_failure{E}%>");
+      cp_lexer_consume_token (parser->lexer);
+      return error_mark_node;
+    }
+  {
+    const char *saved_message = parser->type_definition_forbidden_message;
+    parser->type_definition_forbidden_message
+      = G_("types may not be defined in an exception-specification");
+    tree type = cp_parser_type_id (parser);
+    parser->type_definition_forbidden_message = saved_message;
+    cp_parser_require (parser, CPP_CLOSE_BRACE, RT_CLOSE_BRACE);
+    return build_return_failure_spec (type, tf_warning_or_error);
+  }
 }
 
 /* Parse an (optional) noexcept-specification.
@@ -32556,7 +32705,42 @@ cp_parser_exception_specification_opt (cp_parser* parser,
 					    /*consumed_expr=*/NULL,
 					    /*return_cond=*/false);
   if (type_id_list != NULL_TREE)
-    return type_id_list;
+    {
+      /* noexcept and a herbceptions spec are mutually exclusive;
+	 `throws' supersedes noexcept, so diagnose but keep the
+	 herbceptions spec.  */
+      if (tree hspec
+	  = cp_parser_herbception_specification_opt (parser, flags))
+	{
+	  if (hspec == error_mark_node)
+	    return error_mark_node;
+	  error_at (cp_lexer_peek_token (parser->lexer)->location,
+		    "%<throws%>/%<return_failure{E}%> cannot be combined "
+		    "with %<noexcept%>; the herbceptions specifier "
+		    "supersedes it");
+	  return hspec;
+	}
+      return type_id_list;
+    }
+
+  /* A herbceptions spec next?  */
+  if (tree hspec = cp_parser_herbception_specification_opt (parser, flags))
+    {
+      if (hspec == error_mark_node)
+	return error_mark_node;
+      /* A following noexcept or a second herbceptions spec is
+	 ill-formed; the first spec wins.  */
+      if (cp_parser_noexcept_specification_opt (parser, flags,
+						/*require_constexpr=*/true,
+						/*consumed_expr=*/NULL,
+						/*return_cond=*/false)
+	  || cp_parser_herbception_specification_opt (parser, flags))
+	error_at (cp_lexer_peek_token (parser->lexer)->location,
+		  "multiple exception specifiers: %<throws%>, "
+		  "%<return_failure{E}%> and %<noexcept%> are mutually "
+		  "exclusive");
+      return hspec;
+    }
 
   /* If it's not `throw', then there's no exception-specification.  */
   if (!cp_parser_is_keyword (token, RID_THROW))
@@ -32606,6 +32790,18 @@ cp_parser_exception_specification_opt (cp_parser* parser,
 
   /* Look for the `)'.  */
   parens.require_close (parser);
+
+  /* A dynamic exception specification cannot combine with a
+     herbceptions spec either; the herbceptions spec wins.  */
+  if (tree hspec = cp_parser_herbception_specification_opt (parser, flags))
+    {
+      if (hspec == error_mark_node)
+	return error_mark_node;
+      error_at (cp_lexer_peek_token (parser->lexer)->location,
+		"%<throws%>/%<return_failure{E}%> cannot be combined "
+		"with %<throw ()%>");
+      return hspec;
+    }
 
   return type_id_list;
 }

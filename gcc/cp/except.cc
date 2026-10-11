@@ -1109,6 +1109,9 @@ static void
 maybe_noexcept_warning (tree fn)
 {
   if (TREE_NOTHROW (fn)
+      /* A throws/return_failure callee is marked nounwind but can still
+	 report failure; it is not a missing noexcept.  */
+      && !type_herbceptions_p (TREE_TYPE (fn))
       && (!DECL_IN_SYSTEM_HEADER (fn)
 	  || global_dc->m_warn_system_headers))
     {
@@ -1216,9 +1219,46 @@ nothrow_spec_p (const_tree spec)
 	      || spec == noexcept_false_spec
 	      || TREE_PURPOSE (spec) == error_mark_node
 	      || UNPARSED_NOEXCEPT_SPEC_P (spec)
+	      || herbceptions_spec_p (spec)
 	      || processing_template_decl);
 
   return false;
+}
+
+/* True if raises spec SPEC is or will resolve to a herbceptions
+   specification: either a HERBCEPTION_SPEC node directly, or a deferred
+   spec whose pattern is one.  */
+
+bool
+herbceptions_spec_p (const_tree spec)
+{
+  if (!spec || !TREE_PURPOSE (spec))
+    return false;
+  const_tree p = TREE_PURPOSE (spec);
+  if (TREE_CODE (p) == HERBCEPTION_SPEC)
+    return true;
+  return (TREE_CODE (p) == DEFERRED_NOEXCEPT
+	  && DEFERRED_NOEXCEPT_PATTERN (p)
+	  && TREE_CODE (DEFERRED_NOEXCEPT_PATTERN (p)) == HERBCEPTION_SPEC);
+}
+
+/* Return the HERBCEPTION_SPEC node carried by raises spec SPEC, or
+   NULL_TREE if there is none.  A deferred spec whose pattern is a
+   HERBCEPTION_SPEC is unwrapped.  */
+
+tree
+herbceptions_spec (const_tree spec)
+{
+  if (!spec || !TREE_PURPOSE (spec))
+    return NULL_TREE;
+  tree p = TREE_PURPOSE (spec);
+  if (TREE_CODE (p) == HERBCEPTION_SPEC)
+    return p;
+  if (TREE_CODE (p) == DEFERRED_NOEXCEPT
+      && DEFERRED_NOEXCEPT_PATTERN (p)
+      && TREE_CODE (DEFERRED_NOEXCEPT_PATTERN (p)) == HERBCEPTION_SPEC)
+    return DEFERRED_NOEXCEPT_PATTERN (p);
+  return NULL_TREE;
 }
 
 /* For FUNCTION_TYPE or METHOD_TYPE, true if NODE is noexcept.  This is the
@@ -1245,6 +1285,17 @@ type_throw_all_p (const_tree type)
   tree spec = TYPE_RAISES_EXCEPTIONS (type);
   gcc_assert (!DEFERRED_NOEXCEPT_SPEC_P (spec));
   return spec == NULL_TREE || spec == noexcept_false_spec;
+}
+
+/* For FUNCTION_TYPE or METHOD_TYPE, true if NODE has a herbceptions
+   `throws' or `return_failure{E}' specification: the function cannot
+   propagate a legacy C++ exception (it is nounwind) but can report
+   failure through the deterministic error channel.  */
+
+bool
+type_herbceptions_p (const_tree type)
+{
+  return herbceptions_spec_p (TYPE_RAISES_EXCEPTIONS (type));
 }
 
 /* Create a representation of the noexcept-specification with
@@ -1284,6 +1335,149 @@ build_noexcept_spec (tree expr, tsubst_flags_t complain)
 	expr = strip_typedefs_expr (expr);
       return build_tree_list (expr, NULL_TREE);
     }
+}
+
+/* Create a HERBCEPTION_SPEC raises spec node.  KIND is one of
+   hsk_throws/hsk_throws_expr/hsk_return_failure; TYPE is the error type
+   for hsk_return_failure and EXPR the condition for hsk_throws_expr.  */
+
+static tree
+make_herbception_spec (enum herbception_spec_kind kind, tree type, tree expr)
+{
+  tree hspec = make_node (HERBCEPTION_SPEC);
+  HERBCEPTION_SPEC_KIND (hspec) = kind;
+  HERBCEPTION_SPEC_ERROR_TYPE (hspec) = type;
+  HERBCEPTION_SPEC_EXPR (hspec) = expr;
+  return build_tree_list (hspec, NULL_TREE);
+}
+
+/* Create a representation of a herbceptions `throws'/`throws (expr)'
+   specifier.  EXPR is NULL_TREE for a bare `throws'; otherwise it is the
+   condition, which may be dependent.  `throws (true)' is `throws';
+   `throws (false)' is equivalent to noexcept (true).  COMPLAIN is as for
+   tsubst.  */
+
+tree
+build_throws_spec (tree expr, tsubst_flags_t complain)
+{
+  if (expr == NULL_TREE)
+    return throws_spec;
+  if (check_for_bare_parameter_packs (expr))
+    return error_mark_node;
+  if (TREE_CODE (expr) != DEFERRED_NOEXCEPT
+      && !instantiation_dependent_expression_p (expr))
+    {
+      expr = build_converted_constant_bool_expr (expr, complain);
+      expr = instantiate_non_dependent_expr (expr, complain);
+      expr = cxx_constant_value (expr, complain);
+    }
+  if (TREE_CODE (expr) == INTEGER_CST)
+    {
+      if (operand_equal_p (expr, boolean_true_node, 0))
+	return throws_spec;
+      else
+	{
+	  gcc_checking_assert (operand_equal_p (expr, boolean_false_node, 0));
+	  return noexcept_true_spec;
+	}
+    }
+  else if (expr == error_mark_node)
+    return error_mark_node;
+  else
+    {
+      gcc_assert (processing_template_decl
+		  || TREE_CODE (expr) == DEFERRED_NOEXCEPT);
+      if (TREE_CODE (expr) != DEFERRED_NOEXCEPT)
+	expr = strip_typedefs_expr (expr);
+      return make_herbception_spec (hsk_throws_expr, NULL_TREE, expr);
+    }
+}
+
+/* True if TYPE is the compiler-fabricated std::error representation.
+   That is the builtin __cxx_std_error record, or a std::error class (the
+   libherbceptions ABI twin), which may only ride the implicit `throws'
+   channel.  */
+
+static bool
+cxx_std_error_type_p (tree type)
+{
+  if (type == herbceptions_cxx_std_error_node)
+    return true;
+  if (!CLASS_TYPE_P (type))
+    return false;
+  tree name = TYPE_NAME (type);
+  if (!name || TREE_CODE (name) != TYPE_DECL)
+    return false;
+  tree context = DECL_CONTEXT (name);
+  return (id_equal (DECL_NAME (name), "error")
+	  && context
+	  && (context == std_node
+	      || (TREE_CODE (context) == NAMESPACE_DECL
+		  && DECL_NAMESPACE_STD_P (context))));
+}
+
+/* Create a representation of a herbceptions `return_failure{E}'
+   specifier with explicit error type TYPE.  E must be a complete,
+   trivially copyable type no larger than two pointers, and it cannot be
+   std::error: the implicit channel reserves that representation.
+   COMPLAIN is as for tsubst.  */
+
+tree
+build_return_failure_spec (tree type, tsubst_flags_t complain)
+{
+  if (type == NULL_TREE || type == error_mark_node)
+    return error_mark_node;
+
+  if (PACK_EXPANSION_P (type))
+    type = PACK_EXPANSION_PATTERN (type);
+
+  /* In valid code the error type is never dependent: `return_failure{E}'
+     is only allowed on free functions, never on members or templates.
+     Only validate concrete types; a dependent type here means the
+     declaration will be diagnosed elsewhere anyway.  */
+  if (!dependent_type_p (type))
+    {
+      if (cxx_std_error_type_p (type))
+	{
+	  if (complain & tf_error)
+	    error_at (input_location,
+		      "%<return_failure{std::error}%> is not allowed: the "
+		      "compiler-fabricated %<std::error%> is only carried by "
+		      "the implicit %<throws%> channel");
+	  return error_mark_node;
+	}
+      if (!COMPLETE_TYPE_P (type))
+	{
+	  if (complain & tf_error)
+	    cxx_incomplete_type_error (input_location, NULL_TREE, type);
+	  return error_mark_node;
+	}
+      if (!trivially_copyable_p (type))
+	{
+	  if (complain & tf_error)
+	    error_at (input_location,
+		      "the %<return_failure{E}%> error type %qT must be "
+		      "trivially copyable", type);
+	  return error_mark_node;
+	}
+      /* The error value travels in the registers that also carry the
+	 failure discriminant, so it is bounded by two pointers' worth,
+	 which is what the implicit `throws' error type occupies.  */
+      if (compare_tree_int (TYPE_SIZE_UNIT (type),
+			    2 * POINTER_SIZE_UNITS) > 0)
+	{
+	  if (complain & tf_error)
+	    error_at (input_location,
+		      "the %<return_failure{E}%> error type %qT may not be "
+		      "larger than 2 * sizeof (uintptr_t); the error "
+		      "travels in the same registers as the failure "
+		      "discriminant",
+		      type);
+	  return error_mark_node;
+	}
+    }
+
+  return make_herbception_spec (hsk_return_failure, type, NULL_TREE);
 }
 
 /* If the current function has a cleanup that might throw, and the return value

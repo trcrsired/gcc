@@ -6862,6 +6862,12 @@ trees_out::core_vals (tree t)
       WT (((lang_tree_node *)t)->deferred_noexcept.args);
       break;
 
+    case HERBCEPTION_SPEC:
+      WT (((lang_tree_node *)t)->herbception_spec.type);
+      WT (((lang_tree_node *)t)->herbception_spec.expr);
+      WU (((lang_tree_node *)t)->herbception_spec.kind);
+      break;
+
     case LAMBDA_EXPR:
       WT (((lang_tree_node *)t)->lambda_expression.capture_list);
       WT (((lang_tree_node *)t)->lambda_expression.this_capture);
@@ -7446,6 +7452,13 @@ trees_in::core_vals (tree t)
     case DEFERRED_NOEXCEPT:
       RT (((lang_tree_node *)t)->deferred_noexcept.pattern);
       RT (((lang_tree_node *)t)->deferred_noexcept.args);
+      break;
+
+    case HERBCEPTION_SPEC:
+      RT (((lang_tree_node *)t)->herbception_spec.type);
+      RT (((lang_tree_node *)t)->herbception_spec.expr);
+      RUC (herbception_spec_kind,
+	   ((lang_tree_node *)t)->herbception_spec.kind);
       break;
 
     case LAMBDA_EXPR:

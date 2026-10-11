@@ -16841,6 +16841,59 @@ tsubst_function_type (tree t,
    ARGS into that specification, and return the substituted
    specification.  If there is no specification, return NULL_TREE.  */
 
+/* Substitute ARGS into the HERBCEPTION_SPEC node HSPEC and return the
+   resulting raises spec.  With DEFER_OK a dependent `throws (expr)' or
+   `return_failure{E}' is wrapped in a DEFERRED_NOEXCEPT so it is only
+   evaluated on demand; the pattern is the whole HERBCEPTION_SPEC node,
+   which maybe_instantiate_noexcept substitutes again.  */
+
+static tree
+tsubst_herbceptions_spec (tree hspec, tree args,
+			  tsubst_flags_t complain, tree in_decl,
+			  bool defer_ok)
+{
+  switch (HERBCEPTION_SPEC_KIND (hspec))
+    {
+    case hsk_throws:
+      return throws_spec;
+
+    case hsk_return_failure:
+      if (defer_ok)
+	{
+	  tree new_specs = make_node (DEFERRED_NOEXCEPT);
+	  DEFERRED_NOEXCEPT_PATTERN (new_specs) = hspec;
+	  DEFERRED_NOEXCEPT_ARGS (new_specs) = args;
+	  return build_tree_list (new_specs, NULL_TREE);
+	}
+      else
+	{
+	  tree e = tsubst (HERBCEPTION_SPEC_ERROR_TYPE (hspec), args,
+			   complain, in_decl);
+	  if (e == error_mark_node)
+	    return error_mark_node;
+	  return build_return_failure_spec (e, complain);
+	}
+
+    default: /* hsk_throws_expr */
+      if (defer_ok)
+	{
+	  tree new_specs = make_node (DEFERRED_NOEXCEPT);
+	  DEFERRED_NOEXCEPT_PATTERN (new_specs) = hspec;
+	  DEFERRED_NOEXCEPT_ARGS (new_specs) = args;
+	  return build_tree_list (new_specs, NULL_TREE);
+	}
+      else
+	{
+	  cp_unevaluated u;
+	  tree e = tsubst_expr (HERBCEPTION_SPEC_EXPR (hspec), args,
+				complain, in_decl);
+	  if (e == error_mark_node)
+	    return error_mark_node;
+	  return build_throws_spec (e, complain);
+	}
+    }
+}
+
 static tree
 tsubst_exception_specification (tree fntype,
 				tree args,
@@ -16855,8 +16908,11 @@ tsubst_exception_specification (tree fntype,
   new_specs = NULL_TREE;
   if (specs && TREE_PURPOSE (specs))
     {
-      /* A noexcept-specifier.  */
+      /* A noexcept- or herbceptions-specifier.  */
       tree expr = TREE_PURPOSE (specs);
+      if (TREE_CODE (expr) == HERBCEPTION_SPEC)
+	return tsubst_herbceptions_spec (expr, args, complain, in_decl,
+					 defer_ok);
       if (TREE_CODE (expr) == INTEGER_CST)
 	new_specs = expr;
       else if (defer_ok)
@@ -28839,11 +28895,21 @@ maybe_instantiate_noexcept (tree fn, tsubst_flags_t complain)
 	  if (orig_fn)
 	    ++processing_template_decl;
 
-	  /* Do deferred instantiation of the noexcept-specifier.  */
-	  noex = tsubst_expr (pattern, DEFERRED_NOEXCEPT_ARGS (noex),
-			      tf_warning_or_error, fn);
-	  /* Build up the noexcept-specification.  */
-	  spec = build_noexcept_spec (noex, tf_warning_or_error);
+	  if (TREE_CODE (pattern) == HERBCEPTION_SPEC)
+	    /* Deferred instantiation of a herbceptions `throws (expr)'
+	       or `return_failure{E}' spec.  */
+	    spec = tsubst_herbceptions_spec (pattern,
+					     DEFERRED_NOEXCEPT_ARGS (noex),
+					     tf_warning_or_error, fn,
+					     /*defer_ok=*/false);
+	  else
+	    {
+	      /* Do deferred instantiation of the noexcept-specifier.  */
+	      noex = tsubst_expr (pattern, DEFERRED_NOEXCEPT_ARGS (noex),
+				  tf_warning_or_error, fn);
+	      /* Build up the noexcept-specification.  */
+	      spec = build_noexcept_spec (noex, tf_warning_or_error);
+	    }
 
 	  if (orig_fn)
 	    --processing_template_decl;
@@ -29775,13 +29841,24 @@ value_dependent_noexcept_spec_p (tree type)
 {
   if (tree spec = TYPE_RAISES_EXCEPTIONS (type))
     if (tree noex = TREE_PURPOSE (spec))
-      /* Treat DEFERRED_NOEXCEPT as non-dependent, since it doesn't
-	 affect overload resolution and treating it as dependent breaks
-	 things.  Same for an unparsed noexcept expression.  */
-      if (TREE_CODE (noex) != DEFERRED_NOEXCEPT
-	  && TREE_CODE (noex) != DEFERRED_PARSE
-	  && value_dependent_expression_p (noex))
-	return true;
+      {
+	if (TREE_CODE (noex) == HERBCEPTION_SPEC)
+	  /* A dependent `throws (expr)' or dependent error type makes
+	     the spec (and thus the function type) dependent.  */
+	  return ((HERBCEPTION_SPEC_EXPR (noex)
+		   && value_dependent_expression_p
+			(HERBCEPTION_SPEC_EXPR (noex)))
+		  || (HERBCEPTION_SPEC_ERROR_TYPE (noex)
+		      && dependent_type_p
+			   (HERBCEPTION_SPEC_ERROR_TYPE (noex))));
+	/* Treat DEFERRED_NOEXCEPT as non-dependent, since it doesn't
+	   affect overload resolution and treating it as dependent breaks
+	   things.  Same for an unparsed noexcept expression.  */
+	if (TREE_CODE (noex) != DEFERRED_NOEXCEPT
+	    && TREE_CODE (noex) != DEFERRED_PARSE
+	    && value_dependent_expression_p (noex))
+	  return true;
+      }
 
   return false;
 }
@@ -30428,6 +30505,13 @@ type_dependent_expression_p (tree expression)
       || TREE_CODE (expression) == BINARY_RIGHT_FOLD_EXPR)
     return true;
 
+  /* A HERBCEPTION_SPEC is not an expression at all; it is reached here
+     only through generic walks of a raises spec (e.g. via
+     uses_template_parms on TREE_PURPOSE).  Its payload's dependence is
+     detected by instantiation_dependent_r walking its fields.  */
+  if (TREE_CODE (expression) == HERBCEPTION_SPEC)
+    return false;
+
   /* Some expression forms are never type-dependent.  */
   if (TREE_CODE (expression) == SIZEOF_EXPR
       || TREE_CODE (expression) == ALIGNOF_EXPR
@@ -30796,6 +30880,19 @@ instantiation_dependent_r (tree *tp, int *walk_subtrees,
 	  && value_dependent_noexcept_spec_p (TREE_TYPE (*tp)))
 	return *tp;
       break;
+
+    case HERBCEPTION_SPEC:
+      /* A herbceptions spec is instantiation-dependent iff its payload
+	 is: a `throws (expr)' with a dependent expression, or a
+	 `return_failure{E}' with a dependent error type.  */
+      if (tree e = HERBCEPTION_SPEC_EXPR (*tp))
+	if (instantiation_dependent_uneval_expression_p (e))
+	  return e;
+      if (tree t = HERBCEPTION_SPEC_ERROR_TYPE (*tp))
+	if (dependent_type_p (t))
+	  return t;
+      *walk_subtrees = false;
+      return NULL_TREE;
 
     default:
       break;

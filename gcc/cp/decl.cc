@@ -5805,6 +5805,11 @@ cxx_init_decl_processing (void)
   empty_except_spec = build_tree_list (NULL_TREE, NULL_TREE);
   noexcept_true_spec = build_tree_list (boolean_true_node, NULL_TREE);
   noexcept_false_spec = build_tree_list (boolean_false_node, NULL_TREE);
+  herbceptions_throws_spec = make_node (HERBCEPTION_SPEC);
+  HERBCEPTION_SPEC_KIND (herbceptions_throws_spec) = hsk_throws;
+  HERBCEPTION_SPEC_ERROR_TYPE (herbceptions_throws_spec) = NULL_TREE;
+  HERBCEPTION_SPEC_EXPR (herbceptions_throws_spec) = NULL_TREE;
+  throws_spec = build_tree_list (herbceptions_throws_spec, NULL_TREE);
   noexcept_deferred_spec = build_tree_list (make_node (DEFERRED_NOEXCEPT),
 					    NULL_TREE);
 
@@ -12831,7 +12836,8 @@ grokfndecl (tree ctype,
        tentative.  error_mark_node is replaced later with the BLOCK.  */
     DECL_INITIAL (decl) = error_mark_node;
 
-  if (TYPE_NOTHROW_P (type) || nothrow_libfn_p (decl))
+  if (TYPE_NOTHROW_P (type) || type_herbceptions_p (type)
+      || nothrow_libfn_p (decl))
     TREE_NOTHROW (decl) = 1;
 
   if (flag_openmp || flag_openmp_simd)
@@ -13003,6 +13009,9 @@ grokfndecl (tree ctype,
 	}
     }
 
+  if (flag_herbceptions)
+    check_herbceptions_fn_spec (decl);
+
   if (DECL_CONSTRUCTOR_P (decl) && !grok_ctor_properties (ctype, decl))
     return NULL_TREE;
 
@@ -13013,6 +13022,65 @@ grokfndecl (tree ctype,
     DECL_VIRTUAL_P (decl) = 1;
 
   return decl;
+}
+
+/* Diagnose invalid uses of herbceptions function specifiers on the
+   FUNCTION_DECL DECL: a `throws' or `return_failure{E}' spec on a
+   destructor, a deallocation function, or `main', and a
+   `return_failure{E}' spec on anything but a free function.  Called
+   from grokfndecl for eagerly parsed specs and from the late-parse
+   machinery once a deferred spec is resolved.  */
+
+void
+check_herbceptions_fn_spec (tree decl)
+{
+  if (TREE_CODE (decl) != FUNCTION_DECL)
+    return;
+  tree hspec = herbceptions_spec (TYPE_RAISES_EXCEPTIONS (TREE_TYPE (decl)));
+  if (!hspec)
+    /* No spec, or a spec that has not been parsed yet; deferred specs
+       are checked when they are resolved.  */
+    return;
+
+  location_t loc = DECL_SOURCE_LOCATION (decl);
+
+  /* Destructors run during unwinding and cleanup; they cannot fail
+     through the herbception channel.  */
+  if (DECL_DESTRUCTOR_P (decl))
+    error_at (loc,
+	      "destructor cannot be declared with a herbceptions "
+	      "(%<throws%>/%<return_failure{E}%>) exception "
+	      "specification");
+
+  /* Deallocation functions run on cleanup paths, e.g. when construction
+     inside a new-expression fails, where there is no frame able to
+     consume an error result from the herbception channel.  */
+  if (DECL_OVERLOADED_OPERATOR_P (decl)
+      && (DECL_OVERLOADED_OPERATOR_IS (decl, DELETE_EXPR)
+	  || DECL_OVERLOADED_OPERATOR_IS (decl, VEC_DELETE_EXPR)))
+    error_at (loc,
+	      "deallocation function cannot be declared with a "
+	      "herbceptions exception specification");
+
+  /* `main' is the outermost frame and has no caller able to consume a
+     failure result.  */
+  if (DECL_MAIN_P (decl))
+    error_at (loc,
+	      "%<::main%> cannot be declared with a herbceptions "
+	      "exception specification");
+
+  /* `return_failure{E}' is a C-style feature restricted to free
+     functions: member functions, lambdas, and function templates
+     cannot declare it.  */
+  if (HERBCEPTION_SPEC_KIND (hspec) == hsk_return_failure
+      && (TREE_CODE (TREE_TYPE (decl)) == METHOD_TYPE
+	  || DECL_STATIC_FUNCTION_P (decl)
+	  || DECL_TEMPLATE_INFO (decl)
+	  || processing_template_decl))
+    error_at (loc,
+	      "%<return_failure{E}%> may only be attached to free "
+	      "(non-member) functions; it is not allowed on member "
+	      "functions, lambdas, or function templates");
 }
 
 /* decl is a FUNCTION_DECL.
@@ -21499,6 +21567,7 @@ cp_tree_node_structure (union lang_tree_node * t)
     case CONSTRAINT_INFO:	return TS_CP_CONSTRAINT_INFO;
     case DEFERRED_NOEXCEPT:	return TS_CP_DEFERRED_NOEXCEPT;
     case DEFERRED_PARSE:	return TS_CP_DEFERRED_PARSE;
+    case HERBCEPTION_SPEC:	return TS_CP_HERBCEPTION_SPEC;
     case IDENTIFIER_NODE:	return TS_CP_IDENTIFIER;
     case LAMBDA_EXPR:		return TS_CP_LAMBDA_EXPR;
     case BINDING_VECTOR:	return TS_CP_BINDING_VECTOR;

@@ -355,10 +355,51 @@ dump_substitution_candidates (void)
     }
 }
 
+/* Emit the mangled form of a herbceptions raises SPEC, if it is one:
+
+      Dr                 throws
+      DE <type> E        return_failure{E}
+      Dg <expression> E  throws(expr) with an instantiation-dependent
+                         operand
+
+   The marker precedes the bare-function-type; the position is
+   unambiguous because parameter and return types can never begin with
+   Dr/DE/Dg (function types decay to pointers in signatures).  A
+   deferred spec whose pattern is a HERBCEPTION_SPEC is unwrapped, so
+   an uninstantiated `throws (expr)' keeps its dependent form.
+   throws(false) is type-equivalent to noexcept and leaves no marker.  */
+
+static void
+write_herbceptions_spec (tree spec)
+{
+  tree h = herbceptions_spec (spec);
+  if (!h)
+    return;
+  switch (HERBCEPTION_SPEC_KIND (h))
+    {
+    case hsk_throws:
+      write_string ("Dr");
+      break;
+    case hsk_return_failure:
+      write_string ("DE");
+      write_type (HERBCEPTION_SPEC_ERROR_TYPE (h));
+      write_char ('E');
+      break;
+    case hsk_throws_expr:
+      write_string ("Dg");
+      write_expression (HERBCEPTION_SPEC_EXPR (h));
+      write_char ('E');
+      break;
+    }
+}
+
 /* <exception-spec> ::=
       Do  -- non-throwing exception specification
       DO <expression> E  -- computed (instantiation-dependent) noexcept
-      Dw <type>* E  -- throw (types)  */
+      Dw <type>* E  -- throw (types)
+      Dr  -- herbceptions throws
+      DE <type> E  -- herbceptions return_failure{E}
+      Dg <expression> E  -- dependent herbceptions throws(expr)  */
 
 static void
 write_exception_spec (tree spec)
@@ -367,6 +408,12 @@ write_exception_spec (tree spec)
   if (!spec || spec == noexcept_false_spec)
     /* Nothing.  */
     return;
+
+  if (herbceptions_spec_p (spec))
+    {
+      write_herbceptions_spec (spec);
+      return;
+    }
 
   if (!flag_noexcept_type)
     {
@@ -962,6 +1009,20 @@ write_encoding (const tree decl)
 	  fn_type = TREE_TYPE (decl);
 	  d = decl;
 	}
+
+      /* Herbceptions: the specifier is part of the function's own
+	 mangled name so that a throws/plain (or two different
+	 return_failure{E}) declarations can never share a symbol.  For
+	 a specialization, emit the primary template's spec so that the
+	 resolved spec cannot change the symbol, like clang.  */
+      {
+	tree spec_type = fn_type;
+	if (DECL_TEMPLATE_INFO (decl)
+	    && DECL_TI_TEMPLATE (decl) != NULL_TREE)
+	  spec_type
+	    = TREE_TYPE (DECL_TEMPLATE_RESULT (DECL_TI_TEMPLATE (decl)));
+	write_herbceptions_spec (TYPE_RAISES_EXCEPTIONS (spec_type));
+      }
 
       write_bare_function_type (fn_type,
 				mangle_return_type_p (decl),

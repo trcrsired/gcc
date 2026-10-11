@@ -2932,6 +2932,10 @@ canonical_eh_spec (tree raises)
 	   || uses_template_parms (TREE_PURPOSE (raises)))
     /* Keep a dependent or deferred exception specification.  */
     return raises;
+  else if (HERBCEPTION_SPEC_P (raises))
+    /* A herbceptions spec is part of the canonical type; it changes the
+       calling convention, so it is never collapsed away.  */
+    return raises;
   else if (nothrow_spec_p (raises))
     /* throw() -> noexcept.  */
     return noexcept_true_spec;
@@ -4492,6 +4496,13 @@ cp_tree_equal (tree t1, tree t2)
 			     DEFERRED_NOEXCEPT_PATTERN (t2))
 	      && comp_template_args (DEFERRED_NOEXCEPT_ARGS (t1),
 				     DEFERRED_NOEXCEPT_ARGS (t2)));
+
+    case HERBCEPTION_SPEC:
+      return (HERBCEPTION_SPEC_KIND (t1) == HERBCEPTION_SPEC_KIND (t2)
+	      && cp_tree_equal (HERBCEPTION_SPEC_ERROR_TYPE (t1),
+				HERBCEPTION_SPEC_ERROR_TYPE (t2))
+	      && cp_tree_equal (HERBCEPTION_SPEC_EXPR (t1),
+				HERBCEPTION_SPEC_EXPR (t2)));
 
     case LAMBDA_EXPR:
       /* Two lambda-expressions are never considered equivalent.  */
@@ -6408,6 +6419,12 @@ cp_walk_subtrees (tree *tp, int *walk_subtrees_p, walk_tree_fn func,
     case TYPENAME_TYPE:
       WALK_SUBTREE (TYPE_CONTEXT (t));
       WALK_SUBTREE (TYPENAME_TYPE_FULLNAME (t));
+      *walk_subtrees_p = 0;
+      break;
+
+    case HERBCEPTION_SPEC:
+      WALK_SUBTREE (HERBCEPTION_SPEC_ERROR_TYPE (t));
+      WALK_SUBTREE (HERBCEPTION_SPEC_EXPR (t));
       *walk_subtrees_p = 0;
       break;
 

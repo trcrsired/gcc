@@ -2965,6 +2965,11 @@ merge_exception_specifiers (tree list, tree add)
   else if (!add || add == noexcept_false_spec)
     return add;
 
+  /* A herbceptions callee can fail, but it cannot propagate a legacy C++
+     exception; it contributes nothing to an implicit spec.  */
+  if (herbceptions_spec_p (add))
+    return list;
+
   /* noexcept(true) and throw() are stricter than anything else.
      As above, prefer the more recent one (LIST).  */
   if (nothrow_spec_p_uninst (add))
@@ -2979,6 +2984,9 @@ merge_exception_specifiers (tree list, tree add)
 
   if (nothrow_spec_p_uninst (list))
     return add;
+  if (herbceptions_spec_p (list))
+    /* Keep the herbceptions spec; nothing here can be stricter.  */
+    return list;
   noex = TREE_PURPOSE (list);
   gcc_checking_assert (!TREE_PURPOSE (add)
 		       || errorcount || !flag_exceptions

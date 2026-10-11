@@ -343,7 +343,14 @@ set_flags_from_callee (tree call)
   bool nothrow = decl && TREE_NOTHROW (decl);
   tree callee = cp_get_callee (call);
   if (callee)
-    nothrow |= TYPE_NOTHROW_P (TREE_TYPE (TREE_TYPE (callee)));
+    {
+      tree callee_type = TREE_TYPE (TREE_TYPE (callee));
+      /* A herbceptions `throws'/`return_failure{E}' function cannot
+	 propagate a legacy exception; its failure channel is a return
+	 value, so calls to it are nounwind.  */
+      nothrow |= (TYPE_NOTHROW_P (callee_type)
+		  || type_herbceptions_p (callee_type));
+    }
   else if (TREE_CODE (call) == CALL_EXPR
 	   && internal_fn_flags (CALL_EXPR_IFN (call)) & ECF_NOTHROW)
     nothrow = true;

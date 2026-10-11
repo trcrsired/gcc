@@ -201,6 +201,8 @@ enum cp_tree_index
     CPTI_NOEXCEPT_TRUE_SPEC,
     CPTI_NOEXCEPT_FALSE_SPEC,
     CPTI_NOEXCEPT_DEFERRED_SPEC,
+    CPTI_HERBCEPTION_THROWS_SPEC,
+    CPTI_THROWS_SPEC,
 
     CPTI_ANY_TARG,
 
@@ -361,6 +363,10 @@ extern GTY(()) tree cp_global_trees[CPTI_MAX];
 #define noexcept_true_spec		cp_global_trees[CPTI_NOEXCEPT_TRUE_SPEC]
 #define noexcept_false_spec		cp_global_trees[CPTI_NOEXCEPT_FALSE_SPEC]
 #define noexcept_deferred_spec		cp_global_trees[CPTI_NOEXCEPT_DEFERRED_SPEC]
+/* The shared HERBCEPTION_SPEC node for a plain `throws' spec, and the
+   shared raises TREE_LIST wrapping it.  */
+#define herbceptions_throws_spec	cp_global_trees[CPTI_HERBCEPTION_THROWS_SPEC]
+#define throws_spec			cp_global_trees[CPTI_THROWS_SPEC]
 
 /* Exception handling function declarations.  */
 #define terminate_fn			cp_global_trees[CPTI_TERMINATE_FN]
@@ -1453,6 +1459,41 @@ struct GTY (()) tree_deferred_noexcept {
   tree args;
 };
 
+/* The kind of a HERBCEPTION_SPEC node.  */
+enum herbception_spec_kind
+{
+  /* `throws' -- the implicit std::error error channel.  */
+  hsk_throws,
+  /* `throws (expr)' -- the condition is (possibly) dependent and has not
+     been resolved to a plain `throws' or noexcept yet.  */
+  hsk_throws_expr,
+  /* `return_failure{E}' -- the explicit error type channel.  */
+  hsk_return_failure
+};
+
+struct GTY (()) tree_herbception_spec {
+  struct tree_base base;
+  /* For hsk_return_failure, the error type E.  */
+  tree type;
+  /* For hsk_throws_expr, the possibly-dependent condition.  */
+  tree expr;
+  enum herbception_spec_kind kind;
+};
+
+#define HERBCEPTION_SPEC_ERROR_TYPE(NODE) \
+  (((struct tree_herbception_spec *)HERBCEPTION_SPEC_CHECK (NODE))->type)
+#define HERBCEPTION_SPEC_EXPR(NODE) \
+  (((struct tree_herbception_spec *)HERBCEPTION_SPEC_CHECK (NODE))->expr)
+#define HERBCEPTION_SPEC_KIND(NODE) \
+  (((struct tree_herbception_spec *)HERBCEPTION_SPEC_CHECK (NODE))->kind)
+
+/* True if raises-spec NODE denotes a herbceptions `throws' or
+   `return_failure{E}' specification.  This also holds for a dependent
+   `throws (expr)' that has not been resolved yet.  */
+#define HERBCEPTION_SPEC_P(NODE)				\
+  ((NODE) && (TREE_PURPOSE (NODE))				\
+   && (TREE_CODE (TREE_PURPOSE (NODE)) == HERBCEPTION_SPEC))
+
 
 /* The condition associated with the static assertion.  This must be
    an integral constant expression.  */
@@ -2045,6 +2086,7 @@ enum cp_tree_node_structure_enum {
   TS_CP_TEMPLATE_DECL,
   TS_CP_DEFERRED_PARSE,
   TS_CP_DEFERRED_NOEXCEPT,
+  TS_CP_HERBCEPTION_SPEC,
   TS_CP_STATIC_ASSERT,
   TS_CP_ARGUMENT_PACK_SELECT,
   TS_CP_TRAIT_EXPR,
@@ -2069,6 +2111,7 @@ union GTY((desc ("cp_tree_node_structure (&%h)"),
   struct tree_template_decl GTY ((tag ("TS_CP_TEMPLATE_DECL"))) template_decl;
   struct tree_deferred_parse GTY ((tag ("TS_CP_DEFERRED_PARSE"))) deferred_parse;
   struct tree_deferred_noexcept GTY ((tag ("TS_CP_DEFERRED_NOEXCEPT"))) deferred_noexcept;
+  struct tree_herbception_spec GTY ((tag ("TS_CP_HERBCEPTION_SPEC"))) herbception_spec;
   struct lang_identifier GTY ((tag ("TS_CP_IDENTIFIER"))) identifier;
   struct tree_static_assert GTY ((tag ("TS_CP_STATIC_ASSERT")))
     static_assertion;
@@ -7864,7 +7907,13 @@ extern void perform_deferred_noexcept_checks	(void);
 extern bool nothrow_spec_p			(const_tree);
 extern bool type_noexcept_p			(const_tree);
 extern bool type_throw_all_p			(const_tree);
+extern bool type_herbceptions_p			(const_tree);
+extern bool herbceptions_spec_p			(const_tree);
+extern tree herbceptions_spec			(const_tree);
+extern void check_herbceptions_fn_spec		(tree);
 extern tree build_noexcept_spec			(tree, tsubst_flags_t);
+extern tree build_throws_spec			(tree, tsubst_flags_t);
+extern tree build_return_failure_spec		(tree, tsubst_flags_t);
 extern void choose_personality_routine		(enum languages);
 extern tree build_must_not_throw_expr		(tree,tree);
 extern tree eh_type_info			(tree);

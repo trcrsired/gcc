@@ -2196,6 +2196,11 @@ noexcept_conv_p (tree to, tree from)
     return false;
   if (!FUNC_OR_METHOD_TYPE_P (from))
     return false;
+  /* A herbceptions throws/return_failure function has a different
+     calling convention: it returns through the deterministic error
+     channel.  There is no dropping-the-specifier conversion.  */
+  if (herbceptions_spec_p (TYPE_RAISES_EXCEPTIONS (from)))
+    return false;
   if (!type_throw_all_p (to)
       || type_throw_all_p (from))
     return false;

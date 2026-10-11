@@ -13720,6 +13720,13 @@ potential_constant_expression_1 (tree t, bool want_rval, bool strict, bool now,
     case SPLICE_EXPR:
       return true;
 
+    /* A herbceptions spec is not an expression; when it is reached via
+       a generic walk (e.g. uses_template_parms on a raises TREE_LIST),
+       its payload's dependence has already been accounted for by
+       instantiation_dependent_r.  */
+    case HERBCEPTION_SPEC:
+      return true;
+
     case NONTYPE_ARGUMENT_PACK:
       {
 	tree args = ARGUMENT_PACK_ARGS (t);

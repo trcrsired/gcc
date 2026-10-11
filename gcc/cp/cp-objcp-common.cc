@@ -206,6 +206,7 @@ cp_tree_size (enum tree_code code)
     case TEMPLATE_PARM_INDEX:	return sizeof (template_parm_index);
     case DEFERRED_PARSE:	return sizeof (tree_deferred_parse);
     case DEFERRED_NOEXCEPT:	return sizeof (tree_deferred_noexcept);
+    case HERBCEPTION_SPEC:	return sizeof (tree_herbception_spec);
     case OVERLOAD:		return sizeof (tree_overload);
     case STATIC_ASSERT:         return sizeof (tree_static_assert);
 #if 0
