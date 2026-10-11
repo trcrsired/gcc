@@ -107,7 +107,7 @@ hb_result_type (tree rettype, tree etype, tree fntype)
 static tree
 hb_error_field (tree ut, tree etype)
 {
-  if (same_type_p (ut, etype))
+  if (!RECORD_OR_UNION_TYPE_P (ut) || same_type_p (ut, etype))
     return NULL_TREE;
   for (tree f = TYPE_FIELDS (ut); f; f = DECL_CHAIN (f))
     if (same_type_p (TREE_TYPE (f), etype))
@@ -120,6 +120,8 @@ hb_error_field (tree ut, tree etype)
 static tree
 hb_value_field (tree ut, tree t)
 {
+  if (!RECORD_OR_UNION_TYPE_P (ut))
+    return NULL_TREE;
   for (tree f = TYPE_FIELDS (ut); f; f = DECL_CHAIN (f))
     if (same_type_p (TREE_TYPE (f), t))
       return f;
@@ -255,6 +257,135 @@ hb_emit_route (tree list, hb_ctx *ctx, tree e, location_t loc)
   append_to_statement_list (r, &list);
 }
 
+/* The FIELD_DECL of aggregate R named NAME, or NULL_TREE.  */
+
+static tree
+hb_named_field (tree r, const char *name)
+{
+  tree id = get_identifier (name);
+  for (tree f = TYPE_FIELDS (r); f; f = DECL_CHAIN (f))
+    if (DECL_NAME (f) == id)
+      return f;
+  return NULL_TREE;
+}
+
+/* Lower HERBCEPTION_CATCH_EXPR: `catch return_failure (call)' — the
+   call runs through the channel and yields the {value,error,failed}
+   either-aggregate.  Requires a `return_failure{E}' callee; a plain
+   `throws' call is rejected (its std::error payload needs a
+   `catch throws' block handler).  */
+
+static tree
+hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
+{
+  tree call = TREE_OPERAND (stmt, 0);
+  while (TREE_CODE (call) == HERBCEPTION_TRY_EXPR)
+    call = TREE_OPERAND (call, 0);
+
+  tree fntype = NULL_TREE;
+  if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
+    {
+      tree fn = CALL_EXPR_FN (call);
+      if (!fn && TREE_CODE (call) == AGGR_INIT_EXPR)
+	fn = AGGR_INIT_EXPR_FN (call);
+      if (fn)
+	{
+	  fntype = TREE_TYPE (fn);
+	  if (POINTER_TYPE_P (fntype))
+	    fntype = TREE_TYPE (fntype);
+	}
+    }
+  if (!fntype || !FUNC_OR_METHOD_TYPE_P (fntype)
+      || !type_herbceptions_p (fntype))
+    {
+      error_at (loc, "%<catch return_failure%> requires a call to a "
+		"function with a herbceptions specification");
+      return error_mark_node;
+    }
+
+  tree spec_list = TYPE_RAISES_EXCEPTIONS (fntype);
+  tree hspec = HERBCEPTION_SPEC_P (spec_list)
+    ? TREE_PURPOSE (spec_list) : NULL_TREE;
+  if (!hspec
+      || HERBCEPTION_SPEC_KIND (hspec) != hsk_return_failure)
+    {
+      error_at (loc, "%<catch return_failure%> cannot bind the "
+		"implicit %<std::error%> channel of a %<throws%> "
+		"function; use a %<try { } catch throws (std::error)%> "
+		"block handler");
+      return error_mark_node;
+    }
+
+  tree err = HERBCEPTION_SPEC_ERROR_TYPE (hspec);
+  tree ctype = TREE_TYPE (call);
+  if (VOID_TYPE_P (ctype))
+    ctype = err;
+
+  tree union_type;
+  if (TREE_CODE (call) == AGGR_INIT_EXPR
+      || TREE_CODE (call) == TARGET_EXPR
+      || targetm.calls.return_in_memory (ctype, fntype))
+    union_type = err;
+  else
+    union_type = hb_result_type (ctype, err, fntype);
+
+  tree u = build_decl (loc, VAR_DECL, NULL_TREE, union_type);
+  DECL_ARTIFICIAL (u) = 1;
+  DECL_CONTEXT (u) = ctx->fndecl;
+  tree f = build_decl (loc, VAR_DECL, NULL_TREE, boolean_type_node);
+  DECL_ARTIFICIAL (f) = 1;
+  DECL_CONTEXT (f) = ctx->fndecl;
+  tree etype = TREE_TYPE (stmt);
+  tree r = build_decl (loc, VAR_DECL, NULL_TREE, etype);
+  DECL_ARTIFICIAL (r) = 1;
+  DECL_CONTEXT (r) = ctx->fndecl;
+
+  if (!ctx->pre)
+    ctx->pre = alloc_stmt_list ();
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, u), &ctx->pre);
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, f), &ctx->pre);
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, r), &ctx->pre);
+  append_to_statement_list (build_stmt (loc, EXPR_STMT, call), &ctx->pre);
+  append_to_statement_list
+    (hb_assign (loc, u,
+		build_call_expr_internal_loc (loc, IFN_HERBCEPTION_RESULT,
+					      TREE_TYPE (u), 0)),
+     &ctx->pre);
+  append_to_statement_list
+    (hb_assign (loc, f,
+		build_call_expr_internal_loc (loc, IFN_HERBCEPTION_FAILED,
+					      TREE_TYPE (f), 0)),
+     &ctx->pre);
+
+  /* Bind the either members: r.value = u.value, r.error = u.error,
+     r.failed = f.  */
+  tree errf = hb_error_field (union_type, err);
+  tree errslot = errf
+    ? build3 (COMPONENT_REF, err, u, errf, NULL_TREE) : u;
+  tree valf = hb_value_field (union_type, ctype);
+  tree valslot = valf
+    ? build3 (COMPONENT_REF, ctype, u, valf, NULL_TREE) : u;
+  tree rv = hb_named_field (etype, "value");
+  tree re = hb_named_field (etype, "error");
+  tree rf = hb_named_field (etype, "failed");
+  append_to_statement_list
+    (hb_assign (loc,
+		build3 (COMPONENT_REF, ctype, r, rv, NULL_TREE),
+		valslot),
+     &ctx->pre);
+  append_to_statement_list
+    (hb_assign (loc,
+		build3 (COMPONENT_REF, err, r, re, NULL_TREE),
+		errslot),
+     &ctx->pre);
+  append_to_statement_list
+    (hb_assign (loc,
+		build3 (COMPONENT_REF, boolean_type_node, r, rf, NULL_TREE),
+		f),
+     &ctx->pre);
+  return r;
+}
+
 /* Lower HERBCEPTION_THROW_EXPR / HERBCEPTION_FAIL_EXPR.  Returns a
    STATEMENT_LIST implementing the failure (valid only where a
    statement sequence can stand).  */
@@ -302,6 +433,11 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
   tree call = TREE_OPERAND (stmt, 0);
   tree ctype = TREE_TYPE (call);
   tree fntype = NULL_TREE;
+
+  /* `try(call)' wraps an already auto-wrapped call — peel the
+     inner try, the channel machinery is identical.  */
+  while (TREE_CODE (call) == HERBCEPTION_TRY_EXPR)
+    call = TREE_OPERAND (call, 0);
 
   if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
     {
@@ -507,9 +643,7 @@ hb_lower_return (hb_ctx *ctx, tree ret, location_t loc)
       tree lhs = TREE_OPERAND (op, 0);
       if (DECL_P (lhs) && lhs == DECL_RESULT (ctx->fndecl))
 	{
-	  if (!TREE_ADDRESSABLE (TREE_TYPE (lhs))
-	      && !same_type_p (TREE_TYPE (ctx->result_var),
-			       ctx->error_type))
+	  if (!TREE_ADDRESSABLE (TREE_TYPE (lhs)))
 	    {
 	      /* Scalar return: write into the union's value field.  */
 	      tree slot = hb_value_view (ctx->result_var,
@@ -578,15 +712,21 @@ hb_lower_r (tree *stmt_p, int *walk_subtrees, void *data)
       break;
 
     case HERBCEPTION_CATCH_EXPR:
-      sorry_at (loc,
-		"%<catch return_failure (expr)%> either-values are not "
-		"implemented yet");
-      *stmt_p = TREE_OPERAND (stmt, 0);
+      *stmt_p = hb_lower_catch (ctx, stmt, loc);
       *walk_subtrees = 0;
       break;
 
     case HERBCEPTION_HANDLER:
       /* Handled structurally by hb_lower_try_block.  */
+      *walk_subtrees = 0;
+      break;
+
+    case DECL_EXPR:
+      /* A decl's initializer carries expression-level nodes that the
+	 default walk doesn't reach (DECL_EXPR_DECL's DECL_INITIAL).  */
+      if (tree d = DECL_EXPR_DECL (stmt))
+	if (VAR_P (d) && DECL_INITIAL (d))
+	  cp_walk_tree (&DECL_INITIAL (d), hb_lower_r, ctx, NULL);
       *walk_subtrees = 0;
       break;
 

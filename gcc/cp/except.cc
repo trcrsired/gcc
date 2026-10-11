@@ -28,6 +28,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "stringpool.h"
 #include "trans-mem.h"
 #include "attribs.h"
+#include "langhooks.h"
+#include "stor-layout.h"
 #include "tree-iterator.h"
 #include "target.h"
 
@@ -1635,9 +1637,59 @@ build_herbceptions_catch (location_t loc, tree expr)
       error_at (loc, "herbceptions require %<-fherbceptions%>");
       return error_mark_node;
     }
-  /* The `either{T,E}' result type is fabricated at lowering; for now
-     carry the success type.  */
-  tree r = build1 (HERBCEPTION_CATCH_EXPR, TREE_TYPE (expr), expr);
+  /* The N2289 either aggregate `struct { T value; E error; bool
+     failed; }'.  The error type comes from the callee's
+     `return_failure{E}' spec; a `throws' callee (implicit
+     std::error) cannot flow through `catch return_failure'.  */
+  tree call = expr;
+  while (TREE_CODE (call) == HERBCEPTION_TRY_EXPR)
+    call = TREE_OPERAND (call, 0);
+  tree fntype = NULL_TREE;
+  if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
+    {
+      tree fn = CALL_EXPR_FN (call);
+      if (!fn && TREE_CODE (call) == AGGR_INIT_EXPR)
+	fn = AGGR_INIT_EXPR_FN (call);
+      if (fn)
+	{
+	  fntype = TREE_TYPE (fn);
+	  if (POINTER_TYPE_P (fntype))
+	    fntype = TREE_TYPE (fntype);
+	}
+    }
+  tree spec_list = fntype ? TYPE_RAISES_EXCEPTIONS (fntype) : NULL_TREE;
+  tree hspec = HERBCEPTION_SPEC_P (spec_list)
+    ? TREE_PURPOSE (spec_list) : NULL_TREE;
+  if (!hspec
+      || HERBCEPTION_SPEC_KIND (hspec) != hsk_return_failure)
+    {
+      error_at (loc, "%<catch return_failure%> requires a call to a "
+		"function declared %<return_failure{E}%>; a %<throws%> "
+		"function's implicit %<std::error%> channel needs a "
+		"%<try { } catch throws (std::error)%> block handler");
+      return error_mark_node;
+    }
+  tree err = HERBCEPTION_SPEC_ERROR_TYPE (hspec);
+  tree t = TREE_TYPE (expr);
+  if (VOID_TYPE_P (t))
+    t = err;
+  tree etype = lang_hooks.types.make_type (RECORD_TYPE);
+  etype = begin_class_definition (etype);
+  tree valuef = build_decl (loc, FIELD_DECL, get_identifier ("value"), t);
+  tree errorf = build_decl (loc, FIELD_DECL, get_identifier ("error"), err);
+  tree failedf = build_decl (loc, FIELD_DECL, get_identifier ("failed"),
+			     boolean_type_node);
+  DECL_FIELD_CONTEXT (valuef) = etype;
+  DECL_FIELD_CONTEXT (errorf) = etype;
+  DECL_FIELD_CONTEXT (failedf) = etype;
+  DECL_CHAIN (valuef) = errorf;
+  DECL_CHAIN (errorf) = failedf;
+  TYPE_FIELDS (etype) = valuef;
+  TYPE_BINFO (etype) = make_tree_binfo (0);
+  BINFO_OFFSET (TYPE_BINFO (etype)) = size_zero_node;
+  BINFO_TYPE (TYPE_BINFO (etype)) = etype;
+  etype = finish_struct (etype, NULL_TREE);
+  tree r = build1 (HERBCEPTION_CATCH_EXPR, etype, expr);
   SET_EXPR_LOCATION (r, loc);
   return r;
 }
