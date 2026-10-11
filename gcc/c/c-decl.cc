@@ -4961,6 +4961,10 @@ c_init_decl_processing (void)
 			get_identifier (flag_isoc23 ? "bool" : "_Bool"),
 			boolean_type_node));
 
+  if (flag_herbceptions)
+    herbceptions_cxx_std_error_node
+      = build_herbceptions_cxx_std_error_type ();
+
   /* C-specific nullptr initialization.  */
   record_builtin_type (RID_MAX, "typeof (nullptr)", nullptr_type_node);
   /* The size and alignment of nullptr_t is the same as for a pointer to

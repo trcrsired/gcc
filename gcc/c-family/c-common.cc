@@ -556,6 +556,7 @@ const struct c_common_resword c_common_reswords[] =
   { "reinterpret_cast",	RID_REINTCAST,	D_CXXONLY | D_CXXWARN },
   { "restrict",		RID_RESTRICT,	D_CONLY | D_C99 },
   { "return",		RID_RETURN,	0 },
+  { "return_failure",	RID_RETURN_FAILURE, D_HERBCEPTIONS },
   { "short",		RID_SHORT,	0 },
   { "signed",		RID_SIGNED,	0 },
   { "sizeof",		RID_SIZEOF,	0 },
@@ -568,6 +569,7 @@ const struct c_common_resword c_common_reswords[] =
   { "this",		RID_THIS,	D_CXXONLY | D_CXXWARN },
   { "thread_local",	RID_THREAD,	D_C23 | D_CXX11 | D_CXXWARN },
   { "throw",		RID_THROW,	D_CXX_OBJC | D_CXXWARN },
+  { "throws",		RID_THROWS,	D_CXXONLY | D_HERBCEPTIONS | D_CXXWARN },
   { "true",		RID_TRUE,	D_C23 | D_CXXWARN },
   { "try",		RID_TRY,	D_CXX_OBJC | D_CXXWARN },
   { "typedef",		RID_TYPEDEF,	0 },
@@ -649,6 +651,45 @@ const struct c_common_resword c_common_reswords[] =
 };
 
 const unsigned int num_c_common_reswords = ARRAY_SIZE (c_common_reswords);
+
+/* The compiler-owned herbceptions ABI record type:
+
+     struct __cxx_std_error { void const *domain; uintptr_t code; };
+
+   std::error is non-copyable and only the compiler can fabricate it; the
+   copyable {domain, code} pair is what actually rides the error channel.
+   The type is marked with the "herbceptions_cxx_std_error" attribute so
+   that independently defined copies (e.g. a struct declared by hand for a
+   C FFI boundary) are recognized as the same ABI type.  */
+
+tree herbceptions_cxx_std_error_node;
+
+tree
+herbceptions_cxx_std_error_field (const char *name, tree type)
+{
+  return build_decl (UNKNOWN_LOCATION, FIELD_DECL,
+		     get_identifier (name), type);
+}
+
+void
+mark_herbceptions_cxx_std_error (tree type)
+{
+  TYPE_ATTRIBUTES (type)
+    = tree_cons (get_identifier ("herbceptions_cxx_std_error"),
+		 NULL_TREE, TYPE_ATTRIBUTES (type));
+}
+
+tree
+build_herbceptions_cxx_std_error_type (void)
+{
+  tree fields[2]
+    = { herbceptions_cxx_std_error_field ("domain", const_ptr_type_node),
+	herbceptions_cxx_std_error_field ("code", uintptr_type_node) };
+  tree type = lang_hooks.types.simulate_record_decl
+    (UNKNOWN_LOCATION, "__cxx_std_error", make_array_slice (fields, 2));
+  mark_herbceptions_cxx_std_error (type);
+  return type;
+}
 
 /* Return identifier for address space AS.  */
 

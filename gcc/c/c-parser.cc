@@ -123,6 +123,8 @@ c_parse_init (void)
   gcc_assert (RID_MAX <= 255);
 
   mask |= D_CXXONLY;
+  if (!flag_herbceptions)
+    mask |= D_HERBCEPTIONS;
   if (!flag_isoc99)
     mask |= D_C99;
   if (!flag_isoc23)

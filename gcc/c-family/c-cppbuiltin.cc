@@ -1206,6 +1206,14 @@ c_cpp_builtins (cpp_reader *pfile)
 	cpp_define (pfile, "__cpp_exceptions=199711L");
     }
 
+  if (flag_herbceptions)
+    {
+      cpp_define (pfile, "__HERBCEPTIONS__");
+      /* The compiler-owned {domain, code} ABI record; headers never
+	 declare it themselves.  */
+      cpp_define (pfile, "__CXX_STD_ERROR_TYPE__=__cxx_std_error");
+    }
+
   /* Represents the C++ ABI version, always defined so it can be used while
      preprocessing C and assembler.  */
   if (flag_abi_version == 0)

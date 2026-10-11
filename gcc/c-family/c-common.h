@@ -193,6 +193,9 @@ enum rid
   /* C++26 */
   RID_CONTASSERT,
 
+  /* Herbceptions.  */
+  RID_THROWS, RID_RETURN_FAILURE,
+
   /* C++ transactional memory.  */
   RID_ATOMIC_NOEXCEPT, RID_ATOMIC_CANCEL, RID_SYNCHRONIZED,
 
@@ -455,6 +458,7 @@ extern machine_mode c_default_pointer_mode;
 #define D_CXX_COROUTINES 0x10000  /* In C++, only with coroutines.  */
 #define D_CXX_MODULES	0x20000  /* In C++, only with modules.  */
 #define D_CXX26         0x40000	/* In C++, C++26 only.  */
+#define D_HERBCEPTIONS  0x80000	/* Only with -fherbceptions.  */
 
 #define D_CXX_CONCEPTS_FLAGS D_CXXONLY | D_CXX_CONCEPTS
 #define D_CXX_CHAR8_T_FLAGS D_CXXONLY | D_CXX_CHAR8_T
@@ -848,6 +852,10 @@ extern void c_register_addr_space (const char *str, addr_space_t as);
 
 /* In c-common.cc.  */
 extern bool in_late_binary_op;
+extern tree herbceptions_cxx_std_error_node;
+extern tree herbceptions_cxx_std_error_field (const char *, tree);
+extern void mark_herbceptions_cxx_std_error (tree);
+extern tree build_herbceptions_cxx_std_error_type (void);
 extern const char *c_addr_space_name (addr_space_t as);
 extern tree identifier_global_value (tree);
 extern tree identifier_global_tag (tree);

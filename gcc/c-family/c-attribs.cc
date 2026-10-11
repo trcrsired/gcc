@@ -53,6 +53,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "attr-callback.h"
 
 static tree handle_packed_attribute (tree *, tree, tree, int, bool *);
+static tree handle_herbceptions_cxx_std_error_attribute
+						(tree *, tree, tree, int, bool *);
 static tree handle_nocommon_attribute (tree *, tree, tree, int, bool *);
 static tree handle_common_attribute (tree *, tree, tree, int, bool *);
 static tree handle_hot_attribute (tree *, tree, tree, int, bool *);
@@ -265,6 +267,9 @@ const struct attribute_spec c_common_gnu_attributes[] =
   { "packed",                 0, 0, false, false, false, false,
 			      handle_packed_attribute,
 	                      attr_aligned_exclusions },
+  { "herbceptions_cxx_std_error", 0, 0, false, true, false, false,
+			      handle_herbceptions_cxx_std_error_attribute,
+			      NULL },
   { "nocommon",               0, 0, true,  false, false, false,
 			      handle_nocommon_attribute,
 	                      attr_common_exclusions },
@@ -1019,6 +1024,26 @@ handle_hardbool_attribute (tree *node, tree name, tree args,
   else
     TYPE_NAME (*node) = NULL_TREE;
 
+  return NULL_TREE;
+}
+
+/* Handle a "herbceptions_cxx_std_error" attribute; arguments as in
+   struct attribute_spec.handler.  Marks a record type as the ABI twin of
+   std::error -- a {domain, code} pair carried on the herbceptions error
+   channel.  */
+
+static tree
+handle_herbceptions_cxx_std_error_attribute (tree *node, tree name,
+					   tree ARG_UNUSED (args),
+					   int ARG_UNUSED (flags),
+					   bool *no_add_attrs)
+{
+  if (TREE_CODE (*node) != RECORD_TYPE)
+    {
+      warning (OPT_Wattributes,
+	       "%qE attribute ignored on non-record type %qT", name, *node);
+      *no_add_attrs = true;
+    }
   return NULL_TREE;
 }
 

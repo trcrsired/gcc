@@ -2085,6 +2085,11 @@ C++ ObjC++ WarnRemoved
 fhandle-exceptions
 C++ ObjC++ Optimization Alias(fexceptions) Warn({%<-fhandle-exceptions%> has been renamed %<-fexceptions%> (and is now on by default)})
 
+fherbceptions
+C ObjC C++ ObjC++ Var(flag_herbceptions)
+Enable herbceptions support: the 'throws' and 'return_failure{E}'
+function specifiers and the deterministic error channel (experimental).
+
 fhonor-std
 C++ ObjC++ WarnRemoved
 

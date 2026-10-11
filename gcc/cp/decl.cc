@@ -5646,6 +5646,56 @@ cxx_init_decl_processing (void)
 
   c_common_nodes_and_builtins ();
 
+  if (flag_herbceptions)
+    {
+      /* The C++ class-definition machinery cannot run this early, so
+	 build the two-word ABI record by hand instead of going through
+	 build_herbceptions_cxx_std_error_type/simulate_record_decl.  */
+      tree type = cxx_make_type (RECORD_TYPE);
+      maybe_add_lang_type_raw (type);
+      tree domain = herbceptions_cxx_std_error_field ("domain",
+						      const_ptr_type_node);
+      tree code = herbceptions_cxx_std_error_field ("code",
+						  uintptr_type_node);
+      DECL_FIELD_CONTEXT (domain) = type;
+      DECL_FIELD_CONTEXT (code) = type;
+      DECL_CHAIN (domain) = code;
+      TYPE_FIELDS (type) = domain;
+      layout_type (type);
+      mark_herbceptions_cxx_std_error (type);
+      /* Member access needs CLASS_TYPE_P: mark the record as a
+	 class type, like begin_class_definition would.  */
+      TYPE_LANG_FLAG_5 (type) = 1;
+      TYPE_BINFO (type) = make_tree_binfo (0);
+      BINFO_OFFSET (TYPE_BINFO (type)) = size_zero_node;
+      BINFO_TYPE (TYPE_BINFO (type)) = type;
+      /* Mark the implicit special members as lazily declared, as
+	 add_implicitly_declared_members would leave them for a POD.  */
+      TYPE_HAS_DEFAULT_CONSTRUCTOR (type) = 1;
+      CLASSTYPE_LAZY_DEFAULT_CTOR (type) = 1;
+      TYPE_HAS_CONSTEXPR_CTOR (type) = 1;
+      CLASSTYPE_LAZY_DESTRUCTOR (type) = 1;
+      TYPE_HAS_COPY_CTOR (type) = 1;
+      TYPE_HAS_CONST_COPY_CTOR (type) = 1;
+      CLASSTYPE_LAZY_COPY_CTOR (type) = 1;
+      CLASSTYPE_LAZY_MOVE_CTOR (type) = 1;
+      TYPE_HAS_COPY_ASSIGN (type) = 1;
+      TYPE_HAS_CONST_COPY_ASSIGN (type) = 1;
+      CLASSTYPE_LAZY_COPY_ASSIGN (type) = 1;
+      CLASSTYPE_LAZY_MOVE_ASSIGN (type) = 1;
+      /* With no bases the as-base type is the type itself.  */
+      CLASSTYPE_AS_BASE (type) = type;
+
+      tree name = get_identifier ("__cxx_std_error");
+      tree decl = build_decl (UNKNOWN_LOCATION, TYPE_DECL, name, type);
+      DECL_ARTIFICIAL (decl) = true;
+      SET_DECL_IMPLICIT_TYPEDEF_P (decl);
+      TYPE_NAME (type) = decl;
+      TYPE_STUB_DECL (type) = decl;
+      pushdecl (decl);
+      herbceptions_cxx_std_error_node = type;
+    }
+
   /* Call the target stack_protect_guard hook if the stack protection
      guard is declared as a global symbol.  */
   if (targetm.stack_protect_guard_symbol_p ())
