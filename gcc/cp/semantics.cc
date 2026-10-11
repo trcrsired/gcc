@@ -2153,6 +2153,55 @@ finish_handler (tree handler)
   HANDLER_BODY (handler) = do_poplevel (HANDLER_BODY (handler));
 }
 
+/* Begin a herbceptions `catch throws' handler.  Same shape as
+   begin_handler: returns a HERBCEPTION_HANDLER with an sk_catch
+   binding level for the handler body.  */
+
+tree
+begin_herbceptions_handler (void)
+{
+  tree r = build_stmt (input_location, HERBCEPTION_HANDLER,
+		       NULL_TREE, NULL_TREE);
+  add_stmt (r);
+  HERBCEPTION_HANDLER_BODY (r) = do_pushlevel (sk_catch);
+  return r;
+}
+
+/* Finish the parameters of a `catch throws' handler.  DECL is the
+   caught variable (or NULL_TREE for `catch throws(...)' or an
+   un-named binding); it must carry the std::error payload type.  */
+
+void
+finish_herbceptions_handler_parms (tree decl, tree handler)
+{
+  tree type = NULL_TREE;
+  if (decl)
+    {
+      decl = pushdecl (decl);
+      if (processing_template_decl)
+	decl = push_template_decl (decl);
+      HERBCEPTION_HANDLER_PARMS (handler) = decl;
+      type = TREE_TYPE (decl);
+      if (!cxx_std_error_type_p (type))
+	{
+	  error_at (DECL_SOURCE_LOCATION (decl),
+		    "%<catch throws%> requires the caught type to be "
+		    "%<std::error%> (%qT given)", type);
+	  type = error_mark_node;
+	}
+    }
+  HERBCEPTION_HANDLER_TYPE (handler) = type;
+}
+
+/* Finish a `catch throws' handler.  */
+
+void
+finish_herbceptions_handler (tree handler)
+{
+  HERBCEPTION_HANDLER_BODY (handler)
+    = do_poplevel (HERBCEPTION_HANDLER_BODY (handler));
+}
+
 /* Begin a compound statement.  FLAGS contains some bits that control the
    behavior and context.  If BCS_NO_SCOPE is set, the compound statement
    does not define a scope.  If BCS_FN_BODY is set, this is the outermost

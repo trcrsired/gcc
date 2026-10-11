@@ -5984,6 +5984,16 @@ decl_template_parm_check (const_tree t, const char *f, int l, const char *fn)
 #define HANDLER_BODY(NODE)	TREE_OPERAND (HANDLER_CHECK (NODE), 1)
 #define HANDLER_TYPE(NODE)	TREE_TYPE (HANDLER_CHECK (NODE))
 
+/* For a HERBCEPTION_HANDLER node, the `catch throws(E e)' machinery:
+   PARMS is the caught variable, BODY the handler body, and TYPE the
+   error payload type.  */
+#define HERBCEPTION_HANDLER_PARMS(NODE) \
+  TREE_OPERAND (HERBCEPTION_HANDLER_CHECK (NODE), 0)
+#define HERBCEPTION_HANDLER_BODY(NODE) \
+  TREE_OPERAND (HERBCEPTION_HANDLER_CHECK (NODE), 1)
+#define HERBCEPTION_HANDLER_TYPE(NODE) \
+  TREE_TYPE (HERBCEPTION_HANDLER_CHECK (NODE))
+
 /* CLEANUP_STMT accessors.  The statement(s) covered, the cleanup to run
    and the VAR_DECL for which this cleanup exists.  */
 #define CLEANUP_BODY(NODE)	TREE_OPERAND (CLEANUP_STMT_CHECK (NODE), 0)
@@ -7914,6 +7924,13 @@ extern void check_herbceptions_fn_spec		(tree);
 extern tree build_noexcept_spec			(tree, tsubst_flags_t);
 extern tree build_throws_spec			(tree, tsubst_flags_t);
 extern tree build_return_failure_spec		(tree, tsubst_flags_t);
+extern bool cxx_std_error_type_p		(tree);
+extern tree current_function_herbceptions_spec	(void);
+extern bool herbceptions_failure_allowed_here	(void);
+extern tree build_herbceptions_throw		(location_t, tree, bool);
+extern tree build_herbceptions_fail		(location_t, tree, tsubst_flags_t);
+extern tree build_herbceptions_try		(location_t, tree);
+extern tree build_herbceptions_catch		(location_t, tree);
 extern void choose_personality_routine		(enum languages);
 extern tree build_must_not_throw_expr		(tree,tree);
 extern tree eh_type_info			(tree);
@@ -8584,6 +8601,9 @@ extern void finish_cleanup_try_block		(tree);
 extern tree begin_handler			(void);
 extern void finish_handler_parms		(tree, tree);
 extern void finish_handler			(tree);
+extern tree begin_herbceptions_handler		(void);
+extern void finish_herbceptions_handler_parms	(tree, tree);
+extern void finish_herbceptions_handler		(tree);
 extern void finish_cleanup			(tree, tree);
 extern bool is_this_parameter                   (tree);
 extern bool is_object_parameter                 (tree);

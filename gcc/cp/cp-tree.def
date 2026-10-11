@@ -284,6 +284,40 @@ DEFTREECODE (EH_SPEC_BLOCK, "eh_spec_block", tcc_statement, 2)
    HANDLER_BODY.  */
 DEFTREECODE (HANDLER, "handler", tcc_statement, 2)
 
+/* A herbceptions `catch throws(E e)' handler.  Same layout as HANDLER:
+   the caught variable is in HERBCEPTION_HANDLER_PARMS and the body in
+   HERBCEPTION_HANDLER_BODY; TREE_TYPE is the error payload type
+   (std::error).  It receives the deterministic error value directly
+   rather than going through the legacy exception-handling machinery.  */
+DEFTREECODE (HERBCEPTION_HANDLER, "herbception_handler", tcc_statement, 2)
+
+/* A herbceptions `throw throws EXPR' or `throw throws' rethrow.
+   Operand 0 is the error value, or NULL_TREE for a rethrow of the
+   error in flight in a `catch throws' handler.  */
+DEFTREECODE (HERBCEPTION_THROW_EXPR, "herbception_throw_expr",
+	     tcc_expression, 1)
+
+/* A herbceptions `return_failure (EXPR)' expression or `return_failure
+   EXPR;' statement: fail through the explicit error channel of a
+   `return_failure{E}' function, or convert EXPR through
+   std::error_domain into the `throws' channel.  */
+DEFTREECODE (HERBCEPTION_FAIL_EXPR, "herbception_fail_expr",
+	     tcc_expression, 1)
+
+/* A herbceptions `try (EXPR)': evaluate EXPR, propagating any failure
+   from a spec'd callee through the enclosing function's error channel
+   (or the enclosing `catch throws'/expression-catch).  Also used to
+   mark every call to a herbceptions function: any unhandled failure
+   propagates.  */
+DEFTREECODE (HERBCEPTION_TRY_EXPR, "herbception_try_expr",
+	     tcc_expression, 1)
+
+/* A herbceptions `catch return_failure (EXPR)' expression: evaluate
+   EXPR and produce an `either{success, error}' value carrying either
+   the result or the deterministic error.  */
+DEFTREECODE (HERBCEPTION_CATCH_EXPR, "herbception_catch_expr",
+	     tcc_expression, 1)
+
 /* A MUST_NOT_THROW_EXPR wraps an expression that may not
    throw, and must call terminate if it does.  The second argument
    is a condition, used in templates to express noexcept (condition).  */

@@ -6918,6 +6918,68 @@ cp_parser_primary_expression (cp_parser *parser,
     case CPP_KEYWORD:
       switch (token->keyword)
 	{
+	  /* Herbception expression forms:
+	     `try (expr)' auto-propagates a spec'd call's failure;
+	     `return_failure (expr)' fails through the error channel;
+	     `catch return_failure (expr)' produces an either value.  */
+	case RID_TRY:
+	  if (flag_herbceptions
+	      && cp_lexer_peek_nth_token (parser->lexer, 2)->type
+		   == CPP_OPEN_PAREN)
+	    {
+	      location_t try_loc = token->location;
+	      cp_lexer_consume_token (parser->lexer);
+	      matching_parens parens;
+	      parens.consume_open (parser);
+	      ++parser->herbception_operand_depth;
+	      tree expr = cp_parser_expression (parser);
+	      --parser->herbception_operand_depth;
+	      parens.require_close (parser);
+	      return build_herbceptions_try (try_loc, expr);
+	    }
+	  cp_parser_error (parser, "expected primary-expression");
+	  return error_mark_node;
+
+	case RID_CATCH:
+	  if (flag_herbceptions
+	      && cp_lexer_nth_token_is_keyword (parser->lexer, 2,
+						RID_RETURN_FAILURE)
+	      && cp_lexer_peek_nth_token (parser->lexer, 3)->type
+		   == CPP_OPEN_PAREN)
+	    {
+	      location_t catch_loc = token->location;
+	      cp_lexer_consume_token (parser->lexer);
+	      cp_lexer_consume_token (parser->lexer);
+	      matching_parens parens;
+	      parens.consume_open (parser);
+	      ++parser->herbception_operand_depth;
+	      tree expr = cp_parser_expression (parser);
+	      --parser->herbception_operand_depth;
+	      parens.require_close (parser);
+	      return build_herbceptions_catch (catch_loc, expr);
+	    }
+	  cp_parser_error (parser, "expected primary-expression");
+	  return error_mark_node;
+
+	case RID_RETURN_FAILURE:
+	  if (flag_herbceptions
+	      && cp_lexer_peek_nth_token (parser->lexer, 2)->type
+		   == CPP_OPEN_PAREN)
+	    {
+	      location_t rf_loc = token->location;
+	      cp_lexer_consume_token (parser->lexer);
+	      matching_parens parens;
+	      parens.consume_open (parser);
+	      ++parser->herbception_operand_depth;
+	      tree expr = cp_parser_expression (parser);
+	      --parser->herbception_operand_depth;
+	      parens.require_close (parser);
+	      return build_herbceptions_fail
+		(rf_loc, expr, tf_warning_or_error);
+	    }
+	  cp_parser_error (parser, "expected primary-expression");
+	  return error_mark_node;
+
 	  /* These two are the boolean literals.  */
 	case RID_TRUE:
 	  cp_lexer_consume_token (parser->lexer);
@@ -9284,6 +9346,41 @@ cp_parser_postfix_expression (cp_parser *parser, bool address_p, bool cast_p,
 				      disallow_virtual,
 				      koenig_p,
 				      complain);
+	      }
+
+	    /* Every call to a herbceptions function is an implicit
+	       `try(expr)': a failure propagates through the enclosing
+	       context.  A bare call in a function with no herbceptions
+	       spec and no enclosing try/catch has nowhere for the
+	       error to go.  */
+	    if (flag_herbceptions
+		&& postfix_expression != error_mark_node
+		&& !cp_unevaluated_operand)
+	      {
+		tree call = extract_call_expr (postfix_expression);
+		tree fntype = NULL_TREE;
+		if (call && TREE_CODE (call) == CALL_EXPR
+		    && CALL_EXPR_FN (call))
+		  {
+		    fntype = TREE_TYPE (CALL_EXPR_FN (call));
+		    if (fntype && INDIRECT_TYPE_P (fntype))
+		      fntype = TREE_TYPE (fntype);
+		  }
+		if (fntype && FUNC_OR_METHOD_TYPE_P (fntype)
+		    && type_herbceptions_p (fntype))
+		  {
+		    if (parser->herbception_operand_depth == 0
+			&& !herbceptions_failure_allowed_here ())
+		      error_at (loc, "call to a %<throws%> or "
+				     "%<return_failure{E}%> function must "
+				     "be handled by an enclosing %<try { } "
+				     "catch throws%>, or the calling "
+				     "function needs a herbceptions "
+				     "specification so the error can "
+				     "propagate");
+		    postfix_expression
+		      = build_herbceptions_try (loc, postfix_expression);
+		  }
 	      }
 
 	    if (close_paren_loc != UNKNOWN_LOCATION)
@@ -14490,6 +14587,23 @@ cp_parser_statement (cp_parser* parser, tree in_statement_expr,
 	  std_attrs = process_stmt_hotness_attribute (std_attrs, attrs_loc);
 	  statement = cp_parser_jump_statement (parser, std_attrs);
 	  break;
+
+	case RID_RETURN_FAILURE:
+	  {
+	    /* `return_failure [expr];': fail through the enclosing
+	       function's error channel.  */
+	    std_attrs = process_stmt_hotness_attribute (std_attrs,
+							attrs_loc);
+	    location_t rf_loc = token->location;
+	    cp_lexer_consume_token (parser->lexer);
+	    tree expr = NULL_TREE;
+	    if (!cp_lexer_next_token_is (parser->lexer, CPP_SEMICOLON))
+	      expr = cp_parser_expression (parser);
+	    statement
+	      = finish_expr_stmt (build_herbceptions_fail
+				    (rf_loc, expr, tf_warning_or_error));
+	    break;
+	  }
 
 	  /* Objective-C++ exception-handling constructs.  */
 	case RID_AT_TRY:
@@ -32947,6 +33061,39 @@ cp_parser_handler (cp_parser* parser)
   tree declaration;
 
   cp_parser_require_keyword (parser, RID_CATCH, RT_CATCH);
+
+  /* Herbception: `catch throws (E e) { ... }' receives the
+     deterministic error payload directly.  `catch return_failure'
+     exists only in its expression form `catch return_failure (expr)'.
+     */
+  if (flag_herbceptions
+      && cp_lexer_next_token_is_keyword (parser->lexer, RID_RETURN_FAILURE))
+    {
+      location_t loc = cp_lexer_peek_token (parser->lexer)->location;
+      cp_lexer_consume_token (parser->lexer);
+      error_at (loc, "%<catch return_failure%> is only valid in its "
+		     "expression form %<catch return_failure (expr)%>, "
+		     "not as a block handler");
+      cp_parser_skip_to_end_of_block_or_statement (parser);
+      return;
+    }
+  if (flag_herbceptions
+      && cp_lexer_next_token_is_keyword (parser->lexer, RID_THROWS))
+    {
+      cp_lexer_consume_token (parser->lexer);
+      handler = begin_herbceptions_handler ();
+      matching_parens parens;
+      parens.require_open (parser);
+      declaration = cp_parser_exception_declaration (parser);
+      finish_herbceptions_handler_parms (declaration, handler);
+      parens.require_close (parser);
+      ++parser->herbception_handler_depth;
+      cp_parser_compound_statement (parser, NULL, BCS_NORMAL, false);
+      --parser->herbception_handler_depth;
+      finish_herbceptions_handler (handler);
+      return;
+    }
+
   handler = begin_handler ();
   matching_parens parens;
   parens.require_open (parser);
@@ -33043,6 +33190,28 @@ cp_parser_throw_expression (cp_parser* parser)
 
   cp_parser_require_keyword (parser, RID_THROW, RT_THROW);
   token = cp_lexer_peek_token (parser->lexer);
+
+  /* Herbception: `throw throws [expr]' is a deterministic error throw,
+     or bare `throw throws' is a rethrow inside a `catch throws'
+     handler.  */
+  if (cp_parser_is_keyword (token, RID_THROWS))
+    {
+      location_t throws_loc = token->location;
+      cp_lexer_consume_token (parser->lexer);
+      token = cp_lexer_peek_token (parser->lexer);
+      if (token->type == CPP_COMMA
+	  || token->type == CPP_SEMICOLON
+	  || token->type == CPP_CLOSE_PAREN
+	  || token->type == CPP_CLOSE_SQUARE
+	  || token->type == CPP_CLOSE_BRACE
+	  || token->type == CPP_COLON)
+	expression = NULL_TREE;
+      else
+	expression = cp_parser_assignment_expression (parser);
+      return build_herbceptions_throw
+	(throws_loc, expression, parser->herbception_handler_depth > 0);
+    }
+
   /* Figure out whether or not there is an assignment-expression
      following the "throw" keyword.  */
   if (token->type == CPP_COMMA

@@ -385,6 +385,7 @@ extern bool local_bindings_p (void);
 extern bool template_parm_scope_p (void);
 extern scope_kind innermost_scope_kind (void);
 extern cp_binding_level *begin_scope (scope_kind, tree);
+extern bool level_for_constexpr_if (cp_binding_level *);
 extern void print_binding_stack	(void);
 extern void pop_everything (void);
 extern void keep_next_level (bool);

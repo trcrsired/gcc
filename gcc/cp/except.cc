@@ -1398,7 +1398,7 @@ build_throws_spec (tree expr, tsubst_flags_t complain)
    libherbceptions ABI twin), which may only ride the implicit `throws'
    channel.  */
 
-static bool
+bool
 cxx_std_error_type_p (tree type)
 {
   if (type == herbceptions_cxx_std_error_node)
@@ -1478,6 +1478,168 @@ build_return_failure_spec (tree type, tsubst_flags_t complain)
     }
 
   return make_herbception_spec (hsk_return_failure, type, NULL_TREE);
+}
+
+/* True if the current binding context is inside a try-block body or a
+   catch handler body, where a failure may be routed to an enclosing
+   herbceptions catch.  */
+
+static bool
+in_herbceptions_try_or_catch_scope (void)
+{
+  for (cp_binding_level *b = current_binding_level;
+       b && b->kind != sk_namespace && b->kind != sk_class;
+       b = b->level_chain)
+    if (b->kind == sk_try || b->kind == sk_catch
+	|| level_for_constexpr_if (b))
+      return true;
+  return false;
+}
+
+/* Return the HERBCEPTION_SPEC of the function currently being parsed,
+   or NULL_TREE.  */
+
+tree
+current_function_herbceptions_spec (void)
+{
+  if (!current_function_decl)
+    return NULL_TREE;
+  return herbceptions_spec
+	   (TYPE_RAISES_EXCEPTIONS (TREE_TYPE (current_function_decl)));
+}
+
+/* True if a failure produced here has somewhere to go: the enclosing
+   function has a herbceptions spec (any channel), or the point is
+   inside a try-block/handler that can hold a `catch throws'.  */
+
+bool
+herbceptions_failure_allowed_here (void)
+{
+  return (current_function_herbceptions_spec () != NULL_TREE
+	  || in_herbceptions_try_or_catch_scope ());
+}
+
+/* Build a HERBCEPTION_THROW_EXPR for `throw throws EXPR'.  EXPR is the
+   error operand, or NULL_TREE for a bare `throw throws' rethrow; bare
+   rethrows are only valid inside a `catch throws' handler body, which
+   RETHROW_OK records at parse time.  */
+
+tree
+build_herbceptions_throw (location_t loc, tree expr, bool rethrow_ok)
+{
+  if (!flag_herbceptions)
+    {
+      error_at (loc, "herbceptions require %<-fherbceptions%>");
+      return error_mark_node;
+    }
+
+  tree hspec = current_function_herbceptions_spec ();
+  if (hspec && HERBCEPTION_SPEC_KIND (hspec) == hsk_return_failure)
+    {
+      error_at (loc, "%<throw throws%> belongs to the implicit "
+		     "%<std::error%> channel; a %<return_failure{E}%> "
+		     "function fails through %<return_failure (expr)%>");
+      return error_mark_node;
+    }
+
+  if (expr == NULL_TREE)
+    {
+      if (!rethrow_ok)
+	{
+	  error_at (loc, "%<throw throws%> without an operand rethrows "
+			 "the caught error and is only valid inside a "
+			 "%<catch throws%> handler");
+	  return error_mark_node;
+	}
+    }
+  else if (!hspec && !in_herbceptions_try_or_catch_scope ())
+    {
+      error_at (loc, "%<throw throws%> is only valid inside a function "
+		     "declared %<throws%> or inside a %<try%> block "
+		     "with a %<catch throws%> handler");
+      return error_mark_node;
+    }
+
+  tree r = build1 (HERBCEPTION_THROW_EXPR, void_type_node, expr);
+  SET_EXPR_LOCATION (r, loc);
+  return r;
+}
+
+/* Build a HERBCEPTION_FAIL_EXPR for `return_failure (EXPR)' or
+   `return_failure EXPR;'.  In a `return_failure{E}' function EXPR
+   becomes the E error value; in a `throws' function it is converted
+   through std::error_domain into a std::error (lowering resolves the
+   conversion); anywhere else it must be routable to a catch.  EXPR may
+   be NULL_TREE for a default failure.  */
+
+tree
+build_herbceptions_fail (location_t loc, tree expr, tsubst_flags_t complain)
+{
+  if (!flag_herbceptions)
+    {
+      if (complain & tf_error)
+	error_at (loc, "herbceptions require %<-fherbceptions%>");
+      return error_mark_node;
+    }
+
+  tree hspec = current_function_herbceptions_spec ();
+  if (hspec && HERBCEPTION_SPEC_KIND (hspec) == hsk_return_failure
+      && expr)
+    {
+      tree etype = HERBCEPTION_SPEC_ERROR_TYPE (hspec);
+      if (!same_type_p (TREE_TYPE (expr), etype))
+	{
+	  expr = perform_implicit_conversion (etype, expr, complain);
+	  if (expr == error_mark_node)
+	    return error_mark_node;
+	}
+    }
+  else if (!hspec && !in_herbceptions_try_or_catch_scope ())
+    {
+      if (complain & tf_error)
+	error_at (loc, "%<return_failure (expr)%> is only valid inside a "
+		       "function with a herbceptions specification, or "
+		       "inside a %<try%> block with a %<catch throws%> "
+		       "handler");
+      return error_mark_node;
+    }
+
+  tree r = build1 (HERBCEPTION_FAIL_EXPR, void_type_node, expr);
+  SET_EXPR_LOCATION (r, loc);
+  return r;
+}
+
+/* Build a HERBCEPTION_TRY_EXPR around EXPR (`try (expr)', or an
+   implicit wrapper on every call to a herbceptions function): on
+   success it produces EXPR's value; on failure the error propagates
+   through the enclosing context.  */
+
+tree
+build_herbceptions_try (location_t loc, tree expr)
+{
+  if (expr == error_mark_node)
+    return error_mark_node;
+  tree r = build1 (HERBCEPTION_TRY_EXPR, TREE_TYPE (expr), expr);
+  SET_EXPR_LOCATION (r, loc);
+  return r;
+}
+
+/* Build a HERBCEPTION_CATCH_EXPR for `catch return_failure (expr)':
+   evaluate EXPR and produce an `either{success,error}' value.  */
+
+tree
+build_herbceptions_catch (location_t loc, tree expr)
+{
+  if (!flag_herbceptions)
+    {
+      error_at (loc, "herbceptions require %<-fherbceptions%>");
+      return error_mark_node;
+    }
+  /* The `either{T,E}' result type is fabricated at lowering; for now
+     carry the success type.  */
+  tree r = build1 (HERBCEPTION_CATCH_EXPR, TREE_TYPE (expr), expr);
+  SET_EXPR_LOCATION (r, loc);
+  return r;
 }
 
 /* If the current function has a cleanup that might throw, and the return value

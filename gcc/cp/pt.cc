@@ -20500,6 +20500,23 @@ tsubst_stmt (tree t, tree args, tsubst_flags_t complain, tree in_decl)
       }
       break;
 
+    case HERBCEPTION_HANDLER:
+      {
+	tree decl = HERBCEPTION_HANDLER_PARMS (t);
+
+	if (decl)
+	  {
+	    decl = tsubst (decl, args, complain, in_decl);
+	    if (decl != error_mark_node)
+	      DECL_TEMPLATE_INSTANTIATED (decl) = 1;
+	  }
+	stmt = begin_herbceptions_handler ();
+	finish_herbceptions_handler_parms (decl, stmt);
+	RECUR (HERBCEPTION_HANDLER_BODY (t));
+	finish_herbceptions_handler (stmt);
+      }
+      break;
+
     case TAG_DEFN:
       tmp = tsubst (TREE_TYPE (t), args, complain, NULL_TREE);
       if (dependent_type_p (tmp))
@@ -23069,6 +23086,20 @@ tsubst_expr (tree t, tree args, tsubst_flags_t complain, tree in_decl)
     case THROW_EXPR:
       RETURN (build_throw
        (input_location, RECUR (TREE_OPERAND (t, 0)), complain));
+
+    case HERBCEPTION_THROW_EXPR:
+    case HERBCEPTION_FAIL_EXPR:
+    case HERBCEPTION_TRY_EXPR:
+    case HERBCEPTION_CATCH_EXPR:
+      {
+	/* The context checks ran when the template was parsed; the
+	   instantiation binding levels do not mirror the statement
+	   structure, so rebuild the node directly.  */
+	tree op = RECUR (TREE_OPERAND (t, 0));
+	tree r = build1 (TREE_CODE (t), TREE_TYPE (t), op);
+	SET_EXPR_LOCATION (r, EXPR_LOCATION (t));
+	RETURN (r);
+      }
 
     case CONSTRUCTOR:
       {
@@ -30522,6 +30553,8 @@ type_dependent_expression_p (tree expression)
       || TREE_CODE (expression) == DELETE_EXPR
       || TREE_CODE (expression) == VEC_DELETE_EXPR
       || TREE_CODE (expression) == THROW_EXPR
+      || TREE_CODE (expression) == HERBCEPTION_THROW_EXPR
+      || TREE_CODE (expression) == HERBCEPTION_FAIL_EXPR
       || TREE_CODE (expression) == REQUIRES_EXPR
       || REFLECT_EXPR_P (expression))
     return false;

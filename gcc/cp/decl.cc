@@ -613,7 +613,7 @@ objc_mark_locals_volatile (void *enclosing_blk)
 
 /* True if B is the level for the condition of a constexpr if.  */
 
-static bool
+bool
 level_for_constexpr_if (cp_binding_level *b)
 {
   return (b->kind == sk_cond && b->this_entity

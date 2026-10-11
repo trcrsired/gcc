@@ -817,6 +817,18 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
       ret = GS_OK;
       break;
 
+    case HERBCEPTION_HANDLER:
+    case HERBCEPTION_THROW_EXPR:
+    case HERBCEPTION_FAIL_EXPR:
+    case HERBCEPTION_TRY_EXPR:
+    case HERBCEPTION_CATCH_EXPR:
+      /* Error-channel lowering is not implemented yet.  */
+      sorry_at (location_of (*expr_p),
+		"herbceptions error-channel lowering is not implemented yet");
+      *expr_p = NULL_TREE;
+      ret = GS_ERROR;
+      break;
+
     case EH_SPEC_BLOCK:
       genericize_eh_spec_block (expr_p);
       ret = GS_OK;

@@ -366,6 +366,15 @@ struct GTY(()) cp_parser {
      a local class.  */
   bool in_function_body;
 
+  /* Nesting depth of `catch throws' handler bodies currently being
+     parsed; a bare `throw throws' (rethrow) is only valid inside one.  */
+  unsigned herbception_handler_depth;
+
+  /* Nesting depth of `try(expr)'/`return_failure(expr)'/
+     `catch return_failure(expr)' operands currently being parsed;
+     a call to a spec'd function there is handled by that form.  */
+  unsigned herbception_operand_depth;
+
   /* Nonzero if we're processing a __transaction_atomic or
      __transaction_relaxed statement.  */
   unsigned char in_transaction;

@@ -11102,6 +11102,11 @@ cxx_eval_constant_expression (const constexpr_ctx *ctx, tree t,
     case VA_ARG_EXPR:
     case BASELINK:
     case OFFSET_REF:
+      /* Herbceptions machinery is runtime-only for now.  */
+    case HERBCEPTION_THROW_EXPR:
+    case HERBCEPTION_FAIL_EXPR:
+    case HERBCEPTION_TRY_EXPR:
+    case HERBCEPTION_CATCH_EXPR:
       if (!ctx->quiet)
 	error_at (loc, "expression %qE is not a constant expression", t);
       *non_constant_p = true;
@@ -13192,6 +13197,12 @@ potential_constant_expression_1 (tree t, bool want_rval, bool strict, bool now,
       if (cxx_dialect < cxx26)
 	goto fail;
       return RECUR (TREE_OPERAND (t, 0), rval);
+
+    case HERBCEPTION_THROW_EXPR:
+    case HERBCEPTION_FAIL_EXPR:
+    case HERBCEPTION_TRY_EXPR:
+    case HERBCEPTION_CATCH_EXPR:
+      goto fail;
 
     case ASM_EXPR:
       if (flags & tf_error)
