@@ -21056,6 +21056,9 @@ finish_function (bool inline_p)
       && !current_function_infinite_loop
       /* Don't complain if we are declared noreturn.  */
       && !TREE_THIS_VOLATILE (fndecl)
+      /* Herbceptions functions return through the error channel;
+	 every exit writes the channel payload.  */
+      && !type_herbceptions_p (fntype)
       && !DECL_NAME (DECL_RESULT (fndecl))
       && !warning_suppressed_p (fndecl, OPT_Wreturn_type)
       /* Structor return values (if any) are set by the compiler.  */

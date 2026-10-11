@@ -304,6 +304,14 @@ struct GTY(()) function {
   /* Language-specific code can use this to store whatever it likes.  */
   struct language_function * language;
 
+  /* Herbceptions error-channel slots, if this function carries a
+     herbceptions specification: the local holding the {value,error}
+     union payload and the local holding the failure discriminant.
+     Set by the front end's genericization; consumed by the epilogue
+     and return expansion.  */
+  tree herbceptions_error_slot;
+  tree herbceptions_failed_slot;
+
   /* Used types hash table.  */
   hash_set<tree> *GTY (()) used_types_hash;
 

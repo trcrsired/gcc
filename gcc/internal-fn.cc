@@ -3475,6 +3475,41 @@ expand_UNIQUE (internal_fn, gcall *stmt)
     emit_insn (pattern);
 }
 
+/* LHS = .HERBCEPTION_RESULT ();
+   Read the {value,error} union payload left in the return registers
+   by a call to a herbceptions function.  The union type is carried by
+   the lhs, so the ordinary function_value machinery supplies the
+   registers for any target whose ABI places the payload in
+   registers.  */
+
+static void
+expand_HERBCEPTION_RESULT (internal_fn, gcall *stmt)
+{
+  tree lhs = gimple_call_lhs (stmt);
+  gcc_assert (lhs != NULL_TREE);
+  rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
+  rtx valreg = hard_function_value (TREE_TYPE (lhs), NULL_TREE,
+				    NULL_TREE, 1);
+  if (GET_CODE (valreg) == PARALLEL)
+    emit_group_store (target, valreg, TREE_TYPE (lhs),
+		      int_size_in_bytes (TREE_TYPE (lhs)));
+  else
+    emit_move_insn (target, valreg);
+}
+
+/* LHS = .HERBCEPTION_FAILED ();
+   Read the failure discriminant left in the target flag register by a
+   herbceptions call.  */
+
+static void
+expand_HERBCEPTION_FAILED (internal_fn, gcall *stmt)
+{
+  tree lhs = gimple_call_lhs (stmt);
+  gcc_assert (lhs != NULL_TREE);
+  rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
+  emit_insn (gen_herbceptions_failed (target));
+}
+
 /* Expand the IFN_DEFERRED_INIT function:
    LHS = DEFERRED_INIT (SIZE of the DECL, INIT_TYPE, NAME of the DECL);
 

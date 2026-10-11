@@ -5549,10 +5549,29 @@ expand_function_end (void)
       && naked_return_label == NULL_RTX)
     stack_protect_epilogue ();
 
+  /* A herbceptions function returns its {value,error} union payload in
+     the return registers, whatever its declared result type; move the
+     union local into those registers in place of DECL_RESULT.  */
+  if (cfun->herbceptions_error_slot != NULL_TREE)
+    {
+      tree slot = cfun->herbceptions_error_slot;
+      rtx valreg = hard_function_value (TREE_TYPE (slot),
+					current_function_decl,
+					TREE_TYPE (current_function_decl),
+					1);
+      REG_FUNCTION_VALUE_P (valreg) = 1;
+      crtl->return_rtx = valreg;
+      rtx src = DECL_RTL (slot);
+      if (GET_CODE (valreg) == PARALLEL)
+	emit_group_load (valreg, src, TREE_TYPE (slot),
+			 int_size_in_bytes (TREE_TYPE (slot)));
+      else
+	emit_move_insn (valreg, src);
+    }
   /* If scalar return value was computed in a pseudo-reg, or was a named
      return value that got dumped to the stack, copy that to the hard
      return register.  */
-  if (DECL_RTL_SET_P (DECL_RESULT (current_function_decl)))
+  else if (DECL_RTL_SET_P (DECL_RESULT (current_function_decl)))
     {
       tree decl_result = DECL_RESULT (current_function_decl);
       rtx decl_rtl = DECL_RTL (decl_result);
@@ -5643,6 +5662,7 @@ expand_function_end (void)
      the caller also depends on this value.
      And cfun->returns_pcc_struct is not necessarily set.  */
   if ((cfun->returns_struct || cfun->returns_pcc_struct)
+      && !cfun->herbceptions_error_slot
       && !targetm.calls.omit_struct_return_reg)
     {
       rtx value_address = DECL_RTL (DECL_RESULT (current_function_decl));

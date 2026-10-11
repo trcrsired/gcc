@@ -2778,6 +2778,10 @@ cp_genericize (tree fndecl)
   bc_state_t save_state;
   save_bc_state (&save_state);
 
+  /* Lower the herbceptions error channel before genericization
+     rewrites try-blocks and statements.  */
+  genericize_herbceptions_body (fndecl);
+
   /* We do want to see every occurrence of the parms, so we can't just use
      walk_tree's hash functionality.  */
   cp_genericize_tree (&DECL_SAVED_TREE (fndecl), true);

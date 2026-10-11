@@ -555,6 +555,13 @@ DEF_INTERNAL_FN (RAWMEMCHR, ECF_PURE | ECF_LEAF | ECF_NOTHROW, NULL)
    other such optimizations.  The first argument distinguishes
    between uses.  See internal-fn.h for usage.  */
 DEF_INTERNAL_FN (UNIQUE, ECF_NOTHROW, NULL)
+
+/* Herbceptions deterministic error-channel helpers.  RESULT reads the
+   {value,error} union payload from the return registers immediately
+   after a call to a spec'd function; FAILED reads the failure
+   discriminant (target flag register) at the same point.  */
+DEF_INTERNAL_FN (HERBCEPTION_RESULT, ECF_LEAF | ECF_NOTHROW, NULL)
+DEF_INTERNAL_FN (HERBCEPTION_FAILED, ECF_LEAF | ECF_NOTHROW, NULL)
 DEF_INTERNAL_FN (PHI, 0, NULL)
 
 /* A function to represent an artificial initialization to an uninitialized

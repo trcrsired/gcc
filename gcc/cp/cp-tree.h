@@ -9305,6 +9305,7 @@ extern bool cxx_block_may_fallthru		(const_tree);
 extern int cp_gimplify_expr			(tree *, gimple_seq *,
 						 gimple_seq *);
 extern void cp_genericize			(tree);
+extern void genericize_herbceptions_body		(tree);
 extern bool cxx_omp_const_qual_no_mutable	(tree);
 extern enum omp_clause_default_kind cxx_omp_predetermined_sharing_1 (tree);
 extern enum omp_clause_default_kind cxx_omp_predetermined_sharing (tree);
