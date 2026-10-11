@@ -1976,6 +1976,28 @@ package body Sem_Res is
       end if;
    end Make_Call_Into_Operator;
 
+   -------------------------------------
+   -- Malformed_Quantified_Expression --
+   -------------------------------------
+
+   procedure Malformed_Quantified_Expression (N : Node_Id) is
+   begin
+      --  Because the error message starts with "missing ALL", we automatically
+      --  benefit from the associated CODEFIX, which requires that the message
+      --  is located on the identifier following "for" in order for the CODEFIX
+      --  to insert "all" in the right place.
+
+      if Present (Iterator_Specification (N)) then
+         Error_Msg_N -- CODEFIX
+           ("missing ALL or SOME in quantified expression",
+            Defining_Identifier (Iterator_Specification (N)));
+      else
+         Error_Msg_N -- CODEFIX
+           ("missing ALL or SOME in quantified expression",
+            Defining_Identifier (N));
+      end if;
+   end Malformed_Quantified_Expression;
+
    -------------------
    -- Operator_Kind --
    -------------------
@@ -3221,35 +3243,18 @@ package body Sem_Res is
                      Error_Msg_N ("\use -gnatf for details", N);
                   end if;
 
-               --  Recognize the case of a quantified expression being mistaken
-               --  for an iterated component association because the user
-               --  forgot the "all" or "some" keyword after "for". Because the
-               --  error message starts with "missing ALL", we automatically
-               --  benefit from the associated CODEFIX, which requires that
-               --  the message is located on the identifier following "for"
-               --  in order for the CODEFIX to insert "all" in the right place.
+               --  Diagnose the case of a quantified expression being mistaken
+               --  for an iterated component association, because the user has
+               --  forgotten the "all" or "some" keyword after "for".
 
                elsif Nkind (N) = N_Aggregate
+                 and then Is_Boolean_Type (Typ)
                  and then List_Length (Component_Associations (N)) = 1
                  and then Nkind (First (Component_Associations (N)))
                    = N_Iterated_Component_Association
-                 and then Is_Boolean_Type (Typ)
                then
-                  if Present
-                       (Iterator_Specification
-                         (First (Component_Associations (N))))
-                  then
-                     Error_Msg_N -- CODEFIX
-                       ("missing ALL or SOME in quantified expression",
-                        Defining_Identifier
-                          (Iterator_Specification
-                            (First (Component_Associations (N)))));
-                  else
-                     Error_Msg_N -- CODEFIX
-                       ("missing ALL or SOME in quantified expression",
-                        Defining_Identifier
-                          (First (Component_Associations (N))));
-                  end if;
+                  Malformed_Quantified_Expression
+                    (First (Component_Associations (N)));
 
                --  For an operator with no interpretation, check whether one of
                --  its operands may be a user-defined literal.
@@ -3716,8 +3721,9 @@ package body Sem_Res is
 
          procedure Accessibility_Error (S : String) is
          begin
-            Error_Msg_NE ("actual for aliased formal& has wrong accessibility"
-                          & " in " & S & " (RM 6.4.1(6.4))", A, F);
+            Error_Msg_NE
+              ("accessibility level of actual is too deep for aliased formal&"
+               & " in " & S & " (RM 6.4.1(6.4))", A, F);
          end Accessibility_Error;
 
       begin
@@ -3774,8 +3780,8 @@ package body Sem_Res is
             elsif Ekind (Etype (Nam)) = E_Anonymous_Access_Type
               and then Nkind (Parent (N)) = N_Type_Conversion
               and then
-                Type_Access_Level (Etype (Parent (N)))
-                  < Static_Accessibility_Level (A, Zero_On_Dynamic_Level)
+                Static_Type_Access_Level (Etype (Parent (N)))
+                  < Static_Accessibility_Level (A)
             then
                Accessibility_Error ("conversion");
 
@@ -3783,25 +3789,25 @@ package body Sem_Res is
               and then Nkind (Parent (N)) = N_Assignment_Statement
               and then
                 Static_Accessibility_Level
-                  (Name (Parent (N)), Object_Decl_Level)
-                    < Static_Accessibility_Level (A, Zero_On_Dynamic_Level)
+                  (Name (Parent (N)), Object_Decl_Level => True)
+                    < Static_Accessibility_Level (A)
             then
                Accessibility_Error ("assignment");
 
             elsif Nkind (Parent (N)) = N_Qualified_Expression
               and then Nkind (Parent (Parent (N))) = N_Allocator
               and then
-                Type_Access_Level (Etype (Parent (Parent (N))))
-                  < Static_Accessibility_Level (A, Zero_On_Dynamic_Level)
+                Static_Type_Access_Level (Etype (Parent (Parent (N))))
+                  < Static_Accessibility_Level (A)
             then
                Accessibility_Error ("allocator");
 
             elsif In_Return_Value (N)
               and then Comes_From_Source (N)
               and then
-                Subprogram_Access_Level (Current_Subprogram)
+                Static_Subprogram_Access_Level (Current_Subprogram)
                   < Static_Accessibility_Level
-                      (A, Zero_On_Dynamic_Level, In_Return_Context => True)
+                      (A, In_Return_Context => True)
             then
                Accessibility_Error ("return");
             end if;
@@ -4344,23 +4350,24 @@ package body Sem_Res is
                end if;
             end if;
 
-            --  If the formal is Out or In_Out, do not resolve and expand the
-            --  conversion, because it is subsequently expanded into explicit
-            --  temporaries and assignments. However, the object of the
-            --  conversion can be resolved. An exception is the case of tagged
-            --  type conversion with a class-wide actual. In that case we want
-            --  the tag check to occur and no temporary will be needed (no
-            --  representation change can occur) and the parameter is passed by
-            --  reference, so we go ahead and resolve the type conversion.
-            --  Another exception is the case of reference to component or
-            --  subcomponent of a bit-packed array, in which case we want to
-            --  defer expansion to the point the in and out assignments are
-            --  performed.
+            --  If the formal is Out or In Out, do not resolve and expand a
+            --  type conversion if it is to an elementary type, or an array
+            --  type, or if it involves a change of representation, because
+            --  it will be subsequently expanded into explicit temporaries
+            --  and assignments (see Exp_Ch6.Expand_Actuals). However, the
+            --  expression of the conversion needs to be resolved, except
+            --  in the case of a reference to a component or subcomponent
+            --  of a bit-packed array, in which case we want to defer the
+            --  expansion to the point the assignments are performed.
 
             if Ekind (F) /= E_In_Parameter
               and then Nkind (A) = N_Type_Conversion
-              and then not Is_Class_Wide_Type (Etype (Expression (A)))
-              and then not Is_Interface (Etype (A))
+              and then (Is_Elementary_Type (Etype (A))
+                         or else Is_Array_Type (Etype (A))
+                         or else not
+                           Has_Compatible_Representation
+                             (Target_Typ  => Etype (A),
+                              Operand_Typ => Etype (Expression (A))))
             then
                declare
                   Expr_Typ : constant Entity_Id := Etype (Expression (A));
@@ -4368,9 +4375,7 @@ package body Sem_Res is
                begin
                   --  Check RM 4.6 (24.2/2)
 
-                  if Is_Array_Type (Etype (F))
-                    and then Is_View_Conversion (A)
-                  then
+                  if Is_Array_Type (Etype (F)) then
                      --  In a view conversion, the conversion must be legal in
                      --  both directions, and thus both component types must be
                      --  aliased, or neither (4.6 (8)).
@@ -5366,9 +5371,11 @@ package body Sem_Res is
          Prefix : constant String :=
            (if Nkind (Exp) = N_Attribute_Reference
             then "prefix of attribute"
-            else "type of access discriminant");
+            else "access discriminant");
          Message : constant String :=
-           Prefix & " has deeper level than allocator type";
+           Prefix
+           & " has deeper accessibility level than allocator type"
+           & " (RM 4.8(5.3))";
 
       begin
          --  In an instance, this is a runtime check, but one we know will fail
@@ -5410,8 +5417,8 @@ package body Sem_Res is
             return;
          end if;
 
-         if Static_Accessibility_Level (Disc_Exp, Zero_On_Dynamic_Level)
-              > Deepest_Type_Access_Level (Alloc_Typ)
+         if Static_Accessibility_Level (Disc_Exp)
+              > Static_Type_Access_Level (Alloc_Typ, Deepest => True)
          then
             Accessibility_Error (Disc_Exp);
          end if;
@@ -5653,8 +5660,9 @@ package body Sem_Res is
             elsif Has_Anonymous_Access_Discriminant (Subtyp)
               and then Is_Entity_Name (Exp)
               and then Is_Formal (Entity (Exp))
-              and then Static_Accessibility_Level (Exp, Zero_On_Dynamic_Level)
-                         > Deepest_Type_Access_Level (Typ)
+              and then
+                Static_Accessibility_Level (Exp)
+                  > Static_Type_Access_Level (Typ, Deepest => True)
             then
                Accessibility_Error (Exp);
             end if;
@@ -5718,10 +5726,12 @@ package body Sem_Res is
       --  the case of an initialized allocator with a class-wide argument (see
       --  Expand_Allocator_Expression).
 
-      if Ada_Version >= Ada_2005
-        and then Is_Class_Wide_Type (Desig_T)
-      then
+      if Ada_Version >= Ada_2005 and then Is_Class_Wide_Type (Desig_T) then
          declare
+            Message : constant String :=
+              "allocated type has deeper accessibility level than allocator"
+              & " type (RM 4.8(5.2))";
+
             Exp_Typ : Entity_Id;
 
          begin
@@ -5733,14 +5743,12 @@ package body Sem_Res is
                Exp_Typ := Entity (E);
             end if;
 
-            if Type_Access_Level (Exp_Typ) >
-                 Deepest_Type_Access_Level (Typ)
+            if Static_Type_Access_Level (Exp_Typ)
+                 > Static_Type_Access_Level (Typ, Deepest => True)
             then
                if In_Instance_Body then
                   Error_Msg_Warn := SPARK_Mode /= On;
-                  Error_Msg_N
-                    ("type in allocator has deeper level than designated "
-                     & "class-wide type<<", E);
+                  Error_Msg_N (Message & "<<", E);
                   Error_Msg_N ("\Program_Error [<<", E);
 
                   Rewrite (N,
@@ -5756,9 +5764,7 @@ package body Sem_Res is
                elsif not Is_Generic_Type (Exp_Typ)
                  and then not In_Generic_Formal_Package (Exp_Typ)
                then
-                  Error_Msg_N
-                    ("type in allocator has deeper level than designated "
-                     & "class-wide type", E);
+                  Error_Msg_N (Message, E);
                end if;
             end if;
          end;
@@ -8322,11 +8328,14 @@ package body Sem_Res is
             end if;
          end loop;
 
+         --  Mark it now since it is going to be rewritten below
+
+         Set_Analyzed (E_Name);
+
          New_N :=
            Make_Selected_Component (Loc,
-             Prefix => New_Occurrence_Of (S, Loc),
-             Selector_Name =>
-               New_Occurrence_Of (Entity (E_Name), Loc));
+             Prefix        => New_Occurrence_Of (S, Loc),
+             Selector_Name => New_Occurrence_Of (Entity (E_Name), Loc));
          Rewrite (E_Name, New_N);
          Analyze (E_Name);
 
@@ -8380,7 +8389,7 @@ package body Sem_Res is
          --  Generate a reference for the index when it denotes an entity
 
          if Is_Entity_Name (Index) then
-            Generate_Reference (Entity (Index), Nam);
+            Generate_Reference (Entity (Index), Index);
          end if;
 
          --  Up to this point the expression could have been the actual in a
@@ -9380,6 +9389,7 @@ package body Sem_Res is
       function Get_Literal (Expr : Node_Id) return Node_Id is
          pragma Assert (Compile_Time_Known_Value (Expr));
          Result : Node_Id;
+
       begin
          case Nkind (Expr) is
             when N_Has_Entity =>
@@ -9388,30 +9398,23 @@ package body Sem_Res is
                else
                   Result := Constant_Value (Entity (Expr));
                end if;
-            when N_Numeric_Or_String_Literal =>
+            when N_Aggregate | N_Numeric_Or_String_Literal =>
                Result := Expr;
             when others =>
                raise Program_Error;
          end case;
 
          pragma Assert
-           (Nkind (Result) in N_Numeric_Or_String_Literal
-              or else Ekind (Entity (Result)) = E_Enumeration_Literal);
+           (Nkind (Result) in N_Aggregate | N_Numeric_Or_String_Literal
+             or else Ekind (Entity (Result)) = E_Enumeration_Literal);
+
          return Result;
       end Get_Literal;
-
-      --  Local variables
-
-      Loc : constant Source_Ptr := Sloc (N);
 
    --  Start of processing for Resolve_Expression_With_Actions
 
    begin
       Set_Etype (N, Typ);
-
-      if Is_Empty_List (Actions (N)) then
-         pragma Assert (All_OK_For_Static); null;
-      end if;
 
       --  If the value of the expression is known at compile time, and all
       --  of the actions (if any) are suitable, then replace the declare
@@ -9424,7 +9427,7 @@ package body Sem_Res is
          elsif All_OK_For_Static then
             Rewrite
               (N, New_Copy_Tree
-                    (Get_Literal (Expression (N)), New_Sloc => Loc));
+                    (Get_Literal (Expression (N)), New_Sloc => Sloc (N)));
          end if;
       end if;
    end Resolve_Expression_With_Actions;
@@ -10317,6 +10320,7 @@ package body Sem_Res is
         and then (Is_Overloaded (R)
                    or else
                      (not Is_Universal_Numeric_Type (Etype (R))
+                       and then not Is_Generic_Type (Etype (R))
                        and then
                          (not Is_Integer_Type (Etype (R))
                            or else
@@ -13078,6 +13082,32 @@ package body Sem_Res is
             Index_Subtype : Entity_Id;
 
          begin
+            --  The back end expects the String_Literal_Subtype to have a
+            --  static lower bound.
+
+            if Is_Integer_Type (Index_Type) then
+               Set_String_Literal_Low_Bound
+                 (Subtype_Id, Make_Integer_Literal (Loc, 1));
+
+            --  If the index type is an enumeration type, build the bound
+            --  expression by means of an attribute.
+
+            else
+               Set_String_Literal_Low_Bound
+                 (Subtype_Id,
+                  Make_Attribute_Reference (Loc,
+                    Attribute_Name => Name_First,
+                    Prefix         =>
+                      New_Occurrence_Of (Base_Type (Index_Type), Loc)));
+            end if;
+
+            Analyze_And_Resolve
+              (String_Literal_Low_Bound (Subtype_Id), Base_Type (Index_Type));
+
+            --  Now build a subtype with the actual bounds and wrap the literal
+            --  in an unchecked conversion to it, after checking that the high
+            --  bound is within the range of the index type if need be.
+
             if Length = 1 then
                High_Bound := New_Copy_Tree (Low_Bound);
 
@@ -13086,6 +13116,9 @@ package body Sem_Res is
                  Make_Op_Add (Loc,
                    Left_Opnd  => New_Copy_Tree (Low_Bound),
                    Right_Opnd => Make_Integer_Literal (Loc, Length - 1));
+               if Length > 0 then
+                  High_Bound := Convert_To (Index_Type, High_Bound);
+               end if;
 
             else
                High_Bound :=
@@ -13105,29 +13138,6 @@ package body Sem_Res is
                        Right_Opnd =>
                          Make_Integer_Literal (Loc, Length - 1))));
             end if;
-
-            if Is_Integer_Type (Index_Type) then
-               Set_String_Literal_Low_Bound
-                 (Subtype_Id, Make_Integer_Literal (Loc, 1));
-
-            else
-               --  If the index type is an enumeration type, build bounds
-               --  expression with attributes.
-
-               Set_String_Literal_Low_Bound
-                 (Subtype_Id,
-                  Make_Attribute_Reference (Loc,
-                    Attribute_Name => Name_First,
-                    Prefix         =>
-                      New_Occurrence_Of (Base_Type (Index_Type), Loc)));
-            end if;
-
-            Analyze_And_Resolve
-              (String_Literal_Low_Bound (Subtype_Id), Base_Type (Index_Type));
-
-            --  Build bona fide subtype for the string, and wrap it in an
-            --  unchecked conversion, because the back end expects the
-            --  String_Literal_Subtype to have a static lower bound.
 
             Index_Subtype :=
               Create_Itype (Subtype_Kind (Ekind (Index_Type)), N);
@@ -13617,9 +13627,9 @@ package body Sem_Res is
       Operand     : Node_Id;
       Report_Errs : Boolean := True) return Boolean
    is
-      Target_Type  : constant Entity_Id := Base_Type (Target);
-      Opnd_Type    : Entity_Id;
-      Inc_Ancestor : Entity_Id;
+      Message     : constant String :=
+        " has deeper accessibility level than target type (RM 4.6(24.21))";
+      Target_Type : constant Entity_Id := Base_Type (Target);
 
       function Conversion_Check
         (Valid : Boolean;
@@ -13644,7 +13654,7 @@ package body Sem_Res is
       --  discriminant selected from a dereference of another such "bad"
       --  conversion argument.
 
-      function Valid_Array_Conversion return Boolean;
+      function Valid_Array_Conversion (Opnd_Type : Entity_Id) return Boolean;
       --  Check index and component conformance, and accessibility levels if
       --  the component types are anonymous access types (Ada 2005).
 
@@ -13786,7 +13796,7 @@ package body Sem_Res is
       -- Valid_Array_Conversion --
       ----------------------------
 
-      function Valid_Array_Conversion return Boolean is
+      function Valid_Array_Conversion (Opnd_Type : Entity_Id) return Boolean is
          Opnd_Comp_Type : constant Entity_Id := Component_Type (Opnd_Type);
          Opnd_Comp_Base : constant Entity_Id := Base_Type (Opnd_Comp_Type);
 
@@ -13860,14 +13870,14 @@ package body Sem_Res is
               and then
                 Subtypes_Statically_Match (Target_Comp_Type, Opnd_Comp_Type)
             then
-               if Type_Access_Level (Target_Type) <
-                    Deepest_Type_Access_Level (Opnd_Type)
+               if Static_Type_Access_Level (Opnd_Type)
+                    > Static_Type_Access_Level (Target_Type, Deepest => True)
                then
                   if In_Instance_Body then
                      Error_Msg_Warn := SPARK_Mode /= On;
                      Report_Error_N
-                       ("source array type has deeper accessibility "
-                        & "level than target<<", Operand, Report_Errs);
+                       ("operand array type" & Message & "<<",
+                        Operand, Report_Errs);
                      Report_Error_N
                        ("\Program_Error [<<", Operand, Report_Errs);
                      Rewrite (N,
@@ -13880,13 +13890,9 @@ package body Sem_Res is
 
                   else
                      Report_Error_N
-                       ("source array type has deeper accessibility "
-                        & "level than target", Operand, Report_Errs);
+                       ("operand array type" & Message, Operand, Report_Errs);
                      return False;
                   end if;
-
-               else
-                  null;
                end if;
 
             --  All other cases where component base types do not match
@@ -13916,10 +13922,21 @@ package body Sem_Res is
          return True;
       end Valid_Array_Conversion;
 
+      --  Local variables
+
+      Inc_Ancestor : Entity_Id;
+      Opnd_Type    : Entity_Id;
+
    --  Start of processing for Valid_Conversion
 
    begin
       Check_Parameterless_Call (Operand);
+
+      --  Prevent spurious errors coming from failed checks
+
+      if Nkind (Operand) in N_Raise_xxx_Error then
+         return True;
+      end if;
 
       if Is_Overloaded (Operand)
         and then Is_Ambiguous_Operand (Operand)
@@ -14005,7 +14022,7 @@ package body Sem_Res is
             return False;
 
          else
-            return Valid_Array_Conversion;
+            return Valid_Array_Conversion (Opnd_Type);
          end if;
 
       --  Ada 2005 (AI-251): Internally generated conversions of access to
@@ -14073,15 +14090,13 @@ package body Sem_Res is
             end if;
          end;
 
-         --  Check the static accessibility rule of 4.6(17). Note that the
-         --  check is not enforced when within an instance body, since the
-         --  RM requires such cases to be caught at run time.
-
-         --  If the operand is a rewriting of an allocator no check is needed
+         --  If the operand is a rewriting of an allocator, no check is needed
          --  because there are no accessibility issues.
 
          if Nkind (Original_Node (N)) = N_Allocator then
             null;
+
+         --  Otherwise, check the static accessibility rules of 4.6(24.11-21)
 
          elsif Ekind (Target_Type) /= E_Anonymous_Access_Type
            or else Is_Local_Anonymous_Access (Target_Type)
@@ -14122,12 +14137,12 @@ package body Sem_Res is
                   --  not deeper than the target type.
 
                   if No_Dynamic_Accessibility_Checks_Enabled (N) then
-                     if Type_Access_Level (Opnd_Type)
-                          > Deepest_Type_Access_Level (Target_Type)
+                     if Static_Type_Access_Level (Opnd_Type)
+                          > Static_Type_Access_Level
+                              (Target_Type, Deepest => True)
                      then
                         Report_Error_N
-                          ("operand has deeper level than target", Operand,
-                           Report_Errs);
+                          ("operand type" & Message, Operand, Report_Errs);
                         return False;
                      end if;
 
@@ -14140,7 +14155,8 @@ package body Sem_Res is
                   then
                      Report_Error_N
                        ("implicit conversion of stand-alone anonymous "
-                        & "access object not allowed", Operand, Report_Errs);
+                        & "access object not allowed (RM 8.6(27.1))",
+                        Operand, Report_Errs);
                      return False;
 
                   --  Implicit conversions aren't allowed for anonymous access
@@ -14155,7 +14171,7 @@ package body Sem_Res is
                   then
                      Report_Error_N
                        ("implicit conversion of anonymous access parameter "
-                        & "not allowed", Operand, Report_Errs);
+                        & "not allowed (RM 8.6(27.1))", Operand, Report_Errs);
                      return False;
 
                   --  Detect access discriminant values that are illegal
@@ -14165,19 +14181,19 @@ package body Sem_Res is
                   then
                      Report_Error_N
                        ("implicit conversion of anonymous access value "
-                        & "not allowed", Operand, Report_Errs);
+                        & "not allowed (RM 8.6(27.1))", Operand, Report_Errs);
                      return False;
 
-                  --  In other cases, the level of the operand's type must be
-                  --  statically less deep than that of the target type, else
-                  --  implicit conversion is disallowed (by RM12-8.6(27.1/3)).
+                  --  In other cases, the level of the operand type must not
+                  --  be statically deeper than that of the target type.
 
-                  elsif Type_Access_Level (Opnd_Type) >
-                    Deepest_Type_Access_Level (Target_Type)
+                  elsif Static_Type_Access_Level (Opnd_Type)
+                          > Static_Type_Access_Level
+                              (Target_Type, Deepest => True)
                   then
                      Report_Error_N
-                       ("implicit conversion of anonymous access value "
-                        & "violates accessibility", Operand, Report_Errs);
+                       ("anonymous access type" & Message,
+                        Operand, Report_Errs);
                      return False;
                   end if;
                end if;
@@ -14197,8 +14213,8 @@ package body Sem_Res is
             --  master of the call to the enclosing function (RM 3.10.2(10.3),
             --  3.10.2(14) and 3.10.2(10.5)).
 
-            elsif Type_Access_Level (Opnd_Type, Assoc_Ent => Operand)
-                    > Deepest_Type_Access_Level (Target_Type)
+            elsif Static_Type_Access_Level (Opnd_Type, Assoc_Node => Operand)
+                    > Static_Type_Access_Level (Target_Type, Deepest => True)
               and then (Nkind (Associated_Node_For_Itype (Opnd_Type))
                           /= N_Function_Specification
                         or else Ekind (Target_Type) in Anonymous_Access_Kind
@@ -14215,7 +14231,7 @@ package body Sem_Res is
                if In_Instance_Body then
                   Error_Msg_Warn := SPARK_Mode /= On;
                   Report_Error_N
-                    ("cannot convert local pointer to non-local access type<<",
+                    ("operand type" & Message & "<<",
                      Operand, Report_Errs);
                   Report_Error_N ("\Program_Error [<<", Operand, Report_Errs);
                   Rewrite (N,
@@ -14231,8 +14247,7 @@ package body Sem_Res is
 
                   if not Error_Posted (N) then
                      Report_Error_N
-                      ("cannot convert local pointer to non-local access type",
-                       Operand, Report_Errs);
+                       ("operand type" & Message, Operand, Report_Errs);
                   end if;
                   return False;
                end if;
@@ -14249,9 +14264,9 @@ package body Sem_Res is
                --  checking the prefix of the operand for this case).
 
                if Nkind (Operand) = N_Selected_Component
-                 and then Static_Accessibility_Level
-                            (Operand, Zero_On_Dynamic_Level)
-                              > Deepest_Type_Access_Level (Target_Type)
+                 and then
+                   Static_Accessibility_Level (Operand)
+                     > Static_Type_Access_Level (Target_Type, Deepest => True)
                then
                   --  In an instance, this is a run-time check, but one we know
                   --  will fail, so generate an appropriate warning.
@@ -14259,8 +14274,8 @@ package body Sem_Res is
                   if In_Instance_Body then
                      Error_Msg_Warn := SPARK_Mode /= On;
                      Report_Error_N
-                       ("cannot convert access discriminant to non-local "
-                        & "access type<<", Operand, Report_Errs);
+                       ("access discriminant" & Message & "<<",
+                        Operand, Report_Errs);
                      Report_Error_N
                        ("\Program_Error [<<", Operand, Report_Errs);
                      Rewrite (N,
@@ -14273,8 +14288,7 @@ package body Sem_Res is
 
                   else
                      Report_Error_N
-                       ("cannot convert access discriminant to non-local "
-                        & "access type", Operand, Report_Errs);
+                       ("access discriminant" & Message, Operand, Report_Errs);
                      return False;
                   end if;
                end if;
@@ -14291,8 +14305,7 @@ package body Sem_Res is
                  and then Present (Discriminal_Link (Entity (Operand)))
                then
                   Report_Error_N
-                    ("discriminant has deeper accessibility level than target",
-                     Operand, Report_Errs);
+                    ("access discriminant" & Message, Operand, Report_Errs);
                   return False;
                end if;
             end if;
@@ -14432,8 +14445,8 @@ package body Sem_Res is
 
          --  Check the static accessibility rule of 4.6(20)
 
-         if Type_Access_Level (Opnd_Type) >
-            Deepest_Type_Access_Level (Target_Type)
+         if Static_Type_Access_Level (Opnd_Type)
+              > Static_Type_Access_Level (Target_Type, Deepest => True)
          then
             Report_Error_N
               ("operand type has deeper accessibility level than target",

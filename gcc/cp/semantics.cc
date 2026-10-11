@@ -1139,12 +1139,12 @@ maybe_convert_cond (tree cond)
   /* For structured binding used in condition, the conversion needs to be
      evaluated before the individual variables are initialized in the
      std::tuple_{size,element} case.  cp_finish_decomp saved the conversion
-     result in a TARGET_EXPR, pick it up from there.  */
+     result in a NON_LVALUE_EXPR, pick it up from there.  */
   if (DECL_DECOMPOSITION_P (cond)
       && DECL_DECOMP_IS_BASE (cond)
       && DECL_DECOMP_BASE (cond)
-      && TREE_CODE (DECL_DECOMP_BASE (cond)) == TARGET_EXPR)
-    cond = TARGET_EXPR_SLOT (DECL_DECOMP_BASE (cond));
+      && TREE_CODE (DECL_DECOMP_BASE (cond)) == NON_LVALUE_EXPR)
+    cond = TREE_OPERAND (DECL_DECOMP_BASE (cond), 0);
 
   if (warn_sequence_point && !processing_template_decl)
     verify_sequence_points (cond);
@@ -1932,12 +1932,12 @@ finish_switch_cond (tree cond, tree switch_stmt)
       /* For structured binding used in condition, the conversion needs to be
 	 evaluated before the individual variables are initialized in the
 	 std::tuple_{size,element} case.  cp_finish_decomp saved the
-	 conversion result in a TARGET_EXPR, pick it up from there.  */
+	 conversion result in a NON_LVALUE_EXPR, pick it up from there.  */
       if (DECL_DECOMPOSITION_P (cond)
 	  && DECL_DECOMP_IS_BASE (cond)
 	  && DECL_DECOMP_BASE (cond)
-	  && TREE_CODE (DECL_DECOMP_BASE (cond)) == TARGET_EXPR)
-	cond = TARGET_EXPR_SLOT (DECL_DECOMP_BASE (cond));
+	  && TREE_CODE (DECL_DECOMP_BASE (cond)) == NON_LVALUE_EXPR)
+	cond = TREE_OPERAND (DECL_DECOMP_BASE (cond), 0);
       cond = build_expr_type_conversion (WANT_INT | WANT_ENUM, cond, true);
       if (cond == NULL_TREE)
 	{
@@ -3300,6 +3300,63 @@ perform_koenig_lookup (cp_expr fn_expr, vec<tree, va_gc> *args,
   return cp_expr (fn, loc);
 }
 
+/* Analyze call to a front-end builtin FN with arguments *ARGS.  Return true
+   if the call is correct, false if erroneous.  */
+
+static bool
+check_frontend_builtin (tree fn, vec<tree, va_gc> **args,
+			tsubst_flags_t complain)
+{
+  tree arg, ptype, type;
+  switch (DECL_UNCHECKED_FUNCTION_CODE (fn))
+    {
+    case CP_BUILT_IN_IS_WITHIN_LIFETIME:
+    case CP_BUILT_IN_START_LIFETIME:
+      /* Unless users call the builtin directly, the following 2 checks
+	 should be ensured from std::is_within_lifetime or
+	 std::start_lifetime template.  */
+      if (vec_safe_length (*args) != 1)
+	{
+	  if (complain & tf_error)
+	    error ("%qE needs a single argument", DECL_NAME (fn));
+	  return false;
+	}
+      arg = (**args)[0];
+      if (error_operand_p (arg))
+	return false;
+      ptype = TREE_TYPE (arg);
+      if (!POINTER_TYPE_P (ptype))
+	{
+	  if (complain & tf_error)
+	    error ("%qE argument type %qT is not pointer type",
+		   DECL_NAME (fn), ptype);
+	  return false;
+	}
+      if (DECL_UNCHECKED_FUNCTION_CODE (fn) == CP_BUILT_IN_IS_WITHIN_LIFETIME)
+	return true;
+      type = TREE_TYPE (ptype);
+      if (!complete_type_or_maybe_complain (type, NULL_TREE, complain))
+	return false;
+      if (!CP_AGGREGATE_TYPE_P (type))
+	{
+	  if (complain & tf_error)
+	    error ("%qE argument type %qT is not a pointer to aggregate type",
+		   DECL_NAME (fn), ptype);
+	  return false;
+	}
+      if (!implicit_lifetime_type_p (type))
+	{
+	  if (complain & tf_error)
+	    error ("%qE argument type %qT is not a pointer to "
+		   "implicit-lifetime type", DECL_NAME (fn), ptype);
+	  return false;
+	}
+      return true;
+    default:
+      return true;
+    }
+}
+
 /* Generate an expression for `FN (ARGS)'.  This may change the
    contents of ARGS.
 
@@ -3539,6 +3596,11 @@ finish_call_expr (tree fn, vec<tree, va_gc> **args, bool disallow_virtual,
 				  | (literal_integer_zerop (arg2) << 2));
 	      warn_for_memset (input_location, arg0, arg2, literal_mask);
 	    }
+
+	  if (TREE_CODE (fn) == FUNCTION_DECL
+	      && fndecl_built_in_p (fn, BUILT_IN_FRONTEND)
+	      && !check_frontend_builtin (fn, args, complain))
+	    return error_mark_node;
 
 	  /* A call to a namespace-scope function.  */
 	  result = build_new_function_call (fn, args, orig_complain);
@@ -4656,15 +4718,21 @@ tree
 process_outer_var_ref (tree decl, tsubst_flags_t complain,
 		       bool odr_use/*=false*/)
 {
+  bool in_typeid_probe = false;
   if (cp_unevaluated_operand)
     {
       tree type = TREE_TYPE (decl);
       if (!dependent_type_p (type)
 	  && variably_modified_type_p (type, NULL_TREE))
 	/* VLAs are used even in unevaluated context.  */;
-      else
+      else if (cp_unevaluated_operand > cp_unevaluated_typeid_cutoff)
 	/* It's not a use (3.2) if we're in an unevaluated context.  */
 	return decl;
+      else
+	/* Inside a typeid operand's own probe: capture is still
+	   attempted below ([expr.prim.lambda.capture]/7), but a missing
+	   capture-default must not be diagnosed yet - see below.  */
+	in_typeid_probe = true;
     }
   if (decl == error_mark_node)
     return decl;
@@ -4751,6 +4819,12 @@ process_outer_var_ref (tree decl, tsubst_flags_t complain,
       if (flag_contracts && processing_contract_condition)
 	set_contract_capture_flag (decl, true);
     }
+  /* Capture was attempted above; whether it's really needed depends on
+     an evaluated-ness we don't know yet.  Defer instead of diagnosing:
+     a later, non-probe pass will complain if the operand turns out
+     evaluated, and there's nothing to complain about if it doesn't.  */
+  else if (in_typeid_probe)
+    return var;
   /* Only an odr-use of an outer automatic variable causes an
      error, and a constant variable can decay to a prvalue
      constant without odr-use.  So don't complain yet.  */
@@ -8694,6 +8768,49 @@ finish_omp_clauses (tree clauses, enum c_omp_region_type ort)
 	  break;
 
 	case OMP_CLAUSE_SIMDLEN:
+	  t = OMP_CLAUSE_SIMDLEN_TYPE (c);
+	  if (t == error_mark_node)
+	    remove = true;
+	  else if (t && !dependent_type_p (t)
+		   && !ARITHMETIC_TYPE_P (t))
+	    {
+	      error_at (OMP_CLAUSE_LOCATION (c),
+			"expected arithmetic type name as argument to the "
+			"%<scaled%> modifier");
+	      remove = true;
+	    }
+	  t = OMP_CLAUSE_SIMDLEN_DIVISOR (c);
+	  if (t == error_mark_node)
+	    remove = true;
+	  else if (t && !type_dependent_expression_p (t)
+		   && !INTEGRAL_TYPE_P (TREE_TYPE (t)))
+	    {
+	      error_at (OMP_CLAUSE_LOCATION (c),
+			"%qs divisor expression of the %<scaled%> modifier "
+			"must be integral",
+			omp_clause_code_name[OMP_CLAUSE_CODE (c)]);
+	      remove = true;
+	    }
+	  else if (t)
+	    {
+	      t = mark_rvalue_use (t);
+	      if (!processing_template_decl)
+		{
+		  t = maybe_constant_value (t);
+		  if (TREE_CODE (t) != INTEGER_CST
+		      || tree_int_cst_sgn (t) != 1)
+		    {
+		      error_at (OMP_CLAUSE_LOCATION (c),
+				"%qs divisor expression of the %<scaled%> "
+				"modifier must be a positive constant integer "
+				"expression",
+				omp_clause_code_name[OMP_CLAUSE_CODE (c)]);
+		      remove = true;
+		    }
+		}
+	      OMP_CLAUSE_SIMDLEN_DIVISOR (c) = t;
+	    }
+	  /* FALLTHRU */
 	case OMP_CLAUSE_SAFELEN:
 	  t = OMP_CLAUSE_OPERAND (c, 0);
 	  if (t == error_mark_node)
@@ -9537,6 +9654,22 @@ finish_omp_clauses (tree clauses, enum c_omp_region_type ort)
 		remove = true;
 		break;
 	      }
+
+	    tree attr;
+	    if (DECL_P (t)
+		&& OMP_CLAUSE_CODE (c) == OMP_CLAUSE_MAP
+		&& (attr = lookup_attribute ("omp declare target",
+					     DECL_ATTRIBUTES (t)))
+		&& value_member (get_identifier ("local"),
+				 TREE_VALUE (attr)))
+	      {
+		error_at (OMP_CLAUSE_LOCATION (c),
+			  "device-local variable %qD cannot appear "
+			  "in map clause", t);
+		remove = true;
+		break;
+	      }
+
 	    /* OpenACC attach / detach clauses must be pointers.  */
 	    if (cp_oacc_check_attachments (c))
 	      {
@@ -9780,6 +9913,7 @@ finish_omp_clauses (tree clauses, enum c_omp_region_type ort)
 
 	case OMP_CLAUSE_ENTER:
 	case OMP_CLAUSE_LINK:
+	case OMP_CLAUSE_LOCAL:
 	  t = OMP_CLAUSE_DECL (c);
 	  const char *cname;
 	  cname = omp_clause_code_name[OMP_CLAUSE_CODE (c)];
@@ -10393,6 +10527,14 @@ finish_omp_clauses (tree clauses, enum c_omp_region_type ort)
 	      && tree_int_cst_lt (OMP_CLAUSE_SAFELEN_EXPR (safelen),
 				  OMP_CLAUSE_SIMDLEN_EXPR (c)))
 	    {
+	      /* Note: How a scaling factor affects this, is underspecified in
+		 OpenMP; cf. OpenMP spec issue #5160.  Presumably, it means:
+		   savelen >= simdlen * scale_factor
+		 with
+		   scale_factor = MAX (1, FLOOR_DIV_EXPR (VL(type), divisor))
+		 and OpenMP states that VL(type) might be only known at runtime.
+		 Hence scale_factor >= 1 and, conservatively, assume == 1 for
+		 this error check.  */
 	      error_at (OMP_CLAUSE_LOCATION (c),
 			"%<simdlen%> clause value is bigger than "
 			"%<safelen%> clause value");
@@ -14979,12 +15121,6 @@ cp_build_bit_cast (location_t loc, tree type, tree arg,
 	{
 	  error_at (loc, "%<__builtin_bit_cast%> destination type %qT "
 			 "is not trivially copyable", type);
-	  return error_mark_node;
-	}
-      if (consteval_only_p (type) || consteval_only_p (arg))
-	{
-	  error_at (loc, "%<__builtin_bit_cast%> cannot be used with "
-			 "consteval-only types");
 	  return error_mark_node;
 	}
     }

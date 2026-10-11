@@ -2613,9 +2613,7 @@ package body Exp_Attr is
                                 Name_Req => True)),
                           Attribute_Name => Name_Tag)),
 
-                    Right_Opnd =>
-                      Make_Integer_Literal (Loc,
-                        Type_Access_Level (P_Type))),
+                    Right_Opnd => Dynamic_Type_Access_Level (P_Type)),
 
                 Then_Statements =>
                   New_List (Make_Raise_Statement (Loc,
@@ -8419,7 +8417,7 @@ package body Exp_Attr is
             begin
                Find_Fat_Info (PBtyp, Ftp, Pkg);
 
-               --  If the prefix is a reverse SSO component, or is possibly
+               --  If the prefix is a reverse SSO object, or is possibly
                --  unaligned, first create a temporary copy that is in
                --  native SSO, and properly aligned. Make it Volatile to
                --  prevent folding in the back-end. Note that we use an
@@ -8428,7 +8426,7 @@ package body Exp_Attr is
                --  that case it cannot be copied using a floating point
                --  register.
 
-               if In_Reverse_Storage_Order_Object (Pref)
+               if Is_Reverse_Storage_Order_Object (Pref)
                  or else Is_Possibly_Unaligned_Object (Pref)
                then
                   declare

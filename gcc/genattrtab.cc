@@ -166,6 +166,8 @@ struct attr_value
   struct insn_ent *first_insn;	/* First insn with this value.  */
   int num_insns;		/* Number of insns with this value.  */
   int has_asm_insn;		/* True if this value used for `asm' insns */
+  int enum_index;		/* Position in the attribute's enum, or -1
+				   for a value computed by genattrtab.  */
 };
 
 /* Structure for each attribute.  */
@@ -183,6 +185,13 @@ public:
   unsigned is_numeric	: 1;	/* Values of this attribute are numeric.  */
   unsigned is_const	: 1;	/* Attribute value constant for each run.  */
   unsigned is_special	: 1;	/* Don't call `write_attr_set'.  */
+  int num_values;		/* Number of declared enum values.  */
+
+  /* Set when the attribute is a function of one other attribute alone.
+     DERIVED_FROM is that attribute and DERIVED_TABLE maps each of its
+     enum values to one of ours.  */
+  class attr_desc *derived_from;
+  rtx *derived_table;
 };
 
 /* Structure for each DEFINE_DELAY.  */
@@ -305,16 +314,17 @@ static rtx min_fn		   (rtx);
    functions and tables.  This made insn-attrtab.cc _the_ bottle-neck in
    a parallel build, and even made it impossible to build GCC on machines
    with relatively small RAM space (PR other/29442).  Therefore, the
-   attribute functions/tables are now written out to three separate
-   files: all "*insn_default_latency" functions go to LATENCY_FILE_NAME,
-   all "*internal_dfa_insn_code" functions go to DFA_FILE_NAME, and the
-   rest goes to ATTR_FILE_NAME.  */
+   attribute functions/tables are now written out to separate files: all
+   "*insn_default_latency" functions go to the latency output, all
+   "*internal_dfa_insn_code" functions go to the DFA output, and the rest is
+   distributed across the attribute outputs the way genemit and genrecog
+   distribute their output.  */
 
-static const char *attr_file_name = NULL;
-static const char *dfa_file_name = NULL;
-static const char *latency_file_name = NULL;
+/* The files produced by the generator.  */
+static auto_vec<generator_output, 10> output_files;
 
-static FILE *attr_file, *dfa_file, *latency_file;
+static FILE *dfa_file, *latency_file;
+static const char *dfa_file_name, *latency_file_name;
 
 /* Hash table for sharing RTL and strings.  */
 
@@ -1260,6 +1270,7 @@ get_attr_value (file_location loc, rtx value, class attr_desc *attr,
   av->first_insn = NULL;
   av->num_insns = 0;
   av->has_asm_insn = 0;
+  av->enum_index = -1;
 
   return av;
 }
@@ -2886,6 +2897,247 @@ get_attr_order (class attr_desc ***ret)
   return num;
 }
 
+/* Return the position of ATTR's enum value called NAME, or -1 if ATTR has
+   no such value.  */
+
+static int
+attr_value_index (class attr_desc *attr, const char *name)
+{
+  for (struct attr_value *av = attr->first_value; av; av = av->next)
+    if (av->enum_index >= 0 && !strcmp (XSTR (av->value, 0), name))
+      return av->enum_index;
+  return -1;
+}
+
+/* Record in SET which of Y's enum values make the attribute test EXP true.
+   SET has Y->num_values entries.  Return false if EXP tests anything beyond
+   Y and attributes already known to be functions of Y.  */
+
+static bool
+eq_attr_value_set (rtx exp, class attr_desc *y, array_slice<bool> set)
+{
+  int i;
+
+  switch (GET_CODE (exp))
+    {
+    case EQ_ATTR:
+      {
+	const char *name = XSTR (exp, 0);
+	class attr_desc *z = find_attr (&name, 0);
+
+	if (z == y)
+	  {
+	    int index = attr_value_index (y, XSTR (exp, 1));
+	    if (index < 0)
+	      return false;
+	    for (i = 0; i < y->num_values; i++)
+	      set[i] = false;
+	    set[index] = true;
+	    return true;
+	  }
+
+	/* Testing an attribute that is itself a function of Y still selects
+	   a set of Y values.  */
+	if (!z || z->derived_from != y)
+	  return false;
+	for (i = 0; i < y->num_values; i++)
+	  set[i] = !strcmp (XSTR (z->derived_table[i], 0), XSTR (exp, 1));
+	return true;
+      }
+
+    case IOR:
+    case AND:
+      {
+	auto_vec<bool, 64> other;
+	other.safe_grow (y->num_values);
+	bool ok = (eq_attr_value_set (XEXP (exp, 0), y, set)
+		   && eq_attr_value_set (XEXP (exp, 1), y, other));
+	if (ok)
+	  for (i = 0; i < y->num_values; i++)
+	    set[i] = (GET_CODE (exp) == IOR
+		      ? set[i] || other[i] : set[i] && other[i]);
+	return ok;
+      }
+
+    case NOT:
+      if (!eq_attr_value_set (XEXP (exp, 0), y, set))
+	return false;
+      for (i = 0; i < y->num_values; i++)
+	set[i] = !set[i];
+      return true;
+
+    case CONST_INT:
+      for (i = 0; i < y->num_values; i++)
+	set[i] = INTVAL (exp) != 0;
+      return true;
+
+    default:
+      return false;
+    }
+}
+
+/* Return true if ATTR's values are a plain enumeration, rather than numbers
+   or something genattrtab computes for itself.  */
+
+static bool
+simple_enum_attr_p (class attr_desc *attr)
+{
+  return (!attr->is_const
+	  && !attr->is_special
+	  && !attr->is_numeric
+	  && attr->name[0] != '*');
+}
+
+/* Return the one attribute that EXP tests, or null if it tests none or more
+   than one.  SOFAR is the attribute found so far, or null.  An attribute
+   already known to be a function of another reports that other one.  */
+
+static class attr_desc *
+sole_tested_attr (rtx exp, class attr_desc *sofar)
+{
+  const char *fmt = GET_RTX_FORMAT (GET_CODE (exp));
+  int i;
+
+  if (GET_CODE (exp) == EQ_ATTR)
+    {
+      const char *name = XSTR (exp, 0);
+      class attr_desc *attr = find_attr (&name, 0);
+
+      if (!attr)
+	return NULL;
+      if (attr->derived_from)
+	attr = attr->derived_from;
+      return sofar && sofar != attr ? NULL : attr;
+    }
+
+  for (i = 0; i < GET_RTX_LENGTH (GET_CODE (exp)); i++)
+    if (fmt[i] == 'e')
+      {
+	sofar = sole_tested_attr (XEXP (exp, i), sofar);
+	if (!sofar)
+	  return NULL;
+      }
+  return sofar;
+}
+
+/* Note every attribute whose value is a function of one other attribute
+   alone, so that write_attr_get can emit a lookup table for it rather than
+   repeat the other attribute's decision tree for every insn code.
+
+   Run this after fill_attr, so that a define_insn overriding the attribute
+   is visible, and before optimize_attrs, which folds the cond away.  */
+
+static void
+find_derived_attrs (void)
+{
+  class attr_desc **order;
+  int num = get_attr_order (&order);
+  int n;
+
+  for (n = 0; n < num; n++)
+    {
+      class attr_desc *attr = order[n];
+      rtx cond = attr->default_val->value;
+      class attr_desc *y = NULL;
+      bool overridden = false;
+      rtx *table;
+      int i;
+
+      if (!simple_enum_attr_p (attr)
+	  || GET_CODE (cond) != COND)
+	continue;
+
+      /* A define_insn that sets the attribute directly overrides the cond,
+	 so the attribute is then not a function of anything.  */
+      for (struct attr_value *av = attr->first_value; av; av = av->next)
+	if (av != attr->default_val && av->num_insns != 0)
+	  {
+	    overridden = true;
+	    break;
+	  }
+      if (overridden)
+	continue;
+
+      for (i = 0; i < XVECLEN (cond, 0); i += 2)
+	{
+	  y = sole_tested_attr (XVECEXP (cond, 0, i), y);
+	  if (!y || GET_CODE (XVECEXP (cond, 0, i + 1)) != CONST_STRING)
+	    {
+	      y = NULL;
+	      break;
+	    }
+	}
+
+      /* Y must be a plain enum attribute whose values genattr-common.cc
+	 numbers from zero, so that they can index the table.  */
+      if (!y
+	  || y == attr
+	  || y->num_values == 0
+	  || !simple_enum_attr_p (y)
+	  || y->enum_name
+	  || GET_CODE (XEXP (cond, 1)) != CONST_STRING)
+	continue;
+
+      table = XCNEWVEC (rtx, y->num_values);
+      auto_vec<bool, 64> set;
+      set.safe_grow (y->num_values);
+
+      for (i = 0; i < XVECLEN (cond, 0); i += 2)
+	{
+	  if (!eq_attr_value_set (XVECEXP (cond, 0, i), y, set))
+	    break;
+	  /* The cond takes the first arm that matches, so an entry that is
+	     already filled in stays as it is.  */
+	  for (int k = 0; k < y->num_values; k++)
+	    if (set[k] && !table[k])
+	      table[k] = XVECEXP (cond, 0, i + 1);
+	}
+
+      if (i >= XVECLEN (cond, 0))
+	{
+	  for (i = 0; i < y->num_values; i++)
+	    if (!table[i])
+	      table[i] = XEXP (cond, 1);
+	  for (i = 0; i < y->num_values; i++)
+	    gcc_assert (attr_value_index (attr, XSTR (table[i], 0)) >= 0);
+	  attr->derived_from = y;
+	  attr->derived_table = table;
+	}
+      else
+	free (table);
+    }
+
+  free (order);
+}
+
+/* Emit ATTR's getter as a lookup into a table indexed by the attribute it
+   is derived from.  */
+
+static void
+write_derived_attr_get (FILE *outf, class attr_desc *attr)
+{
+  class attr_desc *y = attr->derived_from;
+  int i;
+
+  gcc_assert (attr->num_values <= USHRT_MAX + 1);
+  fprintf (outf, "static const %s %s_from_%s[] = {\n",
+	   attr->num_values <= UCHAR_MAX + 1
+	   ? "unsigned char" : "unsigned short", attr->name, y->name);
+  for (i = 0; i < y->num_values; i++)
+    {
+      fprintf (outf, "  ");
+      write_attr_valueq (outf, attr, XSTR (attr->derived_table[i], 0));
+      fprintf (outf, ",\n");
+    }
+  fprintf (outf, "};\n\n");
+
+  fprintf (outf, "%s\n", attr->cxx_type);
+  fprintf (outf, "get_attr_%s (rtx_insn *insn ATTRIBUTE_UNUSED)\n{\n",
+	   attr->name);
+  fprintf (outf, "  return (%s) %s_from_%s[get_attr_%s (insn)];\n}\n\n",
+	   attr->cxx_type, attr->name, y->name, y->name);
+}
+
 /* Optimize the attribute lists by seeing if we can determine conditional
    values from the known values of other attributes.  This will save subroutine
    calls during the compilation.  NUM_INSN_CODES is the number of unique
@@ -3059,6 +3311,7 @@ add_attr_value (class attr_desc *attr, const char *name)
   av->first_insn = NULL;
   av->num_insns = 0;
   av->has_asm_insn = 0;
+  av->enum_index = attr->num_values++;
 }
 
 /* Create table entries for DEFINE_ATTR or DEFINE_ENUM_ATTR.  */
@@ -4056,6 +4309,12 @@ write_attr_get (FILE *outf, class attr_desc *attr)
   struct attr_value *av, *common_av;
   int i, j;
 
+  if (attr->derived_from)
+    {
+      write_derived_attr_get (outf, attr);
+      return;
+    }
+
   /* Find the most used attribute value.  Handle that as the `default' of the
      switch we will generate.  */
   common_av = find_most_used (attr);
@@ -4669,6 +4928,9 @@ find_attr (const char **name_p, int create)
   attr->cxx_type = nullptr;
   attr->first_value = attr->default_val = NULL;
   attr->is_numeric = attr->is_const = attr->is_special = 0;
+  attr->num_values = 0;
+  attr->derived_from = NULL;
+  attr->derived_table = NULL;
   attr->next = attrs[index];
   attrs[index] = attr;
 
@@ -4981,6 +5243,9 @@ make_automaton_attrs (void)
   tune_attr = find_tune_attr (all_insn_reservs->condexp);
   if (tune_attr != NULL)
     {
+      /* The function pointers and init_sched_attrs go to the first
+	 attribute file.  */
+      FILE *attr_file = output_files[0].file;
       rtx *condexps = XNEWVEC (rtx, n_insn_reservs * 3);
       struct attr_value *val;
       bool first = true;
@@ -5206,34 +5471,57 @@ write_header (FILE *outf)
   fprintf (outf, "#define operands recog_data.operand\n\n");
 }
 
-static FILE *
-open_outfile (const char *file_name)
-{
-  FILE *outf;
-  outf = fopen (file_name, "w");
-  if (! outf)
-    fatal ("cannot open file %s: %s", file_name, xstrerror (errno));
-  write_header (outf);
-  return outf;
-}
-
 static bool
 handle_arg (const char *arg)
 {
   switch (arg[1])
     {
     case 'A':
-      attr_file_name = &arg[2];
+      add_generator_output (output_files, &arg[2], true);
       return true;
     case 'D':
+      if (dfa_file_name)
+	fatal ("option -D specified more than once");
       dfa_file_name = &arg[2];
       return true;
     case 'L':
+      if (latency_file_name)
+	fatal ("option -L specified more than once");
       latency_file_name = &arg[2];
       return true;
     default:
       return false;
     }
+}
+
+/* Return a measure of how much text write_attr_get will produce for ATTR.
+   For a derived attribute that is the length of its lookup table, and
+   otherwise the number of case labels, since find_most_used turns the
+   remaining value into the default arm.  */
+
+static int
+attr_output_size (class attr_desc *attr)
+{
+  if (attr->derived_from)
+    return attr->derived_from->num_values;
+
+  struct attr_value *common = find_most_used (attr);
+  int size = 0;
+  for (struct attr_value *av = attr->first_value; av; av = av->next)
+    if (av != common)
+      size += av->num_insns;
+  return size;
+}
+
+/* Sort attributes so that the ones producing the most text come first.  */
+
+static int
+cmp_attr_output_size (const void *a, const void *b)
+{
+  class attr_desc *aa = *(class attr_desc *const *) a;
+  class attr_desc *bb = *(class attr_desc *const *) b;
+  int diff = attr_output_size (bb) - attr_output_size (aa);
+  return diff ? diff : strcmp (aa->name, bb->name);
 }
 
 int
@@ -5248,9 +5536,24 @@ main (int argc, const char **argv)
   if (!init_rtx_reader_args_cb (argc, argv, handle_arg))
     return FATAL_EXIT_CODE;
 
-  attr_file = open_outfile (attr_file_name);
-  dfa_file = open_outfile (dfa_file_name);
-  latency_file = open_outfile (latency_file_name);
+  if (output_files.is_empty ())
+    fatal ("no -A output file specified");
+  if (!dfa_file_name)
+    fatal ("no -D output file specified");
+  if (!latency_file_name)
+    fatal ("no -L output file specified");
+
+  /* Add the DFA and latency outputs after the attribute outputs, so that
+     the attribute outputs occupy the first entries of OUTPUT_FILES.  */
+  unsigned int dfa_index
+    = add_generator_output (output_files, dfa_file_name, false);
+  unsigned int latency_index
+    = add_generator_output (output_files, latency_file_name, false);
+  open_generator_outputs (output_files);
+  dfa_file = output_files[dfa_index].file;
+  latency_file = output_files[latency_index].file;
+  for (generator_output &output : output_files)
+    write_header (output.file);
 
   obstack_init (hash_obstack);
   obstack_init (temp_obstack);
@@ -5360,53 +5663,63 @@ main (int argc, const char **argv)
   /* Construct extra attributes for `length'.  */
   make_length_attrs ();
 
+  /* Note the attributes that are functions of one other attribute alone.
+     This has to happen before optimize_attrs folds their conds away.  */
+  find_derived_attrs ();
+
   /* Perform any possible optimizations to speed up compilation.  */
   optimize_attrs (num_insn_codes);
 
-  /* Now write out all the `gen_attr_...' routines.  Do these before the
-     special routines so that they get defined before they are used.  */
+  /* Now write out all the `get_attr_...' routines.  The DFA and latency
+     routines go to their own files; the rest are distributed across the
+     attribute files.  They only refer to each other through the extern
+     declarations in insn-attr.h and insn-attr-common.h.  */
 
+  auto_vec<class attr_desc *> to_write;
   for (i = 0; i < MAX_ATTRS_INDEX; i++)
     for (attr = attrs[i]; attr; attr = attr->next)
-      {
-        FILE *outf;
+      if (!attr->is_special && !attr->is_const)
+	to_write.safe_push (attr);
 
-	if (startswith(attr->name, "*internal_dfa_insn_code"))
-	  outf = dfa_file;
-	else if (startswith (attr->name, "*insn_default_latency"))
-	  outf = latency_file;
-	else
-	  outf = attr_file;
+  /* Give choose_output the largest functions first.  It assigns each one to
+     the shortest output so far, and feeding it an arbitrary order lets a
+     late large function land on an already full partition.  Attribute
+     functions differ in size by two orders of magnitude, so that happens
+     easily.  */
+  to_write.qsort (cmp_attr_output_size);
 
-	if (! attr->is_special && ! attr->is_const)
-	  write_attr_get (outf, attr);
-      }
+  for (class attr_desc *a : to_write)
+    {
+      FILE *outf;
+
+      if (startswith (a->name, "*internal_dfa_insn_code"))
+	outf = dfa_file;
+      else if (startswith (a->name, "*insn_default_latency"))
+	outf = latency_file;
+      else
+	outf = choose_output (output_files);
+
+      write_attr_get (outf, a);
+    }
 
   /* Write out delay eligibility information, if DEFINE_DELAY present.
      (The function to compute the number of delay slots will be written
      below.)  */
-  write_eligible_delay (attr_file, "delay");
+  write_eligible_delay (choose_output (output_files), "delay");
   if (have_annul_true)
-    write_eligible_delay (attr_file, "annul_true");
+    write_eligible_delay (choose_output (output_files), "annul_true");
   else
-    write_dummy_eligible_delay (attr_file, "annul_true");
+    write_dummy_eligible_delay (choose_output (output_files), "annul_true");
   if (have_annul_false)
-    write_eligible_delay (attr_file, "annul_false");
+    write_eligible_delay (choose_output (output_files), "annul_false");
   else
-    write_dummy_eligible_delay (attr_file, "annul_false");
+    write_dummy_eligible_delay (choose_output (output_files), "annul_false");
 
   /* Write out constant delay slot info.  */
-  write_const_num_delay_slots (attr_file);
+  write_const_num_delay_slots (choose_output (output_files));
 
-  write_length_unit_log (attr_file);
+  write_length_unit_log (choose_output (output_files));
 
-  if (fclose (attr_file) != 0)
-    fatal ("cannot close file %s: %s", attr_file_name, xstrerror (errno));
-  if (fclose (dfa_file) != 0)
-    fatal ("cannot close file %s: %s", dfa_file_name, xstrerror (errno));
-  if (fclose (latency_file) != 0)
-    fatal ("cannot close file %s: %s", latency_file_name, xstrerror (errno));
-
-  return SUCCESS_EXIT_CODE;
+  return (close_generator_outputs (output_files)
+	  ? SUCCESS_EXIT_CODE : FATAL_EXIT_CODE);
 }
-

@@ -112,6 +112,9 @@ struct GTY(()) machine_function
   bool postreload_completed;
 };
 
+/* Referenced by the REGNO_REG_CLASS() macro.  */
+enum reg_class xtensa_regno_to_class[FIRST_PSEUDO_REGISTER];
+
 static void xtensa_option_override (void);
 static void xtensa_option_override_after_change (void);
 static enum internal_test map_test_to_internal_test (enum rtx_code);
@@ -518,17 +521,37 @@ xtensa_mask_immediate (HOST_WIDE_INT v)
 }
 
 
+int
+xtensa_fp_const (const REAL_VALUE_TYPE *rval)
+{
+  /* real_equal() treats non-negative and negative zeros as equal.  */
+  if (rval->cl == rvc_zero && rval->sign == 0)
+    return 0;
+  if (real_equal (rval, &dconst1))
+    return 1;
+  if (real_equal (rval, &dconst2))
+    return 2;
+  if (real_equal (rval, &dconsthalf))
+    return 3;
+
+  return -1;
+}
+
+
 /* This is just like the standard true_regnum() function except that it
    works even when reg_renumber is not initialized.  */
 
-int
+static int
 xt_true_regnum (rtx x)
 {
   if (REG_P (x))
     {
+      /* Before LRA, reg_renumber need not cover pseudos created since it
+	 was last resized (e.g. by ira_emit during regional allocation).  */
       if (! HARD_REGISTER_P (x)
 	  && reg_renumber
-	  && (lra_in_progress || reg_renumber[REGNO (x)] >= 0))
+	  && (lra_in_progress
+	      || (reload_completed && reg_renumber[REGNO (x)] >= 0)))
 	return reg_renumber[REGNO (x)];
       return REGNO (x);
     }
@@ -561,27 +584,17 @@ xtensa_valid_move (machine_mode mode, rtx *operands)
 
   if (register_operand (operands[0], mode))
     {
-      int dst_regnum = xt_true_regnum (operands[0]);
-
       if (xtensa_tls_referenced_p (operands[1]))
 	return FALSE;
 
-      /* The stack pointer can only be assigned with a MOVSP opcode.  */
-      if (dst_regnum == STACK_POINTER_REGNUM)
-	return !TARGET_WINDOWED_ABI
-	  || (mode == SImode
-	      && register_operand (operands[1], mode)
-	      && !ACC_REG_P (xt_true_regnum (operands[1])));
+      if (!ACC_REG_P (xt_true_regnum (operands[0])))
+	return TRUE;
+    }
 
-      if (!ACC_REG_P (dst_regnum))
-	return true;
-    }
-  if (register_operand (operands[1], mode))
-    {
-      int src_regnum = xt_true_regnum (operands[1]);
-      if (!ACC_REG_P (src_regnum))
-	return true;
-    }
+  if (register_operand (operands[1], mode)
+      && !ACC_REG_P (xt_true_regnum (operands[1])))
+    return TRUE;
+
   return FALSE;
 }
 
@@ -3107,6 +3120,8 @@ xtensa_modes_tieable_p (machine_mode mode1, machine_mode mode2)
    'L'  CONST_INT, print ((32 - X) & 0x1f)
    'U', CONST_DOUBLE:SF, print (REAL_EXP (rval) - 1)
    'V', CONST_DOUBLE:SF, print (1 - REAL_EXP (rval))
+   'G', CONST_DOUBLE:SF, print 0~3 when rval is 0.0f, 1.0f, 2.0f, or 0.5f,
+	respectively.
    'D'  REG, print second register of double-word register operand
    'N'  MEM, print address of next word following a memory operand
    'v'  MEM, if memory reference is volatile, output a MEMW before it
@@ -3215,6 +3230,13 @@ print_operand (FILE *file, rtx x, int letter)
 	fprintf (file, "%d", 1 - REAL_EXP (CONST_DOUBLE_REAL_VALUE (x)));
       else
 	output_operand_lossage ("invalid %%V value");
+      break;
+
+    case 'G':
+      if (CONST_DOUBLE_P (x) && GET_MODE (x) == SFmode)
+	fprintf (file, "%d", xtensa_fp_const (CONST_DOUBLE_REAL_VALUE (x)));
+      else
+	output_operand_lossage ("invalid %%G value");
       break;
 
     case 'x':
@@ -4445,11 +4467,9 @@ xtensa_adjust_reg_alloc_order (void)
 	REG_ALLOC_ORDER;
   static const int reg_call0_alloc_order[FIRST_PSEUDO_REGISTER] =
   {
-     9, 10, 11,  7,  6,  5,  4,  3,  2,  8,  0, 12, 13, 14, 15,
-    18,
+     9, 10, 11,  7,  6,  5,  4,  3,  2,  8,  0, 12, 13, 14, 15, 18,
     19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
-     1, 16, 17,
-    35,
+     1, 16, 17, 35,
   };
 
   memcpy (reg_alloc_order, TARGET_WINDOWED_ABI ?
@@ -5092,6 +5112,13 @@ xtensa_legitimate_constant_p (machine_mode mode ATTRIBUTE_UNUSED, rtx x)
 	   || ! xtensa_postreload_completed_p ()
 	   || xtensa_simm12b (INTVAL (x));
 
+  if (CONST_DOUBLE_P (x) && GET_MODE (x) == SFmode)
+    {
+      int i = xtensa_fp_const (CONST_DOUBLE_REAL_VALUE (x));
+
+      return i == 0 || (TARGET_HARD_FLOAT_CONST_S && i > 0);
+    }
+
   return !xtensa_tls_referenced_p (x);
 }
 
@@ -5334,7 +5361,7 @@ xtensa_reorg (void)
 static void
 xtensa_conditional_register_usage (void)
 {
-  unsigned i, c_mask;
+  unsigned int i, c_mask, cl;
 
   c_mask = TARGET_WINDOWED_ABI ? (1 << 1) : (1 << 2);
 
@@ -5346,40 +5373,34 @@ xtensa_conditional_register_usage (void)
 	call_used_regs[i] = !!(call_used_regs[i] & c_mask);
     }
 
-  /* Remove hard FP register from the preferred reload registers set.  */
-  CLEAR_HARD_REG_BIT (reg_class_contents[(int)RL_REGS],
+  /* Remove hard frame pointer from the preferred reload registers set.  */
+  CLEAR_HARD_REG_BIT (reg_class_contents[RL_REGS],
 		      HARD_FRAME_POINTER_REGNUM);
 
-  /* Register A0 holds the return address upon entry to a function
-     for the CALL0 ABI, but unlike the windowed register ABI, it is
-     not reserved for this purpose and may hold other values after
-     the return address has been saved.  */
+  /* Register A0 holds the return address upon entry to a function for
+     the CALL0 ABI, but unlike the windowed register ABI, it is not
+     reserved for this purpose and may hold other values after the return
+     address has been saved.  In a similar vein, register A0 should be
+     excluded from the preferred reload registers set when the windowed
+     register ABI is in effect.  */
   if (!TARGET_WINDOWED_ABI)
     fixed_regs[A0_REG] = 0;
-}
-
-/* Map hard register number to register class */
-
-enum reg_class xtensa_regno_to_class (int regno)
-{
-  static const enum reg_class regno_to_class[FIRST_PSEUDO_REGISTER] =
-    {
-      RL_REGS,	SP_REG,		RL_REGS,	RL_REGS,
-      RL_REGS,	RL_REGS,	RL_REGS,	RL_REGS,
-      RL_REGS,	RL_REGS,	RL_REGS,	RL_REGS,
-      RL_REGS,	RL_REGS,	RL_REGS,	RL_REGS,
-      AR_REGS,	AR_REGS,	BR_REGS,
-      FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
-      FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
-      FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
-      FP_REGS,	FP_REGS,	FP_REGS,	FP_REGS,
-      ACC_REG,
-    };
-
-  if (regno == HARD_FRAME_POINTER_REGNUM)
-    return GR_REGS;
   else
-    return regno_to_class[regno];
+    CLEAR_HARD_REG_BIT (reg_class_contents[RL_REGS], A0_REG);
+
+  /* Generate the contents of the reverse-lookup array from the currently
+     active register class definitions.  */
+  for (i = 0; i < FIRST_PSEUDO_REGISTER; ++i)
+    for (cl = NO_REGS + 1; cl < ALL_REGS; ++cl)
+      if (TEST_HARD_REG_BIT (reg_class_contents[cl], i))
+	{
+	  xtensa_regno_to_class[i] = (enum reg_class)cl;
+	  break;
+	}
+
+  /* Verify the generated mapping for any omissions.  */
+  for (i = 0; i < FIRST_PSEUDO_REGISTER; ++i)
+    gcc_assert (xtensa_regno_to_class[i] != NO_REGS);
 }
 
 /* Implement TARGET_CONSTANT_ALIGNMENT.  Align string constants and
@@ -5568,9 +5589,11 @@ xtensa_zero_call_used_regs (HARD_REG_SET selected_regs)
 	    zeroed_regno = regno;
 	  continue;
 	}
+      if (zeroed_regno < 0)
+	emit_move_insn (gen_rtx_REG (SImode, zeroed_regno = A9_REG),
+			const0_rtx);
       if (TARGET_BOOLEANS && BR_REG_P (regno))
 	{
-	  gcc_assert (zeroed_regno >= 0);
 	  argvec = rtvec_alloc (1);
 	  RTVEC_ELT (argvec, 0) = gen_rtx_REG (SImode, zeroed_regno);
 	  convec = rtvec_alloc (1);
@@ -5579,23 +5602,15 @@ xtensa_zero_call_used_regs (HARD_REG_SET selected_regs)
 					   "", 0, argvec, convec,
 					   rtvec_alloc (0),
 					   UNKNOWN_LOCATION));
-	  continue;
 	}
-      if (TARGET_HARD_FLOAT && FP_REG_P (regno))
-	{
-	  gcc_assert (zeroed_regno >= 0);
-	  emit_move_insn (gen_rtx_REG (SFmode, regno),
-			  gen_rtx_REG (SFmode, zeroed_regno));
-	  continue;
-	}
-      if (TARGET_MAC16 && ACC_REG_P (regno))
-	{
-	  gcc_assert (zeroed_regno >= 0);
-	  emit_move_insn (gen_rtx_REG (SImode, regno),
-			  gen_rtx_REG (SImode, zeroed_regno));
-	  continue;
-	}
-      CLEAR_HARD_REG_BIT (selected_regs, regno);
+      else if (TARGET_HARD_FLOAT && FP_REG_P (regno))
+	emit_move_insn (gen_rtx_REG (SFmode, regno),
+			gen_rtx_REG (SFmode, zeroed_regno));
+      else if (TARGET_MAC16 && ACC_REG_P (regno))
+	emit_move_insn (gen_rtx_REG (SImode, regno),
+			gen_rtx_REG (SImode, zeroed_regno));
+      else
+	CLEAR_HARD_REG_BIT (selected_regs, regno);
     }
 
   return selected_regs;

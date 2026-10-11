@@ -75,6 +75,7 @@
 /* Extended Features (%eax == 0x80000021) */
 /* %eax */
 #define bit_AMD_PREFETCHI (1 << 20)
+#define bit_AVX512BMM (1 << 23)
 
 /* Extended Features Leaf (%eax == 7, %ecx == 0) */
 /* %ebx */
@@ -144,6 +145,9 @@
 #define bit_AVXIFMA     (1 << 23)
 #define bit_MOVRS	(1 << 31)
 
+/* %ecx */
+#define bit_ACE		(1 << 11)
+
 /* %edx */
 #define bit_AVXVNNIINT8 (1 << 4)
 #define bit_AVXNECONVERT	(1 << 5)
@@ -166,9 +170,6 @@
 /* %ebx */
 #define bit_AESKLE	( 1<<0 )
 #define bit_WIDEKL	( 1<<2 )
-
-/* Sub leaf (%eax == 0x21) */
-#define bit_AVX512BMM	( 1<<23 )
 
 /* AVX10 sub leaf (%eax == 0x24, %ecx == 1) */
 /* %ecx */
@@ -270,8 +271,8 @@
 			: "0" (level), "2" (count))
 
 
-/* Return highest supported input value for cpuid instruction.  ext can
-   be either 0x0, 0x40000000, 0x80000000, or 0xC0000000 to return
+/* Return highest supported input value for cpuid instruction.  leaf can
+   be either 0xXXX, 0x40000XXX, 0x80000XXX, or 0xC000XXX to return
    highest supported value for basic, hypervisor, extended, or
    Centaur/Zhaoxin cpuid information.  Function returns 0 if cpuid
    is not supported or whatever cpuid returns in eax register.  If sig
@@ -279,9 +280,10 @@
    (as found in ebx register) are returned in location pointed by sig.  */
 
 static __inline unsigned int
-__get_cpuid_max (unsigned int __ext, unsigned int *__sig)
+__get_cpuid_max (unsigned int __leaf, unsigned int *__sig)
 {
   unsigned int __eax, __ebx, __ecx, __edx;
+  unsigned int __ext = __leaf & 0xC0000000;
 
 #ifndef __x86_64__
   /* See if we can use cpuid.  On AMD64 we always can.  */
@@ -338,18 +340,7 @@ __get_cpuid (unsigned int __leaf,
 	     unsigned int *__eax, unsigned int *__ebx,
 	     unsigned int *__ecx, unsigned int *__edx)
 {
-  unsigned int __ext;
-
-  if (__leaf >= 0xC0000000)
-    __ext = 0xC0000000;
-  else if (__leaf >= 0x80000000)
-    __ext = 0x80000000;
-  else if (__leaf >= 0x40000000)
-    __ext = 0x40000000;
-  else
-    __ext = 0x00000000;
-
-  unsigned int __maxlevel = __get_cpuid_max (__ext, 0);
+  unsigned int __maxlevel = __get_cpuid_max (__leaf, 0);
 
   if (__maxlevel == 0 || __maxlevel < __leaf)
     return 0;
@@ -365,18 +356,7 @@ __get_cpuid_count (unsigned int __leaf, unsigned int __subleaf,
 		   unsigned int *__eax, unsigned int *__ebx,
 		   unsigned int *__ecx, unsigned int *__edx)
 {
-  unsigned int __ext;
-
-  if (__leaf >= 0xC0000000)
-    __ext = 0xC0000000;
-  else if (__leaf >= 0x80000000)
-    __ext = 0x80000000;
-  else if (__leaf >= 0x40000000)
-    __ext = 0x40000000;
-  else
-    __ext = 0x00000000;
-
-  unsigned int __maxlevel = __get_cpuid_max (__ext, 0);
+  unsigned int __maxlevel = __get_cpuid_max (__leaf, 0);
 
   if (__builtin_expect (__maxlevel == 0, 0) || __maxlevel < __leaf)
     return 0;

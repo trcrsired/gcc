@@ -1794,7 +1794,7 @@ arc_init_reg_tables (void)
 	  /* mode_class hasn't been initialized yet for EXTRA_CC_MODES, so
 	     we must explicitly check for them here.  */
 	  if (i == (int) CCmode || i == (int) CC_ZNmode || i == (int) CC_Zmode
-	      || i == (int) CC_Cmode
+	      || i == (int) CC_Cmode || i == (int) CC_Vmode
 	      || i == CC_FP_GTmode || i == CC_FP_GEmode || i == CC_FP_ORDmode
 	      || i == CC_FPUmode || i == CC_FPUEmode || i == CC_FPU_UNEQmode)
 	    arc_mode_class[i] = 1 << (int) C_MODE;
@@ -9286,6 +9286,15 @@ prepare_move_operands (rtx *operands, machine_mode mode)
 	{
 	  if (!REG_P (operands[1]))
 	    operands[1] = force_reg (mode, operands[1]);
+
+	  if (!move_dest_operand (operands[0], mode))
+	    {
+	      rtx tmp0 = copy_to_mode_reg (Pmode, XEXP (operands[0], 0));
+	      rtx tmp1 = change_address (operands[0], mode, tmp0);
+	      MEM_COPY_ATTRIBUTES (tmp1, operands[0]);
+	      operands[0] = tmp1;
+	    }
+
 	  emit_insn (gen_rtx_UNSPEC_VOLATILE
 		     (VOIDmode, gen_rtvec (2, operands[0], operands[1]),
 		      VUNSPEC_ARC_STDI));

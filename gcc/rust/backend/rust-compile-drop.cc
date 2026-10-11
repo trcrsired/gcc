@@ -21,7 +21,8 @@
 #include "rust-compile-base.h"
 #include "rust-compile-context.h"
 #include "rust-compile-implitem.h"
-#include "rust-hir-path-probe.h"
+#include "rust-bir-drop-analysis.h"
+#include "rust-hir-path-probe-impl-trait.h"
 #include "rust-hir-trait-reference.h"
 #include "rust-hir-type-bounds.h"
 #include "rust-lang-item.h"
@@ -100,6 +101,9 @@ CompileDrop::build_current_scope_drop_cleanup ()
 
   for (auto it = drop_candidates.rbegin (); it != drop_candidates.rend (); ++it)
     {
+      if (BIR::DropAnalysis::get ().is_definitely_dead (it->hirid))
+	continue;
+
       TyTy::BaseType *ty = nullptr;
       Bvariable *var = nullptr;
 
@@ -111,7 +115,21 @@ CompileDrop::build_current_scope_drop_cleanup ()
 
       tree drop_call = compile_drop_call (var, ty, it->locus);
       if (drop_call != NULL_TREE)
-	drop_stmts.push_back (convert_to_void (drop_call, ICV_STATEMENT));
+	{
+	  tree drop_stmt = convert_to_void (drop_call, ICV_STATEMENT);
+	  Bvariable *flag = nullptr;
+	  if (ctx->lookup_drop_flag (it->hirid, &flag))
+	    {
+	      tree condition = Backend::var_expression (flag, it->locus);
+	      tree clear = drop_builder.drop_flag_assignment (it->hirid, false,
+							      it->locus);
+	      tree guarded_drop = Backend::statement_list ({clear, drop_stmt});
+	      drop_stmt
+		= Backend::if_statement (ctx->peek_fn ().fndecl, condition,
+					 guarded_drop, NULL_TREE, it->locus);
+	    }
+	  drop_stmts.push_back (drop_stmt);
+	}
     }
 
   if (drop_stmts.empty ())

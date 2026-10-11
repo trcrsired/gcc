@@ -5091,15 +5091,34 @@ equal or wider than the mode of the absolute difference. The result is placed
 in operand 0, which is of the same mode as operand 3.
 @var{m} is the mode of operand 1 and operand 2.
 
-@mdindex widen_ssum@var{n}@var{m}3
-@mdindex widen_usum@var{n}@var{m}3
-@item @samp{widen_ssum@var{n}@var{m}3}
-@itemx @samp{widen_usum@var{n}@var{m}3}
+@mdindex reduc_widen_ssum@var{n}@var{m}3
+@mdindex reduc_widen_usum@var{n}@var{m}3
+@item @samp{reduc_widen_ssum@var{n}@var{m}3}
+@itemx @samp{reduc_widen_usum@var{n}@var{m}3}
 Operands 0 and 2 are of the same mode, which is wider than the mode of
 operand 1. Add operand 1 to operand 2 and place the widened result in
-operand 0. (This is used express accumulation of elements into an accumulator
-of a wider mode.)
+operand 0. (This is used to express accumulation of elements into an
+accumulator of a wider mode.)
 @var{m} is the mode of operand 1 and @var{n} is the mode of operand 0.
+
+These patterns are only used for a reduction whose summation the vectorizer
+has already established may be reassociated.  Operand 0 is the accumulator
+of that reduction and is itself reduced to a scalar by a horizontal sum once
+the loop is done, so which element of the accumulator a given input element
+ends up in is not observable.  An implementation is therefore free to choose
+which elements of operand 1 it accumulates into which element of operand 0,
+provided that every element of operand 1 is accumulated exactly once.  In
+particular it may add adjacent elements of operand 1 to each other before
+accumulating them, which is what a pairwise widening add instruction does.
+
+The intermediate sums must not overflow.  An implementation that combines
+elements of operand 1 with each other before they reach the element width of
+operand 0 therefore has to widen them first.
+
+The names @samp{widen_ssum@var{n}@var{m}3} and
+@samp{widen_usum@var{n}@var{m}3} are deliberately left free for a future
+lane preserving pattern, which would have to add element @var{i} of
+operand 1 to element @var{i} of operand 2 for every @var{i}.
 
 @mdindex smulhs@var{m}3
 @mdindex umulhs@var{m}3
@@ -7253,6 +7272,22 @@ mode; for example, if @var{n} is @code{HImode}, a CRC16 is calculated.
 @item @samp{crc_rev@var{m}@var{n}4}
 Similar to @samp{crc@var{m}@var{n}4}, but calculates a bit-reversed CRC.
 
+@mdindex aop@var{m}3
+@item @samp{aop@var{m}3}
+Like @samp{add@var{m}3} or @samp{ior@var{m}3}, perform a bit-wise
+addition between operand 1 and operand 2, which are known to have
+no set bits in common, and store the result in operand 0.  Because
+the input operands are bit-wise disjoint, the same result is obtained
+for @code{IOR}, @code{XOR} and @code{PLUS}, so this @code{aop} (``any or
+plus'') pattern allows the target to select the most suitable representation.
+For modes wider than a word, on targets without add with carry,
+@code{IOR} may be more efficient than @code{PLUS}.  On targets with
+shift-and-add (such as x86's @code{lea}) or multiply-add (@code{fma@var{m}4})
+instructions, @code{PLUS} may produce more efficent code than @code{IOR}.
+If the machine description doesn't specify this pattern, the middle-end
+will by default use @code{PLUS} for @code{SImode} and @code{word_mode},
+and @code{IOR} otherwise.
+
 @end table
 
 @node Standard Pattern Names for Vectorization
@@ -7322,7 +7357,7 @@ The operation is equivalent to:
 
 @smallexample
 int c = GET_MODE_SIZE (@var{m}) / GET_MODE_SIZE (@var{n});
-for (j = 0; j < operand4 + operand5; j++)
+for (j = 0; j < operand4 - operand5; j++)
   for (i = 0; i < c; i++)
     if (operand2[j])
       operand0[i][j] = operand1[j * c + i];
@@ -7374,7 +7409,7 @@ The operation is equivalent to:
 
 @smallexample
 int c = GET_MODE_SIZE (@var{m}) / GET_MODE_SIZE (@var{n});
-for (j = 0; j < operand3 + operand4; j++)
+for (j = 0; j < operand3 - operand4; j++)
   if (operand2[j])
     for (i = 0; i < c; i++)
       operand0[j * c + i] = operand1[i][j];
@@ -7421,11 +7456,11 @@ Like @samp{gather_load@var{m}@var{n}}, but takes an extra mask operand
 (operand 7) and a bias operand (operand 8).
 
 Similar to mask_len_load the instruction loads at
-most (operand 7 + operand 8) elements from memory.
+most (operand 7 - operand 8) elements from memory.
 Bit @var{i} of the mask is set if element @var{i} of the result should
 be loaded from memory and clear if element @var{i} of the result should
 be set to element @var{i} of operand 6.
-Mask elements @var{i} with @var{i} > (operand 7 + operand 8) are ignored.
+Mask elements @var{i} with @var{i} > (operand 7 - operand 8) are ignored.
 
 @mdindex mask_len_strided_load@var{m}
 @item @samp{mask_len_strided_load@var{m}}
@@ -7436,10 +7471,10 @@ operand 3 is mask operand, operand 4 is length operand and operand 5 is bias ope
 The instruction can be seen as a special case of @code{mask_len_gather_load@var{m}@var{n}}
 with an offset vector that is a @code{vec_series} with zero as base and operand 2 as step.
 For each element the load address is operand 1 + @var{i} * operand 2.
-Similar to mask_len_load, the instruction loads at most (operand 4 + operand 5) elements from memory.
+Similar to mask_len_load, the instruction loads at most (operand 4 - operand 5) elements from memory.
 Element @var{i} of the mask (operand 3) is set if element @var{i} of the result should
 be loaded from memory and clear if element @var{i} of the result should be zero.
-Mask elements @var{i} with @var{i} > (operand 4 + operand 5) are ignored.
+Mask elements @var{i} with @var{i} > (operand 4 - operand 5) are ignored.
 
 @mdindex scatter_store@var{m}@var{n}
 @item @samp{scatter_store@var{m}@var{n}}
@@ -7478,9 +7513,9 @@ of the result should be stored to memory.
 @item @samp{mask_len_scatter_store@var{m}@var{n}}
 Like @samp{scatter_store@var{m}@var{n}}, but takes an extra mask operand (operand 5),
 a len operand (operand 6) as well as a bias operand (operand 7).  The instruction stores
-at most (operand 6 + operand 7) elements of (operand 4) to memory.
+at most (operand 6 - operand 7) elements of (operand 4) to memory.
 Bit @var{i} of the mask is set if element @var{i} of (operand 4) should be stored.
-Mask elements @var{i} with @var{i} > (operand 6 + operand 7) are ignored.
+Mask elements @var{i} with @var{i} > (operand 6 - operand 7) are ignored.
 
 @mdindex mask_len_strided_store@var{m}
 @item @samp{mask_len_strided_store@var{m}}
@@ -7491,9 +7526,9 @@ operand 3 is mask operand, operand 4 is length operand and operand 5 is bias ope
 The instruction can be seen as a special case of @code{mask_len_scatter_store@var{m}@var{n}}
 with an offset vector that is a @code{vec_series} with zero as base and operand 1 as step.
 For each element the store address is operand 0 + @var{i} * operand 1.
-Similar to mask_len_store, the instruction stores at most (operand 4 + operand 5) elements of
+Similar to mask_len_store, the instruction stores at most (operand 4 - operand 5) elements of
 mask (operand 3) to memory.  Element @var{i} of the mask is set if element @var{i} of (operand 3)
-should be stored.  Mask elements @var{i} with @var{i} > (operand 4 + operand 5) are ignored.
+should be stored.  Mask elements @var{i} with @var{i} > (operand 4 - operand 5) are ignored.
 
 @mdindex while_ult@var{m}@var{n}
 @item @code{while_ult@var{m}@var{n}}
@@ -7706,7 +7741,7 @@ This pattern is not allowed to @code{FAIL}.
 
 @mdindex len_load_@var{m}
 @item @samp{len_load_@var{m}}
-Load (operand 3 + operand 4) elements from memory operand 1
+Load (operand 3 - operand 4) elements from memory operand 1
 into vector register operand 0.  Operands 0 and 1 have mode @var{m},
 which must be a vector mode.  Operand 3 has whichever integer mode the
 target prefers.  Operand 2 (the ``else value'') is of mode @var{m} and
@@ -7719,7 +7754,7 @@ constant bias: it is either a constant 0 or a constant -1.  The predicate on
 operand 4 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 3 + operand 4) exceeds the number of elements in mode
+If (operand 3 - operand 4) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes rather than
@@ -7730,7 +7765,7 @@ This pattern is not allowed to @code{FAIL}.
 
 @mdindex len_store_@var{m}
 @item @samp{len_store_@var{m}}
-Store (operand 2 + operand 3) vector elements from vector register operand 1
+Store (operand 2 - operand 3) vector elements from vector register operand 1
 into memory operand 0, leaving the other elements of
 operand 0 unchanged.  Operands 0 and 1 have mode @var{m}, which must be
 a vector mode.  Operand 2 has whichever integer mode the target prefers.
@@ -7741,7 +7776,7 @@ constant bias: it is either a constant 0 or a constant -1.  The predicate on
 operand 3 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 2 + operand 3) exceeds the number of elements in mode
+If (operand 2 - operand 3) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes
@@ -7753,23 +7788,23 @@ This pattern is not allowed to @code{FAIL}.
 @mdindex mask_len_load@var{m}@var{n}
 @item @samp{mask_len_load@var{m}@var{n}}
 Perform a masked load from the memory location pointed to by operand 1
-into register operand 0.  (operand 3 + operand 4) elements are loaded from
+into register operand 0.  (operand 4 - operand 5) elements are loaded from
 memory and other elements in operand 0 are set to undefined values.
 This is a combination of len_load and maskload.
 Operands 0 and 1 have mode @var{m}, which must be a vector mode.  Operand 3
 has whichever integer mode the target prefers.  A mask is specified in
 operand 2 which must be of type @var{n}.  The mask has lower precedence than
 the length and is itself subject to length masking,
-i.e. only mask indices < (operand 4 + operand 5) are used.
+i.e. only mask indices < (operand 4 - operand 5) are used.
 Operand 3 is an else operand similar to the one in @code{maskload}.
-Operand 4 conceptually has mode @code{QI}.
+Operand 5 conceptually has mode @code{QI}.
 
 Operand 4 can be a variable or a constant amount.  Operand 5 specifies a
 constant bias: it is either a constant 0 or a constant -1.  The predicate on
 operand 5 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 4 + operand 5) exceeds the number of elements in mode
+If (operand 4 - operand 5) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes
@@ -7781,13 +7816,13 @@ This pattern is not allowed to @code{FAIL}.
 @mdindex mask_len_store@var{m}@var{n}
 @item @samp{mask_len_store@var{m}@var{n}}
 Perform a masked store from vector register operand 1 into memory operand 0.
-(operand 3 + operand 4) elements are stored to memory
+(operand 3 - operand 4) elements are stored to memory
 and leave the other elements of operand 0 unchanged.
 This is a combination of len_store and maskstore.
 Operands 0 and 1 have mode @var{m}, which must be a vector mode.  Operand 3 has whichever
 integer mode the target prefers.  A mask is specified in operand 2 which must be
 of type @var{n}.  The mask has lower precedence than the length and is itself subject to
-length masking, i.e. only mask indices < (operand 3 + operand 4) are used.
+length masking, i.e. only mask indices < (operand 3 - operand 4) are used.
 Operand 4 conceptually has mode @code{QI}.
 
 Operand 2 can be a variable or a constant amount.  Operand 3 specifies a
@@ -7795,7 +7830,7 @@ constant bias: it is either a constant 0 or a constant -1.  The predicate on
 operand 4 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 2 + operand 4) exceeds the number of elements in mode
+If (operand 3 - operand 4) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes
@@ -8542,13 +8577,13 @@ for (i = 0; i < GET_MODE_NUNITS (@var{m}); i++)
 @itemx @samp{cond_len_floor@var{mode}}
 @itemx @samp{cond_len_round@var{mode}}
 @itemx @samp{cond_len_rint@var{mode}}
-When operand 1 is true and element index < operand 4 + operand 5, perform an operation on operands 1 and
+When operand 1 is true and element index < operand 4 - operand 5, perform an operation on operands 1 and
 store the result in operand 0, otherwise store operand 2 in operand 0.
 The operation only works for the operands are vectors.
 
 @smallexample
 for (i = 0; i < GET_MODE_NUNITS (@var{m}); i++)
-  op0[i] = (i < ops[4] + ops[5] && op1[i]
+  op0[i] = (i < ops[4] - ops[5] && op1[i]
             ? @var{op} op2[i]
             : op3[i]);
 @end smallexample
@@ -8608,13 +8643,13 @@ form of @samp{@var{op}@var{mode}2}.
 @itemx @samp{cond_len_ashl@var{mode}}
 @itemx @samp{cond_len_ashr@var{mode}}
 @itemx @samp{cond_len_lshr@var{mode}}
-When operand 1 is true and element index < operand 5 + operand 6, perform an operation on operands 2 and 3 and
+When operand 1 is true and element index < operand 5 - operand 6, perform an operation on operands 2 and 3 and
 store the result in operand 0, otherwise store operand 4 in operand 0.
 The operation only works for the operands are vectors.
 
 @smallexample
 for (i = 0; i < GET_MODE_NUNITS (@var{m}); i++)
-  op0[i] = (i < ops[5] + ops[6] && op1[i]
+  op0[i] = (i < ops[5] - ops[6] && op1[i]
             ? op2[i] @var{op} op3[i]
             : op4[i]);
 @end smallexample
@@ -8651,7 +8686,7 @@ takes 3 operands rather than two.  For example, the vector form of
 
 @smallexample
 for (i = 0; i < GET_MODE_NUNITS (@var{m}); i++)
-  op0[i] = (i < ops[6] + ops[7] && op1[i]
+  op0[i] = (i < ops[6] - ops[7] && op1[i]
             ? fma (op2[i], op3[i], op4[i])
             : op5[i]);
 @end smallexample

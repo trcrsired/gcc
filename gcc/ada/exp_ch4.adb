@@ -197,6 +197,10 @@ package body Exp_Ch4 is
    --  associated storage pool is derived from Checked_Pool, generate a
    --  call to the 'Dereference' primitive operation.
 
+   function Is_Copy_Type (Typ : Entity_Id) return Boolean;
+   --  Return True if we can copy objects of this type when expanding an EWA
+   --  or a conditional expression.
+
    function Make_Array_Comparison_Op
      (Typ : Entity_Id;
       Nod : Node_Id) return Node_Id;
@@ -5141,21 +5145,6 @@ package body Exp_Ch4 is
       Scop : constant Entity_Id  := Current_Scope;
       Typ  : constant Entity_Id  := Etype (N);
 
-      function Is_Copy_Type (Typ : Entity_Id) return Boolean;
-      --  Return True if we can copy objects of this type when expanding a case
-      --  expression.
-
-      ------------------
-      -- Is_Copy_Type --
-      ------------------
-
-      function Is_Copy_Type (Typ : Entity_Id) return Boolean is
-      begin
-         return Is_Elementary_Type (Underlying_Type (Typ));
-      end Is_Copy_Type;
-
-      --  Local variables
-
       Acts       : List_Id;
       Alt        : Node_Id;
       Case_Stmt  : Node_Id;
@@ -5597,37 +5586,6 @@ package body Exp_Ch4 is
       Loc  : constant Source_Ptr := Sloc (N);
       Typ  : constant Entity_Id  := Etype (N);
 
-      function Is_Copy_Type (Typ : Entity_Id) return Boolean;
-      --  Return True if we can copy objects of this type when expanding the
-      --  node. The function must return False for limited types for semantic
-      --  reasons, and more generally should do so for all by-reference types.
-      --  Of course the run-time performance of the copy operation should also
-      --  be taken into account, but the expansion of conditional expressions
-      --  may choose to create EWA nodes instead of conditional statements to
-      --  deal with the actions, in which case these EWA nodes also need to be
-      --  preserved for semantic reasons. In practice, this means that the
-      --  subset of types accepted by this Is_Copy_Type predicate must contain
-      --  the union of the subsets of types accepted by its homonyms in the
-      --  Expand_N_Case_Expression and Expand_N_If_Expression procedures, in
-      --  other words must return True when at least one of them returns true.
-      --  This implementation is that of Expand_N_If_Expression.Is_Copy_Type,
-      --  which already accepts a superset of the types accepted by its twin
-      --  Expand_N_Case_Expression.Is_Copy_Type predicate.
-
-      ------------------
-      -- Is_Copy_Type --
-      ------------------
-
-      function Is_Copy_Type (Typ : Entity_Id) return Boolean is
-         Utyp : constant Entity_Id := Underlying_Type (Typ);
-
-      begin
-         return Is_Definite_Subtype (Utyp)
-           and then not Is_By_Reference_Type (Utyp);
-      end Is_Copy_Type;
-
-      --  Local variables
-
       Temp_Decl : Node_Id;
       Temp_Id   : Entity_Id;
       Temp_Ref  : Node_Id;
@@ -5742,8 +5700,6 @@ package body Exp_Ch4 is
    -- Expand_N_If_Expression --
    ----------------------------
 
-   --  Deal with limited types and condition actions
-
    procedure Expand_N_If_Expression (N : Node_Id) is
       Cond  : constant Node_Id    := First (Expressions (N));
       Loc   : constant Source_Ptr := Sloc (N);
@@ -5752,37 +5708,10 @@ package body Exp_Ch4 is
       Par   : constant Node_Id    := Parent (N);
       Typ   : constant Entity_Id  := Etype (N);
 
-      Force_Expand : constant Boolean
-        := Needs_Accessibility_Level_Temp_Or_Check (N);
-      --  Determine if we are dealing with a special case of a conditional
-      --  expression used as an actual for an anonymous access type which
-      --  forces us to transform the if expression into an expression with
-      --  actions in order to create a temporary to capture the level of the
-      --  expression in each branch. Also True if the conditional
-      --  expression is the RHS of an assignment to a saooaaat (so the
-      --  accessibility level temp associated with the saooaaat also needs
-      --  to be updated as part of the assignment).
-
-      function Is_Copy_Type (Typ : Entity_Id) return Boolean;
-      --  Return True if we can copy objects of this type when expanding an if
-      --  expression.
-
       function OK_For_Single_Subtype (T1, T2 : Entity_Id) return Boolean;
       --  Return true if it is acceptable to use a single subtype for two
       --  dependent expressions of subtype T1 and T2 respectively, which are
       --  unidimensional arrays whose index bounds are known at compile time.
-
-      ------------------
-      -- Is_Copy_Type --
-      ------------------
-
-      function Is_Copy_Type (Typ : Entity_Id) return Boolean is
-         Utyp : constant Entity_Id := Underlying_Type (Typ);
-
-      begin
-         return Is_Definite_Subtype (Utyp)
-           and then not Is_By_Reference_Type (Utyp);
-      end Is_Copy_Type;
 
       ---------------------------
       -- OK_For_Single_Subtype --
@@ -6486,16 +6415,9 @@ package body Exp_Ch4 is
                 Prefix => New_Occurrence_Of (Target, Loc));
          end;
 
-      --  For other types, we only need to expand if there are other actions
-      --  associated with either branch or we need to force expansion to deal
-      --  with if expressions used as an actual of an anonymous access type.
+      --  For other types,  we just wrap the actions into an EWA node, if any
 
-      elsif Present (Then_Actions (N))
-        or else Present (Else_Actions (N))
-        or else Force_Expand
-      then
-         --  We now wrap the actions into the appropriate expression
-
+      elsif Present (Then_Actions (N)) or else Present (Else_Actions (N)) then
          --  We do not need to call Process_Transients_In_Expression on
          --  the list of actions in this case, because the expansion of
          --  Expression_With_Actions will do it.
@@ -6518,62 +6440,6 @@ package body Exp_Ch4 is
 
             Set_Else_Actions (N, No_List);
             Analyze_And_Resolve (Elsex, Typ);
-         end if;
-
-         --  We must force expansion into an expression with actions when
-         --  an if expression gets used directly as an actual for an
-         --  anonymous access type.
-
-         if Force_Expand then
-            declare
-               Cnn  : constant Entity_Id := Make_Temporary (Loc, 'C');
-               Acts : List_Id;
-            begin
-               Acts := New_List;
-
-               --  Generate:
-               --    Cnn : Ann;
-
-               Decl :=
-                 Make_Object_Declaration (Loc,
-                   Defining_Identifier => Cnn,
-                   Object_Definition   => New_Occurrence_Of (Typ, Loc));
-               Append_To (Acts, Decl);
-
-               Set_No_Initialization (Decl);
-
-               --  Generate:
-               --    if Cond then
-               --       Cnn := <Thenx>;
-               --    else
-               --       Cnn := <Elsex>;
-               --    end if;
-
-               If_Stmt :=
-                 Make_Implicit_If_Statement (N,
-                   Condition       => Relocate_Node (Cond),
-                   Then_Statements => New_List (
-                     Make_Assignment_Statement (Sloc (Thenx),
-                       Name       => New_Occurrence_Of (Cnn, Sloc (Thenx)),
-                       Expression => Relocate_Node (Thenx))),
-
-                   Else_Statements => New_List (
-                     Make_Assignment_Statement (Sloc (Elsex),
-                       Name       => New_Occurrence_Of (Cnn, Sloc (Elsex)),
-                       Expression => Relocate_Node (Elsex))));
-               Append_To (Acts, If_Stmt);
-
-               --  Generate:
-               --    do
-               --       ...
-               --    in Cnn end;
-
-               Rewrite (N,
-                 Make_Expression_With_Actions (Loc,
-                   Expression => New_Occurrence_Of (Cnn, Loc),
-                   Actions    => Acts));
-               Analyze_And_Resolve (N, Typ);
-            end;
          end if;
 
          return;
@@ -6625,11 +6491,11 @@ package body Exp_Ch4 is
          return;
       end if;
 
-      --  Fall through here for either the limited expansion, or the case of
-      --  inserting actions for nonlimited types. In both these cases, we must
-      --  move the SLOC of the parent If statement to the newly created one and
-      --  change it to the SLOC of the expression which, after expansion, will
-      --  correspond to what is being evaluated.
+      --  Fall through here when the if_expression is to be replaced with an
+      --  if_statement. If the parent itself is an if_statement, we move the
+      --  SLOC of the parent to the newly created one, and replace it by the
+      --  SLOC of the expression which, after expansion, will correspond to
+      --  what is being evaluated.
 
       if Present (Par) and then Nkind (Par) = N_If_Statement then
          Set_Sloc (If_Stmt, Sloc (Par));
@@ -6646,7 +6512,7 @@ package body Exp_Ch4 is
          Prepend_List (Else_Actions (N), Else_Statements (If_Stmt));
       end if;
 
-      --  Rewrite the parent statement as an if statement
+      --  Rewrite the parent statement as an if statement in specific cases
 
       if Optimize_Assignment_Stmt or else Optimize_Return_Stmt then
          Rewrite (Par, If_Stmt);
@@ -7211,9 +7077,9 @@ package body Exp_Ch4 is
               and then Ekind (Ltyp) = E_Anonymous_Access_Type
             then
                declare
-                  New_N       : Node_Id;
-                  Param_Level : Node_Id;
-                  Type_Level  : Node_Id;
+                  New_N      : Node_Id;
+                  Expr_Level : Node_Id;
+                  Type_Level : Node_Id;
 
                begin
                   --  When restriction No_Dynamic_Accessibility_Checks is in
@@ -7224,9 +7090,9 @@ package body Exp_Ch4 is
                      Rewrite (N,
                        New_Occurrence_Of
                          (Boolean_Literals
-                            (Static_Accessibility_Level
-                               (Lop, Object_Decl_Level) <=
-                                        Type_Access_Level (Rtyp)),
+                           (Static_Accessibility_Level
+                             (Lop, Object_Decl_Level => True)
+                               <= Static_Type_Access_Level (Rtyp)),
                           Loc));
                      Analyze_And_Resolve (N, Restyp);
 
@@ -7239,28 +7105,23 @@ package body Exp_Ch4 is
                      Rewrite (N, New_Occurrence_Of (Standard_False, Loc));
                      Analyze_And_Resolve (N, Restyp);
 
-                  --  Apply an accessibility check if the access object has an
-                  --  associated access level and when the level of the type is
-                  --  less deep than the level of the access parameter. This
-                  --  can only occur for access parameters and stand-alone
-                  --  objects of an anonymous access type.
+                  --  Otherwise perform a dynamic accessibility test
 
                   else
-                     Param_Level := Accessibility_Level (Lop, Dynamic_Level);
-
-                     Type_Level :=
-                       Make_Integer_Literal (Loc, Type_Access_Level (Rtyp));
+                     Expr_Level := Dynamic_Accessibility_Level (Lop);
+                     Type_Level := Dynamic_Type_Access_Level (Rtyp);
 
                      --  Return True only if the accessibility level of the
                      --  expression entity is not deeper than the level of
-                     --  the tested access type.
+                     --  the tested access type (RM 4.5.2(30.3)).
 
                      Rewrite (N,
                        Make_And_Then (Loc,
                          Left_Opnd  => Relocate_Node (N),
-                         Right_Opnd => Make_Op_Le (Loc,
-                                         Left_Opnd  => Param_Level,
-                                         Right_Opnd => Type_Level)));
+                         Right_Opnd =>
+                           Make_Op_Le (Loc,
+                             Left_Opnd  => Expr_Level,
+                             Right_Opnd => Type_Level)));
 
                      Analyze_And_Resolve (N);
 
@@ -13845,6 +13706,44 @@ package body Exp_Ch4 is
                       N_Op_Abs   | N_Op_Add      | N_Op_Divide | N_Op_Expon |
                       N_Op_Minus | N_Op_Multiply | N_Op_Subtract;
    end Integer_Promotion_Possible;
+
+   ------------------
+   -- Is_Copy_Type --
+   ------------------
+
+   function Is_Copy_Type (Typ : Entity_Id) return Boolean is
+   begin
+      --  Objects of a by-copy type can always be copied
+
+      if Is_By_Copy_Type (Typ) then
+         return True;
+
+      --  Objects of a by-reference type can never be (easily) copied
+
+      elsif Is_By_Reference_Type (Typ) then
+         return False;
+
+      --  For other objects, we consider that we can copy them if they
+      --  are small enough, the main case being small arrays of scalars.
+
+      else
+         declare
+            Utyp : constant Entity_Id := Underlying_Type (Typ);
+
+         begin
+            --  If the Object_Size is not set in the source code, then it
+            --  cannot be much larger than the Value_Size in the end.
+
+            if Known_Esize (Utyp) then
+               return Esize (Utyp) <= System_Max_Integer_Size;
+            elsif Known_RM_Size (Utyp) then
+               return RM_Size (Utyp) <= System_Max_Integer_Size;
+            else
+               return False;
+            end if;
+         end;
+      end if;
+   end Is_Copy_Type;
 
    ------------------------------
    -- Make_Array_Comparison_Op --

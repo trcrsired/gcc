@@ -1124,7 +1124,8 @@ operator_equal::op1_range (irange &r, tree type,
 	  && wi::eq_p (op2.lower_bound(), op2.upper_bound()))
 	{
 	  r = op2;
-	  r.invert ();
+	  if (!r.invert ())
+	    return false;
 	}
       else
 	r.set_varying (type);
@@ -1227,7 +1228,8 @@ operator_not_equal::op1_range (irange &r, tree type,
 	  && wi::eq_p (op2.lower_bound(), op2.upper_bound()))
 	{
 	  r = op2;
-	  r.invert ();
+	  if (!r.invert ())
+	    return false;
 	}
       else
 	r.set_varying (type);
@@ -2100,6 +2102,25 @@ minus_op1_op2_relation_effect (irange &lhs_range, tree type,
   return true;
 }
 
+// Check if the LHS range indicates a relation between OP1 and OP2.
+// OP1 - OP2 == 0 implies OP1 == OP2 even with wrapping arithmetic.
+
+relation_kind
+operator_minus::op1_op2_relation (const irange &lhs, const irange &,
+				  const irange &) const
+{
+  if (lhs.undefined_p ())
+    return VREL_UNDEFINED;
+
+  if (lhs.zero_p ())
+    return VREL_EQ;
+
+  if (!lhs.contains_zero_p ())
+    return VREL_NE;
+
+  return VREL_VARYING;
+}
+
 bool
 operator_minus::op1_op2_relation_effect (irange &lhs_range, tree type,
 					 const irange &op1_range,
@@ -2159,6 +2180,36 @@ operator_min::wi_fold (irange &r, tree type,
   value_range_with_overflow (r, type, new_lb, new_ub);
 }
 
+// When op1 <= op2, MIN (op1, op2) is op1.
+
+relation_kind
+operator_min::lhs_op1_relation (const irange &lhs, const irange &op1,
+				const irange &op2, relation_kind rel) const
+{
+  if (lhs.undefined_p () || op1.undefined_p () || op2.undefined_p ())
+    return VREL_VARYING;
+  if (rel == VREL_LE || rel == VREL_LT || rel == VREL_EQ
+      || wi::le_p (op1.upper_bound (), op2.lower_bound (),
+		   TYPE_SIGN (op1.type ())))
+    return VREL_EQ;
+  return VREL_VARYING;
+}
+
+// Same as above, but for op2.
+
+relation_kind
+operator_min::lhs_op2_relation (const irange &lhs, const irange &op1,
+				const irange &op2, relation_kind rel) const
+{
+  if (lhs.undefined_p () || op1.undefined_p () || op2.undefined_p ())
+    return VREL_VARYING;
+  if (rel == VREL_GE || rel == VREL_GT || rel == VREL_EQ
+      || wi::le_p (op2.upper_bound (), op1.lower_bound (),
+		   TYPE_SIGN (op1.type ())))
+    return VREL_EQ;
+  return VREL_VARYING;
+}
+
 
 void
 operator_max::update_bitmask (irange &r, const irange &lh,
@@ -2176,6 +2227,36 @@ operator_max::wi_fold (irange &r, tree type,
   wide_int new_lb = wi::max (lh_lb, rh_lb, s);
   wide_int new_ub = wi::max (lh_ub, rh_ub, s);
   value_range_with_overflow (r, type, new_lb, new_ub);
+}
+
+// When op1 >= op2, MAX (op1, op2) is op1.
+
+relation_kind
+operator_max::lhs_op1_relation (const irange &lhs, const irange &op1,
+				const irange &op2, relation_kind rel) const
+{
+  if (lhs.undefined_p () || op1.undefined_p () || op2.undefined_p ())
+    return VREL_VARYING;
+  if (rel == VREL_GE || rel == VREL_GT || rel == VREL_EQ
+      || wi::ge_p (op1.lower_bound (), op2.upper_bound (),
+		   TYPE_SIGN (op1.type ())))
+    return VREL_EQ;
+  return VREL_VARYING;
+}
+
+// Same as above, but for op2.
+
+relation_kind
+operator_max::lhs_op2_relation (const irange &lhs, const irange &op1,
+				const irange &op2, relation_kind rel) const
+{
+  if (lhs.undefined_p () || op1.undefined_p () || op2.undefined_p ())
+    return VREL_VARYING;
+  if (rel == VREL_LE || rel == VREL_LT || rel == VREL_EQ
+      || wi::ge_p (op2.lower_bound (), op1.upper_bound (),
+		   TYPE_SIGN (op1.type ())))
+    return VREL_EQ;
+  return VREL_VARYING;
 }
 
 
@@ -2497,6 +2578,7 @@ class operator_div : public cross_product_operator
 {
   using range_operator::update_bitmask;
   using range_operator::op2_range;
+  using range_operator::op1_op2_relation_effect;
 public:
   operator_div (tree_code div_kind) { m_code = div_kind; }
   bool op2_range (irange &r, tree type, const irange &lhs, const irange &,
@@ -2509,6 +2591,11 @@ public:
   virtual bool wi_op_overflows (wide_int &res, tree type,
 				const wide_int &, const wide_int &)
     const final override;
+  bool op1_op2_relation_effect (irange &lhs_range,
+				tree type,
+				const irange &op1_range,
+				const irange &op2_range,
+				relation_kind rel) const final override;
   void update_bitmask (irange &r, const irange &lh, const irange &rh)
     const final override
     { update_known_bitmask (r, m_code, lh, rh); }
@@ -2622,6 +2709,48 @@ operator_div::wi_fold (irange &r, tree type,
   gcc_checking_assert (!r.undefined_p ());
 }
 
+bool
+operator_div::op1_op2_relation_effect (irange &lhs_range,
+				       tree type,
+				       const irange &op1_range,
+				       const irange &op2_range,
+				       relation_kind rel) const
+{
+  if (rel == VREL_VARYING)
+    return false;
+
+  int_range<2> rel_range;
+
+  switch (rel)
+    {
+    /* op1/op2 = 0 if op1 < op2 and both op1 and op2
+       are known positives.  */
+    case VREL_LT:
+      // Exact, and truncate division will produce 0 for this case.
+      // Floor division will be treated similar to truncate div as rounding towards
+      //  to 0 is the same as rounding towards -inf for positive values.
+      if (m_code != EXACT_DIV_EXPR
+	  && m_code != TRUNC_DIV_EXPR
+	  && m_code != FLOOR_DIV_EXPR)
+	return false;
+      if (!op1_range.nonnegative_p ()
+	  || !op2_range.nonnegative_p ())
+	return false;
+      rel_range.set_zero (type);
+      break;
+    case VREL_EQ:
+      {
+	wide_int one = wi::one (TYPE_PRECISION (type));
+	rel_range.set (type, one, one);
+	break;
+      }
+    default:
+      return false;
+    }
+
+  lhs_range.intersect (rel_range);
+  return true;
+}
 
 class operator_exact_divide : public operator_div
 {
@@ -2897,6 +3026,10 @@ operator_lshift::op1_range (irange &r,
       else
 	op_rshift.fold_range (tmp_range, utype, lhs, op2);
 
+      // If no valid range is found, abort the calculation and return falae.
+      if (tmp_range.undefined_p ())
+	return false;
+
       // Start with ranges which can produce the LHS by right shifting the
       // result by the shift amount.
       // ie   [0x08, 0xF0] = op1 << 2 will start with
@@ -2977,7 +3110,8 @@ operator_rshift::op1_range (irange &r,
       r.union_ (ub);
       if (!lhs_refined.contains_zero_p ())
 	{
-	  mask_range.invert ();
+	  if (!mask_range.invert ())
+	    return false;
 	  r.intersect (mask_range);
 	}
       return true;
@@ -3494,10 +3628,13 @@ relation_kind
 operator_bitwise_and::lhs_op1_relation (const irange &lhs,
 					const irange &op1,
 					const irange &op2,
-					relation_kind) const
+					relation_kind rel) const
 {
   if (lhs.undefined_p () || op1.undefined_p () || op2.undefined_p ())
     return VREL_VARYING;
+  // When x == y, x & y is x.
+  if (rel == VREL_EQ)
+    return VREL_EQ;
   if (!op2.singleton_p ())
     return VREL_VARYING;
   // if val == 0xff or 0xFFFF OR 0Xffffffff OR 0Xffffffffffffffff, return TRUE
@@ -4060,6 +4197,46 @@ operator_bitwise_or::wi_fold (irange &r, tree type,
   value_range_with_overflow (r, type, new_lb, new_ub);
 }
 
+// When x == y, x | y is x.
+
+relation_kind
+operator_bitwise_or::lhs_op1_relation (const irange &lhs,
+				       const irange &op1,
+				       const irange &op2,
+				       relation_kind rel) const
+{
+  if (lhs.undefined_p () || op1.undefined_p () || op2.undefined_p ())
+    return VREL_VARYING;
+  if (rel == VREL_EQ)
+    return VREL_EQ;
+  return VREL_VARYING;
+}
+
+bool
+operator_bitwise_or::op1_op2_relation_effect (irange &lhs_range,
+					      tree type,
+					      const irange &,
+					      const irange &,
+					      relation_kind rel) const
+{
+  if (rel == VREL_VARYING)
+    return false;
+
+  int_range<2> rel_range;
+
+  switch (rel)
+    {
+    case VREL_NE:
+      rel_range.set_nonzero (type);
+      break;
+    default:
+      return false;
+    }
+
+  lhs_range.intersect (rel_range);
+  return true;
+}
+
 bool
 operator_bitwise_or::op1_range (irange &r, tree type,
 				const irange &lhs,
@@ -4313,23 +4490,72 @@ class operator_trunc_mod : public range_operator
   using range_operator::op1_range;
   using range_operator::op2_range;
   using range_operator::update_bitmask;
+  using range_operator::op1_op2_relation_effect;
 public:
   virtual void wi_fold (irange &r, tree type,
 		        const wide_int &lh_lb,
 		        const wide_int &lh_ub,
 		        const wide_int &rh_lb,
-		        const wide_int &rh_ub) const;
+			const wide_int &rh_ub) const override;
   virtual bool op1_range (irange &r, tree type,
 			  const irange &lhs,
 			  const irange &op2,
-			  relation_trio) const;
+			  relation_trio) const override;
   virtual bool op2_range (irange &r, tree type,
 			  const irange &lhs,
 			  const irange &op1,
-			  relation_trio) const;
-  void update_bitmask (irange &r, const irange &lh, const irange &rh) const
+			  relation_trio) const override;
+  void update_bitmask (irange &r, const irange &lh,
+		       const irange &rh) const override
     { update_known_bitmask (r, TRUNC_MOD_EXPR, lh, rh); }
+  bool op1_op2_relation_effect (irange &lhs_range,
+				tree type,
+				const irange &op1_range,
+				const irange &op2_range,
+				relation_kind rel) const final override;
+protected:
+  bool same_quotient (wide_int &lb, wide_int &ub, const wide_int &x_lb,
+		      const wide_int &x_ub, const wide_int &y_lb,
+		      const wide_int &y_ub, signop sign) const;
 } op_trunc_mod;
+
+
+bool
+operator_trunc_mod::same_quotient (wide_int &lb, wide_int &ub,
+				  const wide_int &x_lb, const wide_int &x_ub,
+				  const wide_int &y_lb, const wide_int &y_ub,
+				  signop sign) const
+{
+  // Y must not contain zero.
+  if (wi::ge_p (y_ub, 0, sign) && wi::le_p (y_lb, 0, sign))
+    return false;
+
+  // If all endpoints do not have the same quotient, nothing further.
+  wide_int q = wi::div_trunc (x_lb, y_lb, sign);
+  if (q != wi::div_trunc (x_lb, y_ub, sign))
+    return false;
+  if (q != wi::div_trunc (x_ub, y_lb, sign))
+    return false;
+  if (q != wi::div_trunc (x_ub, y_ub, sign))
+    return false;
+
+  // Compute the range extremes.
+  wide_int v1 = x_lb - q * y_lb;
+  wide_int v2 = x_lb - q * y_ub;
+  wide_int v3 = x_ub - q * y_lb;
+  wide_int v4 = x_ub - q * y_ub;
+
+  // And choose the minimum and maximum
+  lb = wi::min (v1, v2, sign);
+  lb = wi::min (lb, v3, sign);
+  lb = wi::min (lb, v4, sign);
+
+  ub = wi::max (v1, v2, sign);
+  ub = wi::max (ub, v3, sign);
+  ub = wi::max (ub, v4, sign);
+
+  return true;
+}
 
 void
 operator_trunc_mod::wi_fold (irange &r, tree type,
@@ -4386,22 +4612,12 @@ operator_trunc_mod::wi_fold (irange &r, tree type,
 
   value_range_with_overflow (r, type, new_lb, new_ub);
 
-  // When all positive and all X/Y combinations produce the same quotient
-  // we can refine the result with    X % Y == X - Q * Y.
-  // Ensure that division by 0 is not an option.
-  if (wi::gt_p (rh_lb, 0, sign) && wi::ge_p (lh_lb, 0, sign))
+  // If all X/Y combinations have the same quotient, refine using
+  // X % Y == X - Q * Y.
+  if (same_quotient (new_lb, new_ub, lh_lb, lh_ub, rh_lb, rh_ub, sign))
     {
-      wide_int q_lb = wi::div_trunc (lh_lb, rh_ub, sign);
-      wide_int q_ub = wi::div_trunc (lh_ub, rh_lb, sign);
-
-      if (q_lb == q_ub)
-	{
-	  new_lb = lh_lb - q_lb * rh_ub;
-	  new_ub = lh_ub - q_lb * rh_lb;
-
-	  int_range<2> refined (type, new_lb, new_ub);
-	  r.intersect (refined);
-	}
+      int_range<2> refined (type, new_lb, new_ub);
+      r.intersect (refined);
     }
 }
 
@@ -4469,6 +4685,31 @@ operator_trunc_mod::op2_range (irange &r, tree type,
   return false;
 }
 
+bool
+operator_trunc_mod::op1_op2_relation_effect (irange &lhs_range,
+					     tree type,
+					     const irange &,
+					     const irange &,
+					     relation_kind rel) const
+{
+  if (rel == VREL_VARYING)
+    return false;
+
+  int_range<2> rel_range;
+
+  switch (rel)
+    {
+    case VREL_EQ:
+      rel_range.set_zero (type);
+      break;
+    default:
+      return false;
+    }
+
+  lhs_range.intersect (rel_range);
+  return true;
+}
+
 
 class operator_logical_not : public range_operator
 {
@@ -4513,8 +4754,10 @@ operator_logical_not::fold_range (irange &r, tree type,
 
   r = lh;
   if (!lh.varying_p () && !lh.undefined_p ())
-    r.invert ();
-
+    {
+      if (!r.invert ())
+	return false;
+    }
   return true;
 }
 

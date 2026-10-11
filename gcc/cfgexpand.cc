@@ -1995,9 +1995,11 @@ defer_stack_allocation (tree var, bool toplevel)
   if (flag_stack_protect || asan_sanitize_stack_p ())
     return true;
 
-  unsigned int align = TREE_CODE (var) == SSA_NAME
-    ? TYPE_ALIGN (TREE_TYPE (var))
-    : DECL_ALIGN (var);
+  /* Use the same effective alignment that expand_one_stack_var_1 would use.
+     If that alignment exceeds MAX_SUPPORTED_STACK_ALIGNMENT, defer
+     the variable so that expand_stack_vars handles its large alignment,
+     rather than calling expand_one_stack_var_1 and failing its assertion.  */
+  unsigned int align = align_local_variable (var, false) * BITS_PER_UNIT;
 
   /* We handle "large" alignment via dynamic allocation.  We want to handle
      this extra complication in only one place, so defer them.  */
@@ -3779,7 +3781,10 @@ expand_asm_stmt (gasm *stmt)
       if (GET_CODE (op) == CONCAT)
 	op = force_reg (GET_MODE (op), op);
       else if (MEM_P (op))
-	op = validize_mem (op);
+	{
+	  op = validize_mem (op);
+	  MEM_NOTRAP_P (op) = !tree_could_trap_p (val);
+	}
 
       if (asm_operand_ok (op, constraint, NULL) <= 0)
 	{

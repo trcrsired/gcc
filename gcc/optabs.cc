@@ -1632,6 +1632,16 @@ expand_binop (machine_mode mode, optab binoptab, rtx op0, rtx op1,
 	}
     }
 
+  /* If backend's machine description doesn't specify an any_or_plus
+     (AOP) preference, choose for it.  */
+  if (binoptab == aop_optab)
+    {
+      binoptab = (mode == word_mode || mode == SImode) ? add_optab
+						       : ior_optab;
+      return expand_binop (mode, binoptab, op0, op1,
+			   target, unsignedp, methods);
+    }
+
   /* If this is a vector shift by a scalar, see if we can do a vector
      shift by a vector.  If so, broadcast the scalar into a vector.  */
   if (mclass == MODE_VECTOR_INT)
@@ -1975,7 +1985,7 @@ expand_binop (machine_mode mode, optab binoptab, rtx op0, rtx op1,
 				     NULL_RTX, unsignedp, next_methods);
 
 	  if (into_temp1 != 0 && into_temp2 != 0)
-	    inter = expand_binop (word_mode, add_optab, into_temp1, into_temp2,
+	    inter = expand_binop (word_mode, aop_optab, into_temp1, into_temp2,
 				  into_target, unsignedp, next_methods);
 	  else
 	    inter = 0;
@@ -1991,7 +2001,7 @@ expand_binop (machine_mode mode, optab binoptab, rtx op0, rtx op1,
 				      NULL_RTX, unsignedp, next_methods);
 
 	  if (inter != 0 && outof_temp1 != 0 && outof_temp2 != 0)
-	    inter = expand_binop (word_mode, add_optab,
+	    inter = expand_binop (word_mode, aop_optab,
 				  outof_temp1, outof_temp2,
 				  outof_target, unsignedp, next_methods);
 
@@ -3029,7 +3039,7 @@ expand_bitreverse (scalar_int_mode mode, rtx op0, rtx target)
 				NULL_RTX, true, OPTAB_LIB_WIDEN);
       if (lo == NULL_RTX) goto fail;
 
-      x = expand_binop (mode, ior_optab, hi, lo,
+      x = expand_binop (mode, aop_optab, hi, lo,
 			NULL_RTX, true, OPTAB_LIB_WIDEN);
       if (x == NULL_RTX) goto fail;
     }
@@ -3056,7 +3066,7 @@ expand_bitreverse (scalar_int_mode mode, rtx op0, rtx target)
 			      NULL_RTX, true, OPTAB_LIB_WIDEN);
     if (lo == NULL_RTX) goto fail;
 
-    x = expand_binop (mode, ior_optab, hi, lo,
+    x = expand_binop (mode, aop_optab, hi, lo,
 		      NULL_RTX, true, OPTAB_LIB_WIDEN);
     if (x == NULL_RTX) goto fail;
   }
@@ -3084,7 +3094,7 @@ expand_bitreverse (scalar_int_mode mode, rtx op0, rtx target)
 			      NULL_RTX, true, OPTAB_LIB_WIDEN);
     if (lo == NULL_RTX) goto fail;
 
-    x = expand_binop (mode, ior_optab, hi, lo,
+    x = expand_binop (mode, aop_optab, hi, lo,
 		      target, true, OPTAB_LIB_WIDEN);
     if (x == NULL_RTX) goto fail;
   }
@@ -7344,10 +7354,17 @@ maybe_emit_compare_and_swap_exchange_loop (rtx target, rtx mem, rtx val)
 
   if (can_compare_and_swap_p (mode, true))
     {
+      rtx_insn *start = get_last_insn ();
+      /* Force val into a register if it could change value when the
+	 atomic insn updates mem.  */
+      if (reg_overlap_mentioned_p (mem, val))
+	val = force_reg (mode, val);
       if (!target || !register_operand (target, mode))
 	target = gen_reg_rtx (mode);
       if (expand_compare_and_swap_loop (mem, target, val, NULL_RTX))
 	return target;
+      else
+	delete_insns_since (start);
     }
 
   return NULL_RTX;
@@ -8143,6 +8160,12 @@ expand_atomic_fetch_op_no_fallback (rtx target, rtx mem, rtx val,
      try that operation.  */
   if (after || unused_result || optab.reverse_code != UNKNOWN)
     {
+      rtx_insn *start = get_last_insn ();
+      /* Force val into a register if it could change value when the
+	 atomic insn updates mem.  */
+      if (!unused_result && reg_overlap_mentioned_p (mem, val))
+	val = force_reg (mode, val);
+
       /* Try the __atomic version, then the older __sync version.  */
       result = maybe_emit_op (&optab, target, mem, val, true, model, !after);
       if (!result)
@@ -8169,6 +8192,8 @@ expand_atomic_fetch_op_no_fallback (rtx target, rtx mem, rtx val,
 					  true, OPTAB_LIB_WIDEN);
 	  return result;
 	}
+      else
+	delete_insns_since (start);
     }
 
   /* No direct opcode can be generated.  */
@@ -8268,6 +8293,11 @@ expand_atomic_fetch_op (rtx target, rtx mem, rtx val, enum rtx_code code,
     {
       rtx_insn *insn;
       rtx t0 = gen_reg_rtx (mode), t1;
+      rtx_insn *start = get_last_insn ();
+      /* Force val into a register if it could change value when the
+	 atomic insn updates mem.  */
+      if (reg_overlap_mentioned_p (mem, val))
+	val = force_reg (mode, val);
 
       start_sequence ();
 
@@ -8301,6 +8331,8 @@ expand_atomic_fetch_op (rtx target, rtx mem, rtx val, enum rtx_code code,
 
       if (t1 != NULL && expand_compare_and_swap_loop (mem, t0, t1, insn))
         return target;
+      else
+	delete_insns_since (start);
     }
 
   return NULL_RTX;

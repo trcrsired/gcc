@@ -173,7 +173,7 @@ build_headof (tree exp)
   exp = save_expr (exp);
 
   /* The offset-to-top field is at index -2 from the vptr.  */
-  index = build_int_cst (NULL_TREE,
+  index = build_int_cst (integer_type_node,
 			 -2 * TARGET_VTABLE_DATA_ENTRY_DISTANCE);
 
   offset = build_vtbl_ref (cp_build_fold_indirect_ref (exp),
@@ -222,31 +222,22 @@ throw_bad_typeid (void)
   return build_cxx_call (fn, 0, NULL, tf_warning_or_error);
 }
 
-/* const type_info*.  */
-
-inline tree
-type_info_ptr_type ()
-{
-  return build_pointer_type (const_type_info_type_node);
-}
-
 /* Return a pointer to a type_info object describing TYPE, suitably
    cast to the language defined type (for typeid) or void (for building
    up the descriptors).  */
 
 static tree
-get_tinfo_ptr (tree type, bool voidp = false)
+get_tinfo_ptr (tree type, tree tinfo_ptr_type)
 {
   tree decl = get_tinfo_decl (type);
   mark_used (decl);
 
-  tree ptype = voidp ? const_ptr_type_node : type_info_ptr_type ();
-  return build_nop (ptype, build_address (decl));
+  return build_nop (tinfo_ptr_type, build_address (decl));
 }
 static inline tree
 get_void_tinfo_ptr (tree type)
 {
-  return get_tinfo_ptr (type, true);
+  return get_tinfo_ptr (type, const_ptr_type_node);
 }
 
 /* Return an lvalue expression whose type is "const std::type_info"
@@ -255,7 +246,7 @@ get_void_tinfo_ptr (tree type)
    otherwise return the static type of the expression.  */
 
 static tree
-get_tinfo_ptr_dynamic (tree exp, tsubst_flags_t complain)
+get_tinfo_ptr_dynamic (tree exp, tsubst_flags_t complain, tree tinfo_ptr_type)
 {
   tree type;
   tree t;
@@ -288,14 +279,14 @@ get_tinfo_ptr_dynamic (tree exp, tsubst_flags_t complain)
       tree index;
 
       /* The RTTI information is at index -1.  */
-      index = build_int_cst (NULL_TREE,
+      index = build_int_cst (integer_type_node,
 			     -1 * TARGET_VTABLE_DATA_ENTRY_DISTANCE);
       t = build_vtbl_ref (exp, index);
-      t = convert (type_info_ptr_type (), t);
+      t = convert (tinfo_ptr_type, t);
     }
   else
     /* Otherwise return the type_info for the static type of the expr.  */
-    t = get_tinfo_ptr (type);
+    t = get_tinfo_ptr (type, tinfo_ptr_type);
 
   return t;
 }
@@ -371,15 +362,22 @@ typeid_evaluated_p (tree exp, int *nonnull)
    an lvalue of type "const std::type_info".  */
 
 tree
-build_typeid (tree exp, tsubst_flags_t complain)
+build_typeid (tree exp, tsubst_flags_t complain, tree tinfo_type/*=NULL_TREE*/)
 {
   tree cond = NULL_TREE, initial_expr = exp;
 
-  if (exp == error_mark_node || !typeid_ok_p ())
+  if (exp == error_mark_node)
     return error_mark_node;
 
+  if (!tinfo_type)
+    {
+      if (!typeid_ok_p ())
+	return error_mark_node;
+      tinfo_type = const_type_info_type_node;
+    }
+
   if (processing_template_decl)
-    return build_min (TYPEID_EXPR, const_type_info_type_node, exp);
+    return build_min (TYPEID_EXPR, tinfo_type, exp);
 
   int nonnull = 0;
   if (typeid_evaluated_p (exp, &nonnull))
@@ -394,7 +392,8 @@ build_typeid (tree exp, tsubst_flags_t complain)
 	}
     }
 
-  exp = get_tinfo_ptr_dynamic (exp, complain);
+  exp = get_tinfo_ptr_dynamic (exp, complain,
+			       build_pointer_type (tinfo_type));
 
   if (exp == error_mark_node)
     return error_mark_node;
@@ -528,13 +527,20 @@ get_tinfo_decl_direct (tree type, tree name, int pseudo_ix)
 /* Return the type_info object for TYPE.  */
 
 tree
-get_typeid (tree type, tsubst_flags_t complain)
+get_typeid (tree type, tsubst_flags_t complain, tree tinfo_type/*=NULL_TREE*/)
 {
-  if (type == error_mark_node || !typeid_ok_p ())
+  if (type == error_mark_node)
     return error_mark_node;
 
+  if (!tinfo_type)
+    {
+      if (!typeid_ok_p ())
+	return error_mark_node;
+      tinfo_type = const_type_info_type_node;
+    }
+
   if (processing_template_decl)
-    return build_min (TYPEID_EXPR, const_type_info_type_node, type);
+    return build_min (TYPEID_EXPR, tinfo_type, type);
 
   /* If the type of the type-id is a reference type, the result of the
      typeid expression refers to a type_info object representing the
@@ -563,7 +569,8 @@ get_typeid (tree type, tsubst_flags_t complain)
   if (!type)
     return error_mark_node;
 
-  return cp_build_fold_indirect_ref (get_tinfo_ptr (type));
+  tinfo_type = build_pointer_type (tinfo_type);
+  return cp_build_fold_indirect_ref (get_tinfo_ptr (type, tinfo_type));
 }
 
 /* Check whether TEST is null before returning RESULT.  If TEST is used in
@@ -1077,7 +1084,7 @@ ptr_initializer (tinfo_s *ti, tree target)
       to = build_exception_variant (to, NULL_TREE);
     }
   CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, init);
-  CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, build_int_cst (NULL_TREE, flags));
+  CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, build_int_cst (integer_type_node, flags));
   CONSTRUCTOR_APPEND_ELT (v, NULL_TREE,
 			  get_void_tinfo_ptr (TYPE_MAIN_VARIANT (to)));
 
@@ -1108,7 +1115,7 @@ ptm_initializer (tinfo_s *ti, tree target)
   if (!COMPLETE_TYPE_P (klass))
     flags |= 0x10;
   CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, init);
-  CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, build_int_cst (NULL_TREE, flags));
+  CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, build_int_cst (integer_type_node, flags));
   CONSTRUCTOR_APPEND_ELT (v, NULL_TREE,
 			  get_void_tinfo_ptr (TYPE_MAIN_VARIANT (to)));
   CONSTRUCTOR_APPEND_ELT (v, NULL_TREE, get_void_tinfo_ptr (klass));
@@ -1266,8 +1273,8 @@ get_pseudo_ti_init (tree type, unsigned tk_index)
 	/* get_tinfo_ptr might have reallocated the tinfo_descs vector.  */
 	ti = &(*tinfo_descs)[tk_index];
 	return class_initializer (ti, type, 3,
-				  build_int_cst (NULL_TREE, hint),
-				  build_int_cst (NULL_TREE, nbases),
+				  build_int_cst (integer_type_node, hint),
+				  build_int_cst (integer_type_node, nbases),
 				  base_inits);
       }
     }

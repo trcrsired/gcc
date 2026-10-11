@@ -578,6 +578,8 @@ builtin_valid_in_constant_expr_p (const_tree decl)
 	  case CP_BUILT_IN_CONSTEXPR_DIAG:
 	  case CP_BUILT_IN_CURRENT_EXCEPTION:
 	  case CP_BUILT_IN_UNCAUGHT_EXCEPTIONS:
+	  case CP_BUILT_IN_IS_WITHIN_LIFETIME:
+	  case CP_BUILT_IN_START_LIFETIME:
 	    return true;
 	  default:
 	    break;
@@ -5173,6 +5175,16 @@ type_has_unique_obj_representations (const_tree t, bool explain/*=false*/)
 	inform (loc, "%<std::nullptr_t%> has padding bits and no value bits");
       return false;
 
+    case LANG_TYPE:
+      if (REFLECTION_TYPE_P (t))
+	{
+	  if (explain)
+	    inform (loc, "%<std::meta::info%> has an unspecified object "
+		    "representation");
+	  return false;
+	}
+      gcc_fallthrough ();
+
     default:
       gcc_unreachable ();
     }
@@ -5274,7 +5286,7 @@ record_has_unique_obj_representations (const_tree t, const_tree sz,
 	    inform (DECL_SOURCE_LOCATION (last_named_field),
 		    "padding occurs after %qD", last_named_field);
 	  else
-	    inform (DECL_SOURCE_LOCATION (t),
+	    inform (location_of (const_cast <tree> (t)),
 		    "%qT has padding and no data fields", t);
 	}
       return false;
@@ -5328,6 +5340,8 @@ zero_init_expr_p (tree t)
     return false;
   if (TYPE_PTRMEM_P (type))
     return null_member_pointer_value_p (t);
+  if (REFLECTION_TYPE_P (type))
+    return null_reflection_p (t);
   if (TREE_CODE (t) == CONSTRUCTOR)
     {
       if (COMPOUND_LITERAL_P (t)

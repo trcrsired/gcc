@@ -1,3 +1,808 @@
+2026-10-08  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/127710
+	* cvt.cc (force_lvalue): For a TARGET_EXPR, build
+	(TARGET_EXPR<...>, slot).
+
+2026-10-07  Jason Merrill  <jason@redhat.com>
+
+	P1811
+	PR c++/99000
+	* module.cc (maybe_translate_include): Check
+	-fmodule-include-translate.
+	* name-lookup.cc (redefinable_import_p): New.
+	(pushdecl): Check DECL_IS_UNDECLARED_BUILTIN instead of hidden_p.
+	(lookup_elaborated_type): Don't special-case cxxabi classes.
+	(pushtag): Handle pushdecl finding a previous definition.
+	* decl.cc (merge_default_template_args): Check redefinable_import_p.
+	(duplicate_decls, grokfndecl, start_enum): Likewise.
+	(redeclaration_error_message): Likewise.
+	* parser.cc (cp_parser_skip_to_end_of_balanced_tokens): New.
+	(cp_parser_skip_function_definition): New.
+	(cp_parser_skip_base_clause): New.
+	(cp_parser_enum_specifier): Skip redundant definition.
+	(cp_parser_class_specifier): Likewise.
+	(cp_parser_class_head): Likewise.
+	(cp_parser_function_definition_from_specifiers_and_declarator):
+	Likewise.
+	* pt.cc (redeclare_class_template): Adjust.
+	* cp-tree.h: Adjust.
+	* name-lookup.h: Adjust.
+
+2026-10-07  Jason Merrill  <jason@redhat.com>
+
+	* name-lookup.cc (pushtag): Set TREE_PUBLIC sooner.
+	* parser.cc (cp_parser_class_head): Set location and final
+	before 'done' label.
+	* decl.cc (duplicate_decls): Free duplicate namespace alias.
+
+2026-10-07  Jakub Jelinek  <jakub@redhat.com>
+
+	* cp-gimplify.cc (cp_genericize_r): Don't call warn_for_alloc_size
+	for CALL_FROM_NEW_OR_DELETE_P calls.
+
+2026-10-07  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127723
+	* parser.cc (cp_parser_omp_clause_simdlen): Handle
+	simdlen's type and divisor of the scaled modifier.
+	* pt.cc (tsubst_omp_clauses): Likewise
+	* semantics.cc (finish_omp_clauses): Likewise;
+	add comment about safelen vs. simdlen with scaled.
+
+2026-10-07  Jason Merrill  <jason@redhat.com>
+
+	PR c++/115806
+	* decl.cc (lookup_and_check_tag): Strip using here...
+	* name-lookup.cc (lookup_elaborated_type): ...not here.
+
+2026-10-07  Jason Merrill  <jason@redhat.com>
+
+	PR c++/127627
+	* class.cc (add_method): Don't remove a less-explicit function.
+
+2026-10-06  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/127707
+	* name-lookup.cc (finish_nonmember_using_decl): New bool
+	parameter.  Set USING_DECL_TYPENAME_P if it's true.
+	* name-lookup.h (finish_nonmember_using_decl): Adjust
+	declaration.
+	* parser.cc (finish_using_decl): Pass typename_p to
+	finish_nonmember_using_decl.
+	* pt.cc (tsubst_stmt) <case DECL_EXPR>: Pass
+	USING_DECL_TYPENAME_P to finish_nonmember_using_decl.
+
+2026-10-03  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/127344
+	* parser.cc (cp_parser_lookup_name): Call make_splice_scope for
+	dependent_namespace_p.  Use the result for make_typename_type
+	and make_unbound_class_template.
+
+2026-10-03  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/127672
+	* decl2.cc (constrain_class_visibility): Check OVERLOAD_TYPE_P
+	before calling decl_anon_ns_mem_p.
+
+2026-10-03  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/126654
+	* pt.cc (tsubst_stmt) <case DECL_EXPR>: If tsubst returns
+	error_mark_node, return error_mark_node.  Allow NAMESPACE_DECL.
+
+2026-10-03  Jakub Jelinek  <jakub@redhat.com>
+
+	P3950R1
+	PR c++/125830
+	* coroutines.cc: Implement C++29 P3950R1 - return_value & return_void
+	Are Not Mutually Exclusive paper as DR.
+	(struct coroutine_info): Remove coro_co_return_error_emitted member.
+	(coro_promise_type_found_p): Remove diagnostics about both return_void
+	and return_value successful lookup.
+	(lookup_promise_method): Add complain argument, pass it down to
+	lookup_member.
+	(coro_build_promise_expression): Add complain argument, pass it down
+	to lookup_promise_method, build_new_method_call and
+	build_class_member_access_expr.
+	(get_coroutine_return_void_expr): Pass tf_none to
+	coro_build_promise_expression.
+
+2026-10-03  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/127668
+	* mangle.cc (write_expression): Handle mangling of
+	calls to IFN_BSWAP and IFN_BITREVERSE.
+
+2026-09-30  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/127349
+	* pt.cc (tsubst) <case UNBOUND_CLASS_TEMPLATE>: Handle the case
+	when the context was substituted into a NAMESPACE_DECL.
+
+2026-09-29  Jonas Hansen  <jhansen@roku.com>
+
+	PR tree-optimization/127416
+	* typeck2.cc (store_init_value): Move braced_lists_to_strings after
+	constant folding.
+
+2026-09-29  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/127643
+	* reflect.cc (class_members_of): Also skip templated clones.
+
+2026-09-27  Steven Sudit  <stevensudit@gmail.com>
+
+	PR c++/127218
+	* constexpr.cc (cxx_eval_builtin_function_call): Clear STRRET
+	when the argument it refers to is not replaced by the address of
+	a STRING_CST, so the folded result is re-based on the original
+	argument only when that replacement happened.
+
+2026-09-25  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/127385
+	* constexpr.cc (cxx_eval_store_expression): Handle the case
+	of *valp == void_node like if *valp is NULL.
+	(cxx_eval_store_expression): For CLOBBER_OBJECT_END or above
+	store *valp = void_node even for aggregate types.
+
+2026-09-25  Jakub Jelinek  <jakub@redhat.com>
+
+	P3769R1
+	PR c++/125848
+	* call.cc (build_op_delete_call_1): Implement C++26
+	P3769R1 - Clarification of placement new deallocation.  Instead of
+	calling instantiate_type to select placement deallocation function
+	iterate over OVERLOAD if any, perform argument deduction for
+	templates, ignore candidates with different parameter type lists
+	or unsatisfied constraints and if only one candidate remains,
+	use it, otherwise don't destruct on throw.  Add placement_args
+	argument, pass it down to build_op_delete_call call and use in
+	template argument deduction.
+	(build_op_delete_call): Add placement_args argument and pass it
+	down to build_op_delete_call_1.
+	(build_coroutine_op_delete_call): Remove placement argument, pass
+	down NULL_TREE and NULL to build_op_delete_call_1 as placement and
+	placement_args.
+	* cp-tree.h (build_op_delete_call): Add placement_args argument.
+	(build_coroutine_op_delete_call): Remove placement argument.
+	* init.cc (build_new_1): Pass down *placement as placement_args
+	to build_op_delete_call for placement new.
+	(build_vec_delete_1): Adjust build_op_delete_call callers.
+	(build_delete): Likewise.  Remove {}s around single statement
+	body.
+	* coroutines.cc (build_coroutine_frame_delete_expr): Don't pass
+	placement to build_coroutine_op_delete_call.
+	* optimize.cc (build_delete_destructor_body): Adjust
+	build_op_delete_call caller.
+
+2026-09-23  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/127506
+	* constexpr.cc (is_within_lifetime): When val is error_mark_node,
+	return it.
+
+2026-09-23  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/125536
+	* pt.cc (unify_array_domain): When adding 1 to parm_max or
+	arg_max, perform the addition in the type of those trees
+	rather than unconditionally in int type.
+
+2026-09-23  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126599
+	* error.cc (dump_expr): Print OFFSET_TYPE -1 differently.
+
+2026-09-22  Chung-Lin Tang  <cltang@baylibre.com>
+
+	* parser.cc (cp_parser_omp_clause_name): Add "local" case.
+	(cp_parser_omp_all_clauses): Add PRAGMA_OMP_CLAUSE_LOCAL case.
+	(handle_omp_declare_target_clause): Handle OMP_CLAUSE_LOCAL.
+	(OMP_DECLARE_TARGET_CLAUSE_MASK): Add PRAGMA_OMP_CLAUSE_LOCAL.
+	* semantics.cc (finish_omp_clauses): Handle OMP_CLAUSE_LOCAL.
+	Emit error if local clause variable appears in map clause.
+
+2026-09-22  Joshua Berne  <berne@notadragon.com>
+
+	PR c++/125459
+	* constexpr.cc (constexpr_global_ctx::put_value): Treat
+	void_list_node as not having been in the map for modifiable
+	tracking.
+
+2026-09-21  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/127493
+	* reflect.cc (eval_source_location_of): Call maybe_get_first_fn.
+
+2026-09-21  Jakub Jelinek  <jakub@redhat.com>
+
+	* cp-objcp-common.cc (names_builtin_p): Return 1 for
+	RID_BUILTIN_BITREVERSEG and RID_BUILTIN_BSWAPG.
+
+2026-09-20  Joshua Berne  <berne@notadragon.com>
+
+	PR c++/127281
+	* contracts.cc (maybe_apply_function_contracts): Override
+	current_retval_sentinel for the artificial block containing
+	contracts.
+
+2026-09-20  Joshua Berne  <berne@notadragon.com>
+
+	PR c++/127295
+	* contracts.cc (grok_contract): Identify assertion statements
+	by keyword and not string comparison.
+	* parser.cc (cp_parser_contract_assert): Include keyword used
+	on token in diagnostics.
+
+2026-09-14  Joshua Berne  <berne@notadragon.com>
+
+	PR c++/127282
+	* constexpr.cc (modifiable_tracker::modifiable_tracker): Save the
+	current global pointer to the modifiable set.
+	(modifiable_tracker::~modifiable_tracker): Restore the original
+	pointer to the modifiable set instead of clearing it.
+
+2026-09-14  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/127349
+	* pt.cc (lookup_template_class): Print %qE if d1 is not a type.
+	(tsubst) <case TYPENAME_TYPE>: Do lookup_qualified_name first
+	before lookup_template_class.  Guard qualified_name_lookup_error
+	with a complain check.  Use gcc_checking_assert instead of
+	gcc_assert.  Use identifier_p.  Give an error if we didn't get
+	a type.
+
+2026-09-14  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/126970
+	* cp-gimplify.cc (immediate_escalating_function_p): Check
+	!user_provided_p.
+
+2026-09-13  Iain Sandoe  <iain@sandoe.co.uk>
+
+	PR c++/126811
+	* typeck2.cc (store_init_value): Skip folding CONSTRUCTORs
+	when handling template decls.
+
+2026-09-13  Marek Polacek  <polacek@redhat.com>
+
+	PR c++/125820
+	PR c++/124249
+	PR c++/124414
+	* constexpr.cc (cxx_eval_binary_expression): Check
+	REFLECTION_TYPE_P instead of REFLECT_EXPR_P.
+	(check_bit_cast_type): Also detect REFLECTION_TYPE_P.
+	(cxx_eval_outermost_constant_expr): Delete consteval-only
+	smuggling detection code.
+	(potential_constant_expression_1) <case CONVERT_EXPR>: Recurse
+	with want_rval=false for discarded-value expressions.
+	* constraint.cc (satisfy_atom): Check require_constant_expression
+	before calling cxx_constant_value.  Set result to error_mark_node
+	otherwise.
+	* cp-gimplify.cc (cp_gimplify_expr) <case CALL_EXPR>: Don't call
+	consteval_only_p and check_out_of_consteval_use.
+	(wipe_consteval_only_r): Remove.
+	(cp_fold_immediate_r): Don't detect invalid uses of consteval-only
+	types here.  Set *stmt_p to error_mark_node if the consteval call
+	was invalid.
+	<case IF_STMT>: Don't call wipe_consteval_only_r.
+	(cp_fold_r) <case CONVERT_EXPR>: New, remove discarded-value
+	expressions.
+	(cp_genericize_r) <case ADDR_EXPR>: Call check_out_of_consteval_use.
+	<case BIND_EXPR>: Call rewrite_null_reflection before pruning.
+	<case REFLECT_EXPR>: Detect invalid uses of consteval-only
+	expressions.
+	* cp-objcp-common.cc (cp_common_init_ts): Remove the META_TYPE
+	marking.
+	* cp-tree.def (META_TYPE): Remove.
+	* cp-tree.h (REFLECTION_TYPE_P): Adjust to check if TYPE is
+	meta_info_type_node.
+	(rewrite_null_reflection): Declare.
+	(consteval_only_p): No longer pure.
+	(check_consteval_only_fn): Remove.
+	* cvt.cc (convert_to_void): Don't call check_out_of_consteval_use
+	here.  Don't remove discarded-value expressions here.  Use a
+	location when building the CONVERT_EXPR.
+	* cxx-pretty-print.cc (cxx_pretty_printer::simple_type_specifier)
+	<case META_TYPE>: Remove.
+	<case LANG_TYPE>: New.
+	(cxx_pretty_printer::type_id) <case META_TYPE>: Remove.
+	<case LANG_TYPE>: New.
+	* decl.cc (wrapup_namespace_globals): Call
+	rewrite_null_reflection on each element of statics.
+	(cp_finish_decl): Don't call check_out_of_consteval_use.  Assert
+	!consteval_only_p.
+	(grokfndecl): Don't call check_consteval_only_fn.
+	* decl2.cc (maybe_make_one_only): Don't return early for
+	consteval_only_p.
+	(mark_needed): Likewise.
+	(prune_vars_needing_no_initialization): Don't prune
+	consteval_only_p variables.
+	(c_parse_final_cleanups): Call rewrite_null_reflection.
+	* error.cc (dump_type) <case LANG_TYPE>: Handle
+	REFLECTION_TYPE_P.
+	<case META_TYPE>: Remove.
+	(dump_type_prefix) <case META_TYPE>: Remove.
+	(dump_type_suffix) <case META_TYPE>: Remove.
+	(dump_expr): Use REFLECTION_TYPE_P.
+	* init.cc (perform_member_init): Don't call
+	check_out_of_consteval_use.
+	* mangle.cc (write_type) <case META_TYPE>: Remove.
+	<case LANG_TYPE>: Handle REFLECTION_TYPE_P.
+	* module.cc (trees_out::type_node) <case META_TYPE>: Remove.
+	<case LANG_TYPE>: New.
+	(trees_in::tree_node) <case META_TYPE>: Remove.
+	<case LANG_TYPE>: New.
+	* name-lookup.cc (name_lookup::adl_type): Move the
+	REFLECTION_TYPE_P handling to case LANG_TYPE.
+	* pt.cc (tsubst) <case META_TYPE>: Remove.
+	(unify) <case META_TYPE>: Remove.
+	<case LANG_TYPE>: New.
+	(instantiate_body): Don't call check_consteval_only_fn.
+	* reflect.cc (init_reflection): Use LANG_TYPE instead of
+	META_TYPE for meta_info_type_node.
+	(null_reflection_p): Also accept the rewritten form.
+	(rewrite_null_reflection): New.
+	(consteval_only_p): Rewrite for P4101.
+	(struct consteval_only_p_walker): Remove.
+	(consteval_only_value_p): New.
+	(consteval_only_p_walker::walk): Remove.
+	(check_out_of_consteval_use_r): Walk INIT_EXPR.  Handle EXPR_STMT
+	specially.
+	(check_out_of_consteval_use): Remove the special VAR_P handling.
+	(compare_reflections): Deal with null reflections first.
+	(check_consteval_only_fn): Remove.
+	* search.cc (check_final_overrider): Don't check
+	consteval_only_p.
+	* semantics.cc (cp_build_bit_cast): Likewise.
+	* tree.cc (type_has_unique_obj_representations) <case LANG_TYPE>:
+	New, handle REFLECTION_TYPE_P.
+	* typeck.cc (cp_build_binary_op): Use REFLECTION_TYPE_P.
+	(check_return_expr): Don't call check_out_of_consteval_use.
+	* typeck2.cc (store_init_value): Check that an immediate object
+	is associated with a constexpr variable.
+
+2026-09-12  Jakub Jelinek  <jakub@redhat.com>
+
+	P3598R0
+	PR c++/125840
+	* reflect.cc: Implement C++26 CWG 3158 - const-ification of Splice
+	Expressions.
+	(splice): Remember REFLECT_EXPR_KIND of REFLECT_EXPR.  Set refl to
+	REFLECT_EXPR_HANDLE earlier.  For REFLECT_OBJECT wrap decls into
+	a VCE to differentiate it from corresponding variables.
+	* pt.cc (tsubst_splice_expr): Call constify_contract_access if
+	needed.
+
+2026-09-12  Jakub Jelinek  <jakub@redhat.com>
+
+	* constexpr.cc (cxx_eval_binary_expression): For POINTER_PLUS_EXPR
+	with pointer cast in orig_lhs operand evaluate it as if it was
+	cast of POINTER_PLUS_EXPR with cast operand.
+	(cxx_eval_constant_expression) <case CONVERT_EXPR>:
+	Set *non_constant_p and optionally diagnose if a static_cast downcast
+	results in undefined behavior.
+
+2026-09-11  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/127276
+	* pt.cc (tsubst_splice_expr): Call convert_from_reference if not
+	member access and SPLICE_EXPR is a splice expression.
+
+2026-09-10  Jakub Jelinek  <jakub@redhat.com>
+
+	P3726R2
+	PR c++/125845
+	* cp-tree.h: Implement C++26 P3726R2 - Adjustments to Union Lifetime
+	Rules.  Document some generic flags used in C++ specific way on some
+	trees in the toplevel comment.
+	(CONSTRUCTOR_OMITTED_NOT_WITHIN_LIFETIME_P): Define.
+	(enum cp_built_in_function): Add CP_BUILT_IN_START_LIFETIME.
+	(reduced_constant_expression_p): Add a bool argument defaulted to
+	false.
+	* tree.cc (builtin_valid_in_constant_expr_p): Handle
+	CP_BUILT_IN_START_LIFETIME.
+	* decl.cc (cxx_init_decl_processing): Create __builtin_start_lifetime
+	decl.
+	* cp-gimplify.cc (cp_gimplify_expr): Handle
+	CP_BUILT_IN_START_LIFETIME.
+	* semantics.cc (check_frontend_builtin): New function.
+	(finish_call_expr): Use it.
+	* constexpr.cc (is_within_lifetime): New function.
+	(cxx_eval_is_within_lifetime): Use it.  Add fun argument and pass it
+	to that function.
+	(cxx_eval_start_lifetime): New function.
+	(cxx_eval_builtin_function_call): Handle CP_BUILT_IN_START_LIFETIME.
+	Pass fun to cxx_eval_is_within_lifetime.
+	(is_std_allocator_allocate): Only return true for
+	std::allocator<T>::allocate and not for std::allocator<T>::deallocate.
+	(is_std_allocator_allocate_deallocate): New functions.
+	(cxx_eval_call_expression): Use is_std_allocator_allocate_deallocate
+	rather than is_std_allocator_allocate.
+	(reduced_constant_expression_p): Add union_elemental_subobject
+	argument and propagate it to recursive calls.  If set, ignore for
+	C++26 holes in array initializers which aren't within lifetime.
+	(modifying_const_object_p): Change != MODIFY_EXPR test to == INIT_EXPR.
+	(cxx_eval_store_expression): Handle MODOP_EXPR next to INIT_EXPR and
+	MODIFY_EXPR, meaning start_lifetime.  Don't preevaluate init in that
+	case, return void_node early if *valp is already non-NULL/void_node
+	and within lifetime.
+	(cxx_eval_constant_expression): For std::allocator<T>::allocate
+	start lifetime of the created array but not of its subobjects.
+	Use is_std_allocator_allocate_deallocate rather than
+	is_std_allocator_allocate where appropriate.
+	(potential_constant_expression_1): Likewise.
+
+2026-09-09  Léo Hardt  <leom.hardt@inf.ufrgs.br>
+
+	* mangle.cc (write_expression): don't call
+	sorry when mangling error caused by previously
+	seen error.
+
+2026-09-08  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR middle-end/126622
+	* parser.cc (cp_parser_handle_statement_omp_attributes): Use
+	build_int_cst (integer_type_node, cst).
+	(cp_parser_omp_for_loop): Ditto.
+	(cp_parser_late_parsing_omp_declare_simd): Ditto.
+	(cp_maybe_parse_omp_decl): Ditto.
+	(cp_parser_omp_metadirective): Ditto.
+	* class.cc (finish_struct_1): Ditto.
+	(build_vtbl_initializer): Ditto.
+	* rtti.cc (build_headof): Ditto.
+	(get_tinfo_ptr_dynamic): Ditto.
+	(ptr_initializer): Ditto.
+	(ptm_initializer): Ditto.
+	(get_pseudo_ti_init0): Ditto.
+	* cp-tree.h (SET_NON_DEFAULT_TEMPLATE_ARGS_COUNT): Ditto.
+	* decl.cc (cxx_init_decl_processing): Ditto.
+
+2026-09-08  Jason Merrill  <jason@redhat.com>
+
+	* cp-gimplify.cc (struct cp_fold_data): Add mce().
+	(cp_fold_r): Use it.
+
+2026-09-08  Jason Merrill  <jason@redhat.com>
+
+	* pt.cc (instantiate_class_template): Use maybe_push_to_top_level.
+
+2026-09-08  Lunex  <imlunex2011@gmail.com>
+	    Jason Merrill  <jason@redhat.com>
+
+	PR c++/122258
+	* decl.cc (grokdeclarator): Extend non-member explicit object
+	parameter check to include unqualified friends and clear
+	is_xobj_member_function.
+
+2026-09-08  Vladislav Semykin  <vladislav.semykin@gmail.com>
+
+	PR c++/127132
+	* cp-tree.h (saved_scope): Save unevaluated_typeid_cutoff.
+	(cp_unevaluated_typeid_cutoff): Declare.
+	(cp_unevaluated): Add a defaulted TYPEID_OPERAND parameter; save
+	and restore the cutoff.
+	(cp_evaluated): Save, reset, and restore the cutoff.
+	* parser.cc (cp_unevaluated_typeid_cutoff): Define.
+	(cp_unevaluated::cp_unevaluated, cp_unevaluated::~cp_unevaluated):
+	Implement TYPEID_OPERAND cutoff handling.
+	(cp_parser_postfix_expression): Pass typeid_operand=true for the
+	typeid probe.
+	* pt.cc (instantiate_class_template): Save/reset/restore the
+	cutoff around NSDMI / lambda capture substitution.
+	(tsubst_expr): Pass typeid_operand=true for TYPEID_EXPR's probe.
+	* semantics.cc (process_outer_var_ref): Allow lambda capture
+	through a typeid probe per [expr.prim.lambda.capture]/7; defer
+	the "not captured" diagnostic to a later, non-probe pass.
+	* lambda.cc (lambda_expr_this_capture): Same cutoff and deferral
+	for 'this'.
+	* constraint.cc (tsubst_constraint_variables): Save/reset/restore
+	the cutoff with cp_unevaluated_operand.
+	* name-lookup.cc (push_to_top_level, pop_from_top_level): Same.
+	(local_state_t): Same.
+
+2026-09-05  Patrick Palka  <ppalka@redhat.com>
+
+	PR c++/127207
+	* module.cc (trees_out::decl_value): Relax checking assert
+	to accept IDENTIFIER_NODE as TI_TEMPLATE.
+	(get_originating_module_decl): Likewise.
+
+2026-09-03  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/127109
+	* decl.cc (cp_finish_decomp): Add [dcl.struct.bind]/7 reference
+	to comment.  Use get_temp_regvar and pushdecl instead of
+	get_internal_target_expr and add_stmt.  Set DECL_DECOMP_BASE
+	to NON_LVALUE_EXPR around the temp regvar.
+	* cp-tree.h (DECL_DECOMP_BASE): Adjust macro comment.
+	* semantics.cc (maybe_convert_cond, switch_finish_cond): Check for
+	NON_LVALUE_EXPR rather than TARGET_EXPR and extract its operand
+	rather than TARGET_EXPR_SLOT.
+
+2026-09-02  Lunex  <imlunex2011@gmail.com>
+	    Jason Merrill  <jason@redhat.com>
+
+	PR c++/114804
+	* pt.cc (instantiate_class_template): Push enclosing scope
+	before base substitution, pop at the end.
+
+2026-09-02  Jakub Jelinek  <jakub@redhat.com>
+
+	P2641R4
+	* cp-tree.h: Implement C++26 P2641R4 - Checking if a union
+	alternative is active.
+	(enum cp_built_in_function): Add CP_BUILT_IN_IS_WITHIN_LIFETIME.
+	* tree.cc (builtin_valid_in_constant_expr_p): Handle
+	CP_BUILT_IN_IS_WITHIN_LIFETIME.
+	* decl.cc (cxx_init_decl_processing): Create decl for
+	CP_BUILT_IN_IS_WITHIN_LIFETIME.
+	* semantics.cc (finish_call_expr): Perform semantic checking of
+	__builtin_is_within_lifetime.
+	* constexpr.cc (constexpr_global_ctx::get_value): New method.
+	(eval_and_check_array_index): Add forward declaration.
+	(cxx_eval_is_within_lifetime): New function.
+	(cxx_eval_builtin_function_call): Handle
+	CP_BUILT_IN_IS_WITHIN_LIFETIME.
+
+2026-08-31  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126922
+	* mangle.cc (write_expression): For CONSTRUCTOR skipped
+	member of std::meta::info type, call write_expression on
+	get_null_reflection rather than build_zero_cst.
+	* tree.cc (zero_init_expr_p): If type is std::meta::info,
+	return true iff t is null reflection.
+
+2026-08-29  Vincenzo Calabretta  <vincenzo.cal.main@gmail.com>
+
+	PR c++/127046
+	* constexpr.cc (unshare_constructor): Copy RANGE_EXPR indexes.
+
+2026-08-28  Wang Jinghao  <zheng.xianyuwang@gmail.com>
+	    Jason Merrill  <jason@redhat.com>
+
+	PR c++/125645
+	* cp-tree.h (PACK_INDEX_PARENTHESIZED_P): Fix incorrect
+	documentation in usage.
+	* name-lookup.h (enum scope_kind): Move sk_contract before
+	sk_function_parms.
+	* pt.cc (make_pack_expansion): Use local_bindings_p.
+
+2026-08-28  Wang Jinghao  <zheng.xianyuwang@gmail.com>
+	    Jason Merrill  <jason@redhat.com>
+
+	PR c++/125011
+	* contracts.cc (rebuild_postconditions): Skip if
+	processing_template_decl.
+
+2026-08-28  Wang Jinghao  <zheng.xianyuwang@gmail.com>
+
+	PR c++/125712
+	* pt.cc (regenerate_decl_from_template): Regenerate contracts
+	from the current code pattern.
+
+2026-08-27  Wang Jinghao  <zheng.xianyuwang@gmail.com>
+
+	PR c++/125537
+	* pt.cc (tsubst_contract): Keep template processing enabled
+	only for postconditions with an undeduced result binding.
+	* contracts.cc (rebuild_postconditions): Only rebuild
+	undeduced result variable.
+	* parser.cc (cp_parser_late_contract_condition): Enable
+	pseudo-template mode only for result bindings whose return
+	type has not yet been deduced.  Do not immediately rebuild
+	postconditions that have already completed late parsing.
+
+2026-08-27  Jason Merrill  <jason@redhat.com>
+
+	PR c++/126828
+	PR c++/112632
+	* pt.cc (dependent_implicit_conv_p): Remove.
+	(convert_nontype_argument_maybe_dependent): Rewrite
+	simple conversion when force_conv.
+	(tsubst_expr): Use it.
+
+2026-08-27  Sammy Al Hashemi  <sammy@salh.xyz>
+
+	* cp-tree.h (class temp_override): Move to c-common.h.
+	(type_identity_t): Likewise.
+	(make_temp_override): Likewise.
+
+2026-08-26  Sebastian Miles  <sebastianmiles20@gmail.com>
+
+	PR c++/127016
+	* call.cc (can_convert_array): Handle a VEC_INIT_EXPR FROM.
+
+2026-08-26  Odysseas Georgoudis  <odygrd@hotmail.com>
+
+	PR c++/125343
+	* parser.cc (cp_parser_class_specifier): Preserve whether the
+	class head opened a lambda scope and use it for cleanup.
+
+2026-08-24  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/125822
+	* cp-tree.def: Implement C++29 P3822R2 - Conditional noexcept
+	specifiers in compound requirements.
+	(COMPOUND_REQ): Use 3 operands rather than 2, adjust comment.
+	* cp-tree.h (COMPOUND_REQ_NOEXCEPT_P): Remove.
+	(finish_compound_requirement): Change last argument from bool to
+	tree.
+	* parser.cc (cp_parser_compound_requirement): Parse C++29
+	conditional noexcept in compound requirement.  Pass a tree to
+	finish_compound_requirement rather than bool.
+	* constraint.cc (tsubst_compound_requirement): Read noexcept from
+	TREE_OPERAND (req, 2) rather than COMPOUND_REQ_NOEXCEPT_P (req),
+	instantiate, convert, evaluate and pass to
+	finish_compound_requirement.
+	(finish_compound_requirement): Change last argument from bool to
+	tree, store it as third operand of COMPOUND_REQ rather than in
+	COMPOUND_REQ_NOEXCEPT_P flag and call
+	check_for_bare_parameter_packs on it.
+	* cxx-pretty-print.cc (pp_cxx_compound_requirement): Print noexcept
+	with argument if TREE_OPERAND (t, 2) is neither true nor false
+	constant and check it for printing "noexcept" instead oof
+	COMPOUND_REQ_NOEXCEPT_P flag.
+	* mangle.cc (write_requirement): Don't use COMPOUND_REQ_NOEXCEPT_P
+	flag, instead mangle without N or with N if third operand is false
+	or true constant and as C <expression> otherwise.
+
+2026-08-22  Jason Merrill  <jason@redhat.com>
+
+	PR c++/124888
+	* pt.cc (tsubst_expr): Pass type to {get,build}_typeid.
+	* rtti.cc (build_typeid, get_typeid): Take it.
+	(type_info_ptr_type): Remove.
+	(get_tinfo_ptr): Take tinfo_ptr_type instead of voidp.
+	(get_tinfo_ptr_dynamic): Likewise.
+	(get_void_tinfo_ptr): Pass const_ptr_type_node.
+	* cp-tree.h (build_typeid, get_typeid): Adjust.
+
+2026-08-21  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* contracts.cc: Replace use of attribute lists to hold
+	function contract specifiers with tree-vecs.
+	* contracts.h (CONTRACT_SOURCE_LOCATION_WRAPPER,
+	CONTRACT_SOURCE_LOCATION, CONTRACT_STATEMENT): Remove.
+	(finish_contract_specifier): Remove.
+	(build_contract_specifiers): Use tree-vec for contracts.
+	(contract_specifiers_concat): Likewise.
+	* decl.cc (start_decl): Use tree-vec for contracts.
+	(grokdeclarator): Likewise.
+	* module.cc (trees_out::fn_parms_init): Likewise.
+	* parser.cc (cp_parser_late_contracts): Likewise.
+	(cp_parser_function_contract_specifier_seq): Likewise.
+	* pt.cc (tsubst_contract_specifier): Likewise.
+	(tsubst_contract_specifiers): Likewise.
+
+2026-08-21  Jason Merrill  <jason@redhat.com>
+
+	* typeck.cc (lookup_destructor): Pass complain to lookup_member.
+
+2026-08-21  Jason Merrill  <jason@redhat.com>
+
+	* cp-tree.h (can_convert_eh): Remove declaration.
+	* except.cc (can_convert_eh): Remove.
+	(check_handlers_1): Use handler_match_for_exception_type instead.
+	* cp-lang.cc (LANG_HOOKS_EXCEPTION_MATCHES_TYPE_P): Likewise.
+	* call.cc (handler_match_for_exception_type): Allow type argument,
+	fix private base handling.
+
+2026-08-20  Odysseas Georgoudis  <odygrd@hotmail.com>
+	    Jason Merrill  <jason@redhat.com>
+
+	PR c++/124983
+	* search.cc (lookup_member): Skip access checks for declarations
+	from dependent scope.
+
+2026-08-19  Marek Polacek  <polacek@redhat.com>
+
+	* reflect.cc (check_splice_expr): Reject splicing a direct base
+	class relationship without an object.
+
+2026-08-19  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126918
+	* constexpr.cc (class constexpr_global_ctx): Extend description of
+	caught_exceptions vector.
+	(cxx_eval_cxa_builtin_fn): When catching a pointer-to-member and
+	the current exception is nullptr or pointer-to-member with different
+	type, create a temporary, initialize it from the exception value and
+	return address of it.  Make sure to free these temporaries at
+	__cxa_end_catch time.
+	* call.cc (handler_match_for_exception_type): Allow NULLPTR_TYPE
+	exception type or different pointer-to-member type even for
+	TYPE_PTRMEMFUNC_P types, not just TYPE_PTRDATAMEM_P types.
+
+2026-08-19  Eczbek  <eczbek.void@gmail.com>
+
+	PR c++/70097
+	* decl.cc (grokdeclarator): If rqual is REF_QUAL_NONE, set it to
+	result of type_memfn_rqual before passing to build_memfn_type.
+
+2026-08-18  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126867
+	* tree.cc (record_has_unique_obj_representations): Use
+	location_of (const_cast <tree> (t)) rather than
+	DECL_SOURCE_LOCATION (t).
+
+2026-08-18  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126752
+	* init.cc (build_vec_init): Assert TREE_PURPOSE of the
+	last *cleanup_flags element is rval rather than iterator.
+
+2026-08-18  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/126093
+	* mangle.cc (write_reflection): Call write_unqualified_name on
+	STRIP_TEMPLATE (arg) rather than just arg.
+
+2026-08-17  Odysseas Georgoudis  <odygrd@hotmail.com>
+
+	PR c++/126324
+	* constexpr.cc (cxx_eval_thunk_call): Preserve null pointer
+	results and adjust the result to the thunk's return type.
+	(cxx_eval_call_expression): Adjust covariant virtual-call results
+	to the static call type.
+
+2026-08-14  Patrick Palka  <ppalka@redhat.com>
+
+	* cp-gimplify.cc (cp_fold_r) <case INIT_EXPR>: Add trial
+	maybe_constant_init logic like for TARGET_EXPR.
+
+2026-08-14  Patrick Palka  <ppalka@redhat.com>
+
+	PR c++/126483
+	* typeck2.cc (store_init_value): Check maybe_constexpr_fn
+	instead of DECL_DECLARED_CONSTEXPR_P of the function scope.
+
+2026-08-14  Patrick Palka  <ppalka@redhat.com>
+
+	PR c++/123495
+	PR c++/126860
+	* cvt.cc (cp_get_fndecl_from_callee): Use fold_non_dependent_expr
+	instead of maybe_constant_init.
+
+2026-08-14  Jason Merrill  <jason@redhat.com>
+
+	PR c++/126754
+	* constexpr.cc (cxx_eval_outermost_constant_expr): Don't
+	wrap in TARGET_EXPR when processing_template_decl.
+
+2026-08-14  Jason Merrill  <jason@redhat.com>
+
+	* decl.cc (reshape_single_init): Declare sooner.
+	(reshape_init_array_1): Use it.
+	(reshape_init_class): Drop "subclass" case.
+	(reshape_init_r): d->cur->index always means initializing
+	an element.
+
+2026-08-13  Patrick Palka  <ppalka@redhat.com>
+
+	PR c++/126783
+	* module.cc (transfer_defining_module): Call retrofit_lang_decl
+	instead of assuming the old declaration already has
+	DECL_LANG_SPECIFIC allocated.
+
+2026-08-12  Patrick Palka  <ppalka@redhat.com>
+	    Bernhard M. Wiedemann  <bwiedemann@suse.de>
+
+	PR c++/124811
+	* decl.cc (typename_hasher::hash): Instead of pointer hashing,
+	hash TYPE_HASH of context and use iterative_hash_template_arg
+	to hash fullname.
+
+2026-08-12  Jakub Jelinek  <jakub@redhat.com>
+
+	* reflect.cc (init_reflection): Also initialize TYPE_UNSIGNED,
+	TYPE_PRECISION, TYPE_MODE and TYPE_ALIGN of meta_info_type_node.
+
 2026-08-06  Jakub Jelinek  <jakub@redhat.com>
 
 	PR c++/125541

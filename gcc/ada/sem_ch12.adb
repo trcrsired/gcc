@@ -776,6 +776,11 @@ package body Sem_Ch12 is
    --  not done for the instantiation of the bodies, which only require the
    --  instances of the generic parents to be in scope.
 
+   function In_Local_Package_Of_Formal_Package (N : Node_Id) return Boolean;
+   --  Return whether N is present in the local package created during the
+   --  analysis of a formal package (see Analyze_Formal_Package_Declaration).
+   --  Used to avoid instantiating generic bodies in such a local package.
+
    function In_Main_Context (E : Entity_Id) return Boolean;
    --  Check whether an instantiation is in the context of the main unit.
    --  Used to determine whether its body should be elaborated to allow
@@ -5438,6 +5443,7 @@ package body Sem_Ch12 is
                and then Needs_Body_Instantiated (Gen_Unit)
                and then not Is_Abbrev
                and then not Inline_Now
+               and then not In_Local_Package_Of_Formal_Package (N)
                and then (Operating_Mode = Generate_Code
                           or else (Operating_Mode = Check_Semantics
                                     and then GNATprove_Mode));
@@ -6591,6 +6597,10 @@ package body Sem_Ch12 is
 
         and then (not Is_Generic_Unit (Cunit_Entity (Main_Unit))
                    or else Parent (N) = Aux_Decls_Node (Cunit (Main_Unit)))
+
+        --  Likewise in the local package built for formal packages
+
+        and then not In_Local_Package_Of_Formal_Package (N)
 
         --  Must be generating code or analyzing code in GNATprove mode
 
@@ -11285,6 +11295,26 @@ package body Sem_Ch12 is
         (Current_Scope, Current_Scope, Assoc_Null);
    end Init_Env;
 
+   ----------------------------------------
+   -- In_Local_Package_Of_Formal_Package --
+   ----------------------------------------
+
+   function In_Local_Package_Of_Formal_Package (N : Node_Id) return Boolean is
+      Par : Node_Id;
+
+   begin
+      Par := Parent (N);
+      while Present (Par) and then Nkind (Par) /= N_Compilation_Unit loop
+         if Nkind (Original_Node (Par)) = N_Formal_Package_Declaration then
+            return True;
+         end if;
+
+         Par := Parent (Par);
+      end loop;
+
+      return False;
+   end In_Local_Package_Of_Formal_Package;
+
    ---------------------
    -- In_Main_Context --
    ---------------------
@@ -15690,8 +15720,8 @@ package body Sem_Ch12 is
                Gen_T);
 
          elsif not Is_Definite_Subtype (Act_T)
+            and then not Is_Mutably_Tagged_Type (Act_T)
             and then Is_Definite_Subtype (A_Gen_T)
-            and then No (Class_Wide_Equivalent_Type (Act_T))
             and then Ada_Version >= Ada_95
          then
             Error_Msg_NE
@@ -15733,10 +15763,10 @@ package body Sem_Ch12 is
 
       Act_T := Entity (Actual);
 
-      --  Obtain the class-wide equivalent type and use it for the
+      --  Obtain the class-wide equivalent type, if any, and use it for the
       --  instantiation instead of a mutably tagged type.
 
-      if Present (Class_Wide_Equivalent_Type (Act_T)) then
+      if Is_Mutably_Tagged_Type (Act_T) then
          Act_T := Class_Wide_Equivalent_Type (Act_T);
       end if;
 

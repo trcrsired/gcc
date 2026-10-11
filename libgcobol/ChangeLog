@@ -1,3 +1,430 @@
+2026-10-07  Robert Dubner  <rdubner@symas.com>
+
+	* Makefile.am: Include libgcobol.map, libgcobol_compat_gnu.map, and
+	libgcobol_posix.map as -Wl,--version-script inputs.
+	* Makefile.in: Regenerated.
+	* compat/gnu/lib/cbl_gpi.cc (__gg__get_module_names): Minor change
+	to how the external is declared and referenced.
+	(callstack): Likewise.
+	* libgcobol.cc (NO_RDIGITS): Lengthy comment about "How to use
+	symbol versioning".
+	(__gg__module_name_pop): Likewise.
+	* libgcobol.map: New file.
+	* libgcobol_compat_gnu.map: New file.
+	* libgcobol_posix.map: New file.
+
+2026-10-01  Nick Rozinsky  <nick.rozinsky@gmail.com>
+
+	* Makefile.am: Add gettime.cc and posix-clock-gettime.{cbl,cpy}
+	* Makefile.in: Likewise.
+	* posix/t/Makefile: Add gettime smoke test.
+	* posix/cpy/posix-clock-gettime.cpy: New file.
+	* posix/shim/gettime.cc: New file.
+	* posix/shim/timespec.h: New file.
+	* posix/t/gettime.cbl: New file.
+	* posix/udf/posix-clock-gettime.cbl: New file.
+
+2026-10-01  Robert Dubner  <rdubner@symas.com>
+
+	* gfileio.cc (SLASH_CHAR): Support for copied routines, including
+	a copy of the enabling software license.
+	(SLASH_STR): Likewise.
+	(NUM_PREFIX): Likewise.
+	(COB_MODULE_PTR): Likewise.
+	(cob_chk_file_env): Copied routine.
+	(has_directory_separator): Likewise.
+	(looks_absolute): Likewise.
+	(has_acu_hyphen): Likewise.
+	(do_acu_hyphen_translation): Likewise.
+	(prepend_file_path): Likewise.
+	(cob_chk_file_mapping): Likewise.
+	(cob_setup_filename): Likewise.
+	(establish_filename): Use the dollar sign handling routine.
+	* libgcobol.cc (ec_priority): Suppress compiler warning.
+	(default_exception_handler): Eliminate unused variable.
+
+2026-09-30  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/lib/cobrt-file-status.cbl: COPY prototype.
+
+2026-09-30  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/cpy/cblproto.cpy: Remove unused parameter.
+	* compat/gnu/lib/CBL_CLOSE_FILE.cbl: Likewise.
+	* compat/gnu/lib/CBL_CREATE_FILE.cbl: Likewise.
+	* compat/gnu/lib/CBL_DELETE_FILE.cbl: Likewise.
+	* compat/gnu/lib/CBL_READ_FILE.cbl: Likewise.
+	* compat/gnu/lib/CBL_WRITE_FILE.cbl: Likewise.
+	* compat/gnu/lib/cobrt-file-status.cbl: Likewise.
+
+2026-09-30  James K. Lowden  <jklowden@cobolworx.com>
+
+	* ec.h (enum ec_type_t): Whitespace.
+	* libgcobol.cc (ec_priority): New function.
+	(default_exception_handler): use ec_priority.
+
+2026-09-30  Robert Dubner  <rdubner@symas.com>
+
+	* libgcobol.cc (__gg__propagate_linkage_offsets): New routine for
+	applying the tables of offsets.
+
+2026-09-29  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* posix/cpy/posix-errno.cpy: Add new OPTIONAL arg.
+	* posix/shim/errno.cc (posix_errno): Set errno if required.
+	* posix/udf/posix-errno.cbl: Add new OPTIONAL arg.
+
+2026-09-29  Robert Dubner  <rdubner@symas.com>
+
+	* libgcobol.cc (defined): Remove always-on MATCH_DECLARATIVE
+	debugging condition.
+	(__gg__compare_numdisp_alpha): Appease cppcheck.
+
+2026-09-28  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/lib/cbl_get_program_info.3: Update to status quo.
+	* compat/gnu/lib/cbl_gpi.cc (setbasename): Honor return values and
+		return-buf{-len}.
+	(cbl_gpi_cur_status): Likewise.
+	(cbl_gpi_named_status): Likewise.
+	(cbl_gpi_parent_status): Likewise.
+	(cbl_gpi_close_handle): Likewise.
+	(cbl_gpi_first_ep): Update function signature.
+	(cbl_gpi_next_ep): Update function signature.
+	(cbl_gpi_cancel_search_ep): Update function signature.
+	(cbl_gpi_prg_name): Update function signature.
+	(cbl_gpi_nargs): Update function signature.
+	(cbl_gpi_reserved): Update function signature.
+	(cbl_gpi_path_prg_name): Update function signature.
+	(checkflags): Remove old debug messages.
+	(cbl_gpi): Honor return values.
+
+2026-09-28  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/cpy/stored-char-length.cpy: Add PROTOTYPE.
+	* compat/gnu/lib/stored-char-length.cbl: Add COPY to validate
+		prototype.
+
+2026-09-28  Robert Dubner  <rdubner@symas.com>
+	    James K. Lowden  <jklowden@cobolworx.com>
+
+	* libgcobol.cc (format_for_display_internal): Numeric-edited
+	handling.
+	(__gg__move): Likewise.
+	(__gg__compare_numdisp_alpha): Likewise.
+
+2026-09-27  James K. Lowden  <jklowden@cobolworx.com>
+
+	* libgcobol.cc (default_exception_handler): Use ec_status.source_file.
+	(__gg__move_stash_release): Delete blank line.
+
+2026-09-25  Robert Dubner  <rdubner@symas.com>
+
+	* libgcobol.cc (__gg__call_warning_message): Moved here from
+	compile time.
+	(__gg__resolve_literal_call): New consolidated function.
+	* literal-call-descriptor.h: New file.
+
+2026-09-24  Robert Dubner  <rdubner@symas.com>
+
+	* libgcobol.cc (find_in_dirs): Use the cached array.
+	(function_handle_from_cobpath): Create the cached array.
+
+2026-09-23  Robert Dubner  <rdubner@symas.com>
+
+	* libgcobol.cc (do_the_dl_thing): Implement the updated policies.
+	(find_in_dirs): Use modified do_the_dl_thing().
+	(__gg__function_handle_from_cobpath): Honor the call_convention.
+	(function_handle_from_cobpath): Likewise.
+	(__gg__function_handle_from_literal): Likewise.
+	(__gg__function_handle_from_name): Likewise.
+
+2026-09-22  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/lib/cbl_gpi.cc (struct gpi_priv): Fix flawed logic.
+	(getlastprog): Likewise.
+	(callstack): Likewise.
+	(cbl_gpi_cur_status): Likewise.
+	(cbl_gpi_handle_status): Likewise.
+	(cbl_gpi_parent_status): Likewise.
+	(cbl_gpi_close_handle): Likewise.
+
+2026-09-21  Robert Dubner  <rdubner@symas.com>
+
+	* libgcobol.cc (int128_to_field): Remove rdigits formal parameter.
+	(__gg__int128_to_ascii_numeric_display): Likewise.
+	* valconv.cc (__gg__string_to_numeric_edited): Complete rewrite to
+	use parameters appended by expand_expanded().
+	* valconv.h: Remove rdigits format parameter from
+	__gg__int128_to_ascii_numeric_display.
+
+2026-09-18  Robert Dubner  <rdubner@symas.com>
+
+	* libgcobol.cc (do_the_dl_thing): New .so policy.
+	(find_in_dirs): Likewise.
+	(__gg__function_handle_from_cobpath): Likewise.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	PR cobol/126633
+	* Makefile.am: Replace udf with lib.
+	* Makefile.in: Likewise.
+	* compat/gnu/udf/cobrt-file-status.cbl: Move to...
+	* compat/gnu/lib/cobrt-file-status.cbl: ...here.
+	* compat/gnu/udf/stored-char-length.cbl: Move to...
+	* compat/gnu/lib/stored-char-length.cbl: ...here.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* Makefile.am: Add CBL_GET_PROGRAM_INFO.cbl and cbl_gpi.cc.
+	* Makefile.in: Likewise.
+	* compat/gnu/cpy/cblproto.cpy: Add CBL_GET_PROGRAM_INFO.
+	* compat/gnu/cpy/cbltypes.cpy: Add cblt-prog-info-params.
+	* compat/gnu/lib/CBL_GET_PROGRAM_INFO.cbl: New file.
+	* compat/gnu/lib/cbl_get_program_info.3: New file.
+	* compat/gnu/lib/cbl_gpi.cc: New file.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* libgcobol.cc (__gg__get_module_names): New function.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* Makefile.in: Update with autoreconf2.69.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/lib/CBL_CHECK_FILE_EXIST.cbl: Use st_mtime.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/lib/CBL_CHECK_FILE_EXIST.cbl: Add 1 to
+	cblte-fe-month.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/lib/CBL_CREATE_FILE.cbl: Do not null-terminate
+	original string.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/cpy/cblproto.cpy: Use RETURN-CODE.
+	* compat/gnu/lib/CBL_CLOSE_FILE.cbl: Likewise.
+	* compat/gnu/lib/CBL_CREATE_FILE.cbl: Likewise.
+	* compat/gnu/lib/CBL_OPEN_FILE.cbl: Likewise.
+	* compat/gnu/lib/CBL_READ_FILE.cbl: Likewise.
+	* compat/gnu/lib/CBL_WRITE_FILE.cbl: Likewise.
+	* compat/gnu/lib/cbl_close_file.3: Document use of RETURN-CODE.
+	* compat/gnu/lib/cbl_create_file.3: Likewise.
+	* compat/gnu/lib/cbl_open_file.3: Likewise.
+	* compat/gnu/lib/cbl_read_file.3: Likewise.
+	* compat/gnu/lib/cbl_write_file.3: Likewise.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/lib/CBL_OPEN_FILE.cbl: Revert.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* compat/gnu/lib/CBL_CREATE_FILE.cbl: Likewise.
+
+2026-09-18  Xavier Del Campo Romero  <xdelcampo@symas.com>
+
+	* Makefile.am: Add missing posix-close.cpy
+
+2026-09-17  Robert Dubner  <rdubner@symas.com>
+
+	* gmath.cc (__gg__int128_to_int128_rounded): Change error handling.
+	* libgcobol.cc (int128_to_field): Likewise.
+	(__gg__int128_to_ascii_numeric_display): New routine for increased
+	speed.
+	* valconv.cc (TOUPPER): Remove.
+	(expand_picture): Remove; it's being done in another routine.
+	(Lindex): Remove.
+	(Rindex): Remove.
+	(__gg__string_to_numeric_edited): Refactor for speed.
+	(__gg__string_to_alpha_edited): Eliminate call to expand_picture().
+	(__gg__currency_sign_init): Formatting.
+	* valconv.h: Change __gg__string_to_numeric_edited() return type.
+
+2026-09-10  Robert Dubner  <rdubner@symas.com>
+
+	* gmath.cc (__gg__conditional_stash_float): New routine supporting
+	faster GENERIC arithmetic.
+	(__gg__add_fixed_phase1): Remove obsolete function.
+	(__gg__addf1_fixed_phase2): Likewise.
+	(__gg__fixed_phase2_assign_to_c): Likewise.
+	(__gg__add_float_phase1): Likewise.
+	(__gg__addf1_float_phase2): Likewise.
+	(__gg__float_phase2_assign_to_c): Likewise.
+	(__gg__addf3): Likewise.
+	(__gg__subtractf1_fixed_phase2): Likewise.
+	(__gg__subtractf2_fixed_phase1): Likewise.
+	(__gg__subtractf1_float_phase2): Likewise.
+	(__gg__subtractf2_float_phase1): Likewise.
+	(__gg__subtractf3): Likewise.
+
+2026-09-09  Robert Dubner  <rdubner@symas.com>
+
+	* common-defs.h (enum cbl_round_t): Ensure storage is 'int'
+	* gmath.cc (__gg__conditional_stash): Make globally accessible.
+	(squeeze_int256): Improve speed.
+	(__gg__int128_to_int128_rounded): Spelling in comment.
+	* libgcobol.cc (int128_to_field): Treat FldPointer as unsigned.
+	(format_for_display_internal): Change name of 'digits_e' to
+	'digits_r'.
+	(is_numeric_display_numeric): Likewise.
+
+2026-09-06  Robert Dubner  <rdubner@symas.com>
+
+	* inspect.cc (the_alpha_and_omega_sbc): Modified.
+	(the_alpha_and_omega_backward_sbc): New routine.
+	(match_lengths_sbc): New routine.
+	(matches_sbc): Improved routine.
+	(set_trailing_bounds_sbc): Likewise.
+	(__gg__inspect_format_1_sbc): Likewise.
+	(__gg__inspect_format_2_sbc): New routine.
+	(__gg__inspect_format_4_sbc): New routine.
+
+2026-09-06  Robert Dubner  <rdubner@symas.com>
+
+	* Makefile.am: Incorporate new unstring.cc file.
+	* Makefile.in: Regenerate.
+	* libgcobol.cc (string_operand): Moved.
+	(__gg__string_1): Likewise.
+	(find_string_24): Likewise.
+	(__gg__string_24): Likewise.
+	(__gg__string): Likewise.
+	(struct unstring_finder_1): Likewise.
+	(struct unstring_finder_24): Likewise.
+	(unstring_fixed): Likewise.
+	(__gg__unstring_1): Likewise.
+	(__gg__unstring_24): Likewise.
+	(__gg__unstring): Likewise.
+	(__gg__move_stash_release): Formatting.
+	* libgcobol.h (__gg__move_literala): New declaration.
+	* unstring.cc: New file.
+
+2026-09-06  Robert Dubner  <rdubner@symas.com>
+
+	* gmath.cc (__gg__multiplyf1_phase2): Remove trailing spaces.
+	(__gg__dividef45): Likewise.
+	(compute_fixed_add): Likewise.
+	(compute_float_add): Likewise.
+	(compute_float_pow): Likewise.
+	(__gg__compute_float): Likewise.
+	(__gg__int128_to_int128_rounded): Repaired and moved to gmath.cc.
+	* gmath.h (GMATH_H_): Irrelevant change to declarations.
+	* libgcobol.cc (int128_to_int128_rounded): Moved to gmath.cc.
+	(int128_to_field): Use the new __gg__int128_to_int128_rounded
+	* libgcobol.h (__gg__int128_to_int128_rounded): New declaration.
+
+2026-09-04  Robert Dubner  <rdubner@symas.com>
+
+	* libgcobol.cc (string_operand): New structure.
+	(__gg__string): Dispatches to __gg__string_1 and __gg__string_24
+	(__gg__string_1): Optimized for single-byte-coded strings.
+	(find_string_24): New finder for multi-byte strings.
+	(__gg__string_24): Optimized for multi-strings.
+	(__gg__unstring): Dispatches to __gg__unstring_1 and
+	__gg__unstring_24
+	(struct unstring_finder_1): New finder for single-byte strings.
+	(struct unstring_finder_24): New finder for multi-byte strings.
+	(unstring_fixed): Specialized finder for unstring.
+	(__gg__unstring_1): Optimized for single-byte-coded strings.
+	(__gg__unstring_24): Optimized for multi-byte strings.
+
+2026-09-02  Robert Dubner  <rdubner@symas.com>
+
+	* stringbin.cc (uint_to_8_digits): Fix static variable error.
+	Improve speed.
+	(uint_to_8_digits_direct): New faster routine.
+	(string_from_combined): Eliminated.
+	(string_from_uint64): New faster routine.
+	(binary_to_string): Improved speed.
+	(__gg__binary_to_string_ascii): Fix static variable error.
+	(__gg__binary_to_string_ebcdic): Likewise.
+	(__gg__binary_to_string_encoded): Improved speed.
+	(uint32_to_packed): New faster routine.
+	(uint64_to_packed): Likewise.
+	(packed_from_combined): Eliminated.
+	(moderate_uint128_to_packed): New faster routine.
+	(large_uint128_to_packed): Likewise.
+	(__gg__binary_to_packed): Improved speed.
+	(pd_dive_rt): Eliminated.
+	(four_packed_bytes_to_uint32): New faster routine.
+	(initial_packed_bytes_to_uint32): Likewise.
+	(packed_bytes_to_uint64): Likewise.
+	(packed_bytes_to_uint128): Likewise.
+	(__gg__packed_to_binary): Use faster routines.
+
+2026-08-30  Robert Dubner  <rdubner@symas.com>
+
+	* gmath.cc (conditional_stash): Use new __gg__int128_to_qualified_field().
+	(__gg__dividef45): Use new conditional_stash().
+	(__gg__compute_fixed): Likewise.
+	* inspect.cc (inspect_backward_format_1): New interface.
+	(__gg__inspect_format_1): Likewise.
+	(__gg__inspect_format_1_sbc): Likewise.
+	* libgcobol.cc (__gg__scale_by_power_of_ten_1): Rename variable fo
+	greater clarity.
+	(__gg__compare_field_class): Eliminate VAR_DECLs.
+	(__gg__move): Use new __gg__int128_to_qualified_field().
+	(__gg__move_literala): Likewise.
+	(move_string): New interface.
+	(__gg__string): Likewise.
+	(__gg__unstring): Likewise.
+	(__gg__compare_string_all): Likewise.
+	(__gg__compare_string_1): Likewise.
+	(__gg__compare_string_1a): Likewise.
+	(__gg__compare_string_1e): Likewise.
+	(__gg__compare_string_2): Likewise.
+	(__gg__compare_string_2a): Likewise.
+	(__gg__compare_string_4): Likewise.
+	(__gg__compare_string_4a): Likewise.
+	(__gg_compare_string_different): Likewise.
+	(__gg__compare_numeric_all): Likewise.
+	(__gg__compare_binary_to_string): Likewise.
+	(struct move_stash_slot): Stashed storage for failed move.
+	(struct move_stash_pool): Likewise/
+	(next_stash_capacity): Likewise/
+	(__gg__move_stash_acquire): Likewise/
+	(__gg__move_stash_release): Likewise/
+	* libgcobol.h (__gg__int128_to_qualified_field):
+	Updated declaration.
+
+2026-08-25  James K. Lowden  <jklowden@cobolworx.com>
+
+	* common-defs.h (class cbl_enabled_exceptions_t): Use complain().
+
+2026-08-19  Robert Dubner  <rdubner@symas.com>
+	    James K. Lowden  <jklowden@cobolworx.com>
+
+	* posix/README.md: Updated documentation.
+	* posix/shim/open.cc (posix_open): Remove O_LARGEFILE from POSIX
+	mode flags.
+
+2026-08-12  Robert Dubner  <rdubner@symas.com>
+
+	* charmaps.h (ascii_at): New define for '@',
+	(charmap_load_unaligned): Eliminate.
+	(charmap_store_unaligned): Eliminate.
+	(store_uint16): Eliminate.
+	(store_uint32): Eliminate.
+	(class charmap_t): Make m_ascii_sign_bit, ::getch, ::putch, and
+	::memset behave for big-endian architectures.
+	* gfileio.cc (write_a_char): Behave properly on big-endian
+	architectures.
+	(sequential_file_write): Likewise.
+	(line_sequential_file_read_sbc): Likewise.
+	(line_sequential_file_read): Likewise.
+	* libgcobol.cc (edited_to_binary): Simplified.
+	(int128_to_field): Proper big-endian behavior.
+	(uber_compare): Proper big-endian behavior, simplified ABI.
+	(__gg__dirty_to_binary): Simplified.
+	(compare_strings): Use new uber_compare call.
+	(__gg__compare_2): Likewise.
+
 2026-08-10  Robert Dubner  <rdubner@symas.com>
 
 	* common-defs.h (enum cbl_field_attr_t): Update comments.

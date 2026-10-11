@@ -854,13 +854,17 @@ gcn_can_split_p (machine_mode, rtx op)
    if it is not possible or non-profitable.  */
 
 static reg_class_t
-gcn_spill_class (reg_class_t c, machine_mode /*mode */ )
+gcn_spill_class (reg_class_t c, machine_mode mode)
 {
   if (reg_classes_intersect_p (ALL_CONDITIONAL_REGS, c)
       || c == VCC_CONDITIONAL_REG || c == EXEC_MASK_REG)
     return SGPR_REGS;
+  else if (c == VGPR_REGS && !VECTOR_MODE_P (mode))
+    return SCALAR_SPILL_REGS;
+  else if (c == VGPR_REGS && TARGET_AVGPRS)
+    return AVGPR_REGS;
   else
-    return c == VGPR_REGS && TARGET_AVGPRS ? AVGPR_REGS : NO_REGS;
+    return NO_REGS;
 }
 
 /* Implement TARGET_IRA_CHANGE_PSEUDO_ALLOCNO_CLASS.
@@ -2995,7 +2999,7 @@ gcn_init_cumulative_args (CUMULATIVE_ARGS *cum /* Argument info to init */ ,
     {
       warning_at (UNKNOWN_LOCATION, 0,
 		  "Unified Shared Memory is required, but XNACK is disabled");
-      inform (UNKNOWN_LOCATION, "Try -foffload-options=-mxnack=any");
+      inform (UNKNOWN_LOCATION, "try %<-foffload-options=-mxnack=any%>");
       warned_xnack = 1;
     }
 
@@ -4071,6 +4075,7 @@ gcn_memory_move_cost (machine_mode mode, reg_class_t regclass, bool in)
       return (STORE_COST + (TARGET_CDNA2_MEM_COSTS ? 0 : 2)) * nregs;
     case ALL_REGS:
     case ALL_GPR_REGS:
+    case SCALAR_SPILL_REGS:
     case SRCDST_REGS:
       if (in)
 	return (LOAD_COST + 2) * nregs;

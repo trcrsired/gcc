@@ -1460,7 +1460,7 @@ xstormy16_expand_builtin_va_start (tree valist, rtx nextarg ATTRIBUTE_UNUSED)
 		  NULL_TREE);
 
   t = make_tree (TREE_TYPE (base), virtual_incoming_args_rtx);
-  u = build_int_cst (NULL_TREE, - INCOMING_FRAME_SP_OFFSET);
+  u = build_int_cst (integer_type_node, - INCOMING_FRAME_SP_OFFSET);
   u = fold_convert (TREE_TYPE (count), u);
   t = fold_build_pointer_plus (t, u);
   t = build2 (MODIFY_EXPR, TREE_TYPE (base), base, t);
@@ -1468,7 +1468,7 @@ xstormy16_expand_builtin_va_start (tree valist, rtx nextarg ATTRIBUTE_UNUSED)
   expand_expr (t, const0_rtx, VOIDmode, EXPAND_NORMAL);
 
   t = build2 (MODIFY_EXPR, TREE_TYPE (count), count,
-	      build_int_cst (NULL_TREE,
+	      build_int_cst (integer_type_node,
 			     crtl->args.info * UNITS_PER_WORD));
   TREE_SIDE_EFFECTS (t) = 1;
   expand_expr (t, const0_rtx, VOIDmode, EXPAND_NORMAL);

@@ -104,7 +104,7 @@ static struct symbol_table_t {
 
   struct symbol_elem_t *elems;
 
-  std::map<elem_key_t, size_t> specials;
+  std::map<elem_key_t, size_t> specials, files, programs, functions;
   std::map<elem_key_t, std::list<size_t>> labels;
 
   std::vector<symbol_pair_t> mappings;
@@ -135,6 +135,22 @@ static struct symbol_table_t {
   void labelmap_add( const symbol_elem_t *e ) {
     const char *name = cbl_label_of(e)->name;
     labels[ elem_key_t(e->program, name) ].push_back( symbol_index(e) );
+  }
+  void file_add( size_t isym ) {
+    auto e = elems + isym;
+    auto L = cbl_file_of(e);
+    elem_key_t key(e->program, L->name);
+    files[key] = isym;
+  }
+
+  void program_add( size_t isym ) { label_add(programs, isym); }
+  void function_add( size_t isym ) { label_add(functions, isym); }
+ protected:
+  void label_add( std::map<elem_key_t, size_t>& M, size_t isym ) {
+    auto e = elems + isym;
+    auto L = cbl_label_of(e);
+    elem_key_t key(e->program, L->name);
+    M[key] = isym;
   }
 } symbols;
 
@@ -630,6 +646,13 @@ symbol_label_id( const cbl_label_t *label ) {
 struct cbl_label_t *
 symbol_program( size_t parent, const char name[], bool prototype )
 {
+#if 1
+  auto key( elem_key_t(parent, name) );
+  auto p = symbols.programs.find(key);
+  if( p == symbols.programs.end() ) return nullptr;
+  auto L = cbl_label_of(symbol_at(p->second));
+  return  L->prototype == prototype? L : nullptr;
+#else
   cbl_label_t label = {};
   label.type = LblProgram;
   label.parent = parent;
@@ -644,6 +667,7 @@ symbol_program( size_t parent, const char name[], bool prototype )
                                                  &symbols.nelem, sizeof(key),
                                                  symbol_elem_cmp ) );
   return e? cbl_label_of(e) : NULL;
+#endif
 }
 
 extern int yydebug;
@@ -660,27 +684,14 @@ enum protoreq_t {
 static struct symbol_elem_t *
 symbol_function_impl( size_t parent, const char name[], protoreq_t protoreq )
 {
-  auto p = std::find_if( symbols_begin(), symbols_end(),
-                         [parent, name, protoreq]( const auto& elem ) {
-                           if( elem.type == SymLabel ) {
-                             auto L = cbl_label_of(&elem);
-                             if( L->type == LblFunction ) {
-                               if( protoreq == proto_required_e && !L->prototype ) {
-                                 return false;
-                               }
-                               if( protoreq == proto_disallowed_e && L->prototype ) {
-                                 return false;
-                               }
-                               // allowed or meets above requirement
-                               return 0 == strcasecmp(L->name, name);
-                             }
-                           }
-                           return false;
-                         } );
-
-  if( yydebug && p == symbols_end() ) symbols_dump( symbols.first_program, true);
-
-  return p == symbols_end()? NULL : p;
+  auto key( elem_key_t(parent, name) );
+  auto p = symbols.functions.find(key);
+  if( p == symbols.functions.end() ) return nullptr;
+  auto e = symbol_at(p->second);
+  const cbl_label_t *L = cbl_label_of(e);
+  if( protoreq == proto_required_e   && !L->prototype ) return nullptr;
+  if( protoreq == proto_disallowed_e &&  L->prototype ) return nullptr;
+  return e;
 }
 
 struct symbol_elem_t *
@@ -1333,6 +1344,9 @@ calculate_capacity( struct symbol_elem_t *e) {
     // Stop if field isn't a member of the group.
     if( end_of_group(group, field) ) break;
 
+    // Exclude 78-level entries from groups.
+    if (field->level == 78) continue;
+
     if( field->type == FldGroup ) {
       e = calculate_capacity(e);
       e--; // set e to last symbol processed (not next one, because ++e)
@@ -1513,8 +1527,11 @@ dimensions( const cbl_field_t *f ) {
 
   if( f->type == FldIndex ) return 0;
 
-  while( (f = parent_of(f)) != NULL ) {
-    if( is_table(f) ) n++;
+  cbl_field_t *parent;
+  for( ; (parent = parent_of(f)) != nullptr; f = parent ) {
+    if( parent != symbol_redefines(f) ) {
+      if( is_table(parent) ) n++;
+    }
   }
 
   return n;
@@ -1631,7 +1648,8 @@ field_str( const cbl_field_t *field ) {
     }
   } else {
     init = "NULL";
-    if( field->type == FldSwitch ) {
+    if( field->type == FldSwitch
+     && field->data.etc_type == cbl_field_data_t::upsi_e ) {
       init = xasprintf("0x%02x", field->data.upsi_mask_of()->value);
     }
   }
@@ -1813,7 +1831,6 @@ operator<<( std::ostream& os, const cbl_field_t& field ) {
 #pragma GCC diagnostic pop
 
 static std::map<size_t, std::set<size_t>> same_record_areas;
-size_t parse_error_count();
 
 /*
  * This function produces a zero-filled level number, so 1 becomes "01".  It's
@@ -1893,7 +1910,7 @@ symbols_update( size_t first, bool parsed_ok ) {
     if( !field->is_valid() )
     {
       size_t isym = p - symbols_begin();
-      symbols_dump(symbols.first_program, true);
+      symbols_dump(symbols.first_program + 18, true);
       if( symbol_at(field->parent)->type == SymFile ) {
         assert(field->parent == field_index(field) + 1);
         auto e = std::find_if( symbols_begin(field->parent), symbols_end(),
@@ -2015,8 +2032,10 @@ symbols_update( size_t first, bool parsed_ok ) {
           case FldNumericDisplay:
           case FldNumericEdited:
             if( ! (field->has_attr(register_e) || field->has_attr(hex_encoded_e)) ) {
-              error_msg(symbol_field_location(field_index(field)),
-                        "internal: %qs encoding not defined", field->name);
+              if( ! mode_syntax_only() ) {
+                error_msg(symbol_field_location(field_index(field)),
+                          "internal: %qs encoding not defined", field->name);
+              }
             }
             break;
           case FldClass:
@@ -2065,7 +2084,7 @@ symbols_update( size_t first, bool parsed_ok ) {
       }
       if( parsed_ok ) {
         parser_file_add(&file);
-        update_symbol_map2(file); // Add FD name as a name for the default record. 
+        update_symbol_map2(file); // Add FD name as a name for the default record.
       }
     } else {
       if( p->type == SymField ) {
@@ -2169,6 +2188,25 @@ symbol_parent( const struct symbol_elem_t *e ) {
   return p;
 }
 
+void
+update_prior_invalid_field( const cbl_field_t *field) {
+  symbol_elem_t *e = field? symbol_at(field->our_index) :  symbols_end();
+  e--;
+  if( e->type == SymDataSection ) e--;
+  if( (e)->type == SymField ) {
+    auto f = cbl_field_of(e);
+    if( ! field ) field = f; // fake it
+    if( field->level <= f->level ) {
+      if( f->type == FldInvalid && f->data.has_initial_value() ) {
+        if( f->has_attr(quoted_e) || is_figconst(f) ) {
+          f->type = FldAlphanumeric;
+          assert(0 < f->char_capacity());
+        }
+      }
+    }
+  }
+}
+
 static bool
 had_picture( const cbl_field_t *field ) {
   if( is_elementary(field->type) ) {
@@ -2195,7 +2233,7 @@ had_picture( const cbl_field_t *field ) {
 
 void
 name_queue_t::dump( const char tag[] ) const {
-  if( ! (yydebug ) ) return;
+  if( yydebug ) {
     int i=0;
     for( const auto& namelocs : this->c ) {
       static char line[256];
@@ -2211,6 +2249,7 @@ name_queue_t::dump( const char tag[] ) const {
       dbgmsg("name_queue: %s: is empty", tag);
     }
   }
+}
 
 #if 0
 /*
@@ -2255,7 +2294,10 @@ symbol_field_parent_set( cbl_field_t *field )
       case 66: case 88:
         break;
       default:
-        return NULL; // 77/78 cannot be a parent
+        // 77 cannot be a parent
+        if (prior->level == 77) return NULL;
+        // 78 cannot be a parent, try previous element
+        if (prior->level == 78) continue;
       }
     }
 
@@ -2762,6 +2804,8 @@ symbol_file_add( size_t program, cbl_file_t *file ) {
     same_record_areas[f.same_record_as].insert(symbol_index(e));
   }
 
+  symbols.file_add( symbol_index(e) );
+
   return e;
 }
 
@@ -2787,7 +2831,9 @@ numeric_group_attrs( const cbl_field_t *field ) {
   if( field->parent > 0 && symbol_at(field->parent)->type == SymField ) {
     cbl_field_t *parent = parent_of(field);
     assert(parent);
-    return inherit & parent->attr;
+    if( parent->type == FldGroup ) {
+      return inherit & parent->attr;
+    }
   }
   return 0;
 }
@@ -3064,47 +3110,31 @@ symbol_literalA( size_t program, const char name[] )
 
 struct symbol_elem_t *
 symbol_file( size_t program, const char name[] ) {
-  size_t nelem = symbols.nelem;
-  symbol_elem_t key{ SymFile, program }, *e = &key;
+  auto key( elem_key_t(program, name) );
+  auto p = symbols.files.find(key);
 
-  assert(strlen(name) < sizeof(key.elem.file.name));
-  strcpy(key.elem.file.name, name);
+  if( p == symbols.files.end() ) { // Look for global FD in containing program.
+    while( key.program ) {
+      key.program = symbol_at(key.program)->program;
+      p = symbols.files.find(key);
+      if( p != symbols.files.end() ) {
+        // cppcheck-suppress constVariablePointer
+        auto f = cbl_file_of(symbol_at(p->second));
+        if( f->attr & global_e ) break;
+      }
+    }
+  }
 
-  // cppcheck-suppress-begin [knownConditionTrueFalse]
-  do {
-    e = static_cast<struct symbol_elem_t *>(lfind( &key, symbols.elems,
-                                                   &nelem, sizeof(*e),
-                                                   symbol_elem_cmp ) );
-    if( e ) break;
-    key.program = cbl_label_of(symbol_at(key.program))->parent;
-    if( key.program == 0 ) break; // no file without a program
-  } while( !e );
-  // cppcheck-suppress-end [knownConditionTrueFalse]
-
-  if( e ) {
-    assert(e->type == SymFile);
+  if( key.program ) {
+    gcc_assert(p != symbols.files.end());
+    dbgmsg("%s:%d: found: %s as #%lu", __func__, __LINE__,
+           name, (unsigned long)p->second);
+    auto e = symbol_at(p->second);
     return e;
   }
 
-  // perhaps a record name?
-  for( e = symbol_field(program, 0, name); e != NULL; e = symbol_parent(e) ) {
-    if( e->type == SymFile ) {
-      return e;
-    }
-    if( e->type != SymField ) {
-      dbgmsg("%s:%d: '%s' is not a file and has parent of type %s",
-            __func__, __LINE__, name, symbol_type_str(e->type));
-      return NULL;
-    }
-    if( symbol_index(e) == 0 ) {
-      dbgmsg("%s:%d: '%s' is not a file and has no parent",
-            __func__, __LINE__, name);
-      return NULL;
-    }
-  }
-
-  assert(!e);
-  return e;
+  dbgmsg("%s:%d: not found: %s", __func__, __LINE__, name);
+  return nullptr;
 }
 
 struct symbol_elem_t *
@@ -3646,7 +3676,56 @@ cbl_alphabet_t::also( const cbl_loc_t& loc, size_t ch ) {
   error_msg(loc, "ALSO value %zu is unknown", ch);
 }
 
-static symbol_temporaries_t program_temporaries;
+static class program_temporaries_t : private symbol_temporaries_t {
+  std::vector<symbol_temporaries_t::iterator> alphas;
+  static bool is_alpha_intermediate( const cbl_field_t *f ) {
+    switch(f->type) {
+    case FldAlphaEdited:
+    case FldAlphanumeric:
+      return f->has_attr(intermediate_e);
+    default:
+      break;
+    }
+    return false;
+  }
+ public:
+  program_temporaries_t() {}
+  symbol_temporaries_t::iterator dnubegin() { return symbol_temporaries_t::begin(); }
+  symbol_temporaries_t::iterator dnuend() { return symbol_temporaries_t::end(); }
+
+  void push_back( cbl_field_t *field ) {
+    symbol_temporaries_t::push_back(field);
+    if( is_alpha_intermediate(field) ) {
+      auto p(end());
+      p--;
+      alphas.push_back(p);
+    }
+  }
+
+  // return the alphanumeric temporaries and remove them from the list
+  symbol_temporaries_t alphanumerics() {
+    symbol_temporaries_t output;
+
+    std::transform( alphas.begin(), alphas.end(),
+                    std::back_inserter(output),
+                    []( auto p ) {
+                      return *p;
+                    } );
+    erase_alphas();
+    return output;
+  }
+  symbol_temporaries_t& as_list() {
+    return *this;
+  }
+
+ protected:
+  void erase_alphas() {
+    for( auto p : alphas ) {
+      this->erase(p);
+    }
+    alphas.clear();
+  }
+} program_temporaries;
 
 /*
  * Supply a reference to the current list of temporaries for use by codegen to free
@@ -3654,38 +3733,12 @@ static symbol_temporaries_t program_temporaries;
  */
 symbol_temporaries_t&
 symbol_temporaries() {
-  return program_temporaries;
+  return program_temporaries.as_list();
 }
 
 symbol_temporaries_t
 symbol_temporary_alphanumerics() {
-  symbol_temporaries_t output;
-  std::copy_if( program_temporaries.begin(),
-                program_temporaries.end(),
-                std::back_inserter(output),
-                []( auto f ) {
-                  switch(f->type) {
-                  case FldAlphaEdited:
-                  case FldAlphanumeric:
-                    return f->has_attr(intermediate_e);
-                  case FldFloat:
-                  case FldNumericBin5:
-                  case FldNumericBinary:
-                  case FldNumericDisplay:
-                  case FldNumericEdited:
-                  case FldPacked:
-                  default:
-                    break;
-                  }
-                  return false;
-                } );
-  for( cbl_field_t *f : output ) {
-    auto p = std::find( program_temporaries.begin(),
-                        program_temporaries.end(),
-                        f );
-    program_temporaries.erase(p);
-  }
-  return output;
+  return program_temporaries.alphanumerics();
 }
 
 /*
@@ -4109,14 +4162,14 @@ new_temporary_clone( const cbl_field_t *orig) {
     temporaries.add(field);
   }
   field->data = orig->data;
+  field->attr = intermediate_e;
   if( field->type == FldNumericBin5 ) {
     field->type = orig->type;
     field->codeset = orig->codeset;
+    field->attr |= orig->attr & signable_e;
     field->attr &= ~big_endian_e;
     field->attr |= endian_bit();
-
   }
-  field->attr = intermediate_e;
 
   return parser_symbol_add2(field);
 }
@@ -4340,18 +4393,35 @@ cbl_field_t::encode( size_t srclen, cbl_loc_t loc ) {
         gcc_assert(0 < inbytesleft);
         if( loc.first_line == 0 )
           loc = symbol_field_location(field_index(this));
-        if( type == FldNumericEdited ) {
+        switch( type ) {
+        case FldNumericEdited:
           // Tolerate trailing zeros for P-values
           if( data.rdigits < 0 ) {
             if( inbytesleft <= size_t(data.rdigits * -1) ) {
-             bool all_zeros = std::all_of(reinterpret_cast<const char*>(inbuf),
-                                          data.original() + srclen,
-                                          [](char ch) {
-                                            return '0' == ch;
-                                          });
+              bool all_zeros = std::all_of(reinterpret_cast<const char*>(inbuf),
+                                           data.original() + srclen,
+                                           [](char ch) {
+                                             return '0' == ch;
+                                           });
               if( all_zeros ) return nullptr;
             }
           }
+          break;
+        default:
+          if( ! is_numeric(this) ) {
+            bool all_blank = std::all_of(reinterpret_cast<const char*>(inbuf),
+                                         data.original() + srclen,
+                                         [](char ch) {
+                                           return 0x20 == ch;
+                                         });
+            if( all_blank ) {
+              cbl_message(loc, MfValueClause,
+                          "VALUE %qs is too long to initialize %qs, discarded %qs",
+                          data.original(), name, inbuf);
+              return nullptr;
+            }
+          }
+          break;
         }
         error_msg( loc,
                    "VALUE %qs is too long to initialize %qs, discarded %qs",
@@ -4647,6 +4717,17 @@ symbol_program_add( size_t program, cbl_label_t *input )
 
   e = symbol_append(elem);
 
+  switch( input->type ) {
+  case LblProgram:
+    symbols.program_add( symbol_index(e) );
+    break;
+  case LblFunction:
+    symbols.function_add( symbol_index(e) );
+    break;
+  default:
+    gcc_unreachable();
+  }
+
   common_callables_update( symbol_index(e) );
 
   return cbl_label_of(e);
@@ -4755,88 +4836,345 @@ floating_char_in_string(const char *expanded_picture) {
 
 char *
 expand_picture(const char *picture)
+  {
+  // The caller should free() the return value.
+  assert(strlen(picture) < PICTURE_MAX); // guaranteed by picset() in scanner
+  size_t retval_length = PICTURE_MAX;
+
+  // In the expand_expanded routine, we are going to tack on some additional
+  // characters in order to speed up compile-time processin.
+  static const int PICTURE_EXTRA = 6;
+  retval_length += PICTURE_EXTRA;
+
+  char *retval = static_cast<char *>(xmalloc(retval_length));
+
+  int ch;
+  int prior_ch = NULLCH;
+  char *d = retval;
+  const char *p = picture;
+  long repeat;
+  int currency_symbol = NULLCH;
+
+  while( (ch = ((*p++) & 0xFF) ) )
     {
-    assert(strlen(picture) < PICTURE_MAX); // guaranteed by picset() in scanner
-    size_t retval_length = PICTURE_MAX;
-    char *retval = static_cast<char *>(xmalloc(retval_length));
-    size_t index = 0;
+    if( ch == ascii_oparen )
+      {
+      // Pick up the number after the left parenthesis
+      char *endchar;
+      repeat = strtol(p, &endchar, 10);
 
-    int ch;
-    int prior_ch = '\0';
-    const char *p = picture;
+      // We subtract one because we know that the character just before
+      // the parenthesis was already placed in retval
+      repeat -= 1;
 
-    long repeat;
-
-    int currency_symbol = currency_char_in_string(picture);
-
-    while( (ch = (*p++ & 0xFF) ) )
+      // Update p to the character after the right parenthesis
+      p = endchar + 1;
+      while(repeat--)
         {
-        if( ch == '(' )
-            {
-            // Pick up the number after the left parenthesis
-            char *endchar;
-            repeat = strtol(p, &endchar, 10);
-
-            // We subtract one because we know that the character just before
-            // the parenthesis was already placed in dest
-            repeat -= 1;
-
-            // Update p to the character after the right parenthesis
-            p = endchar + 1;
-
-            if( index + repeat >= retval_length )
-                {
-                retval_length <<= 1;
-                retval = static_cast<char *>(xrealloc(retval, retval_length));
-                }
-
-            while(repeat--)
-                {
-                retval[index++] = prior_ch;
-                }
-            }
-        else
-            {
-            if( index >= retval_length )
-                {
-                retval_length <<= 1;
-                retval = static_cast<char *>(xrealloc(retval, retval_length));
-                }
-            retval[index++] = ch;
-            }
-        prior_ch = ch;
+        *d++ = prior_ch;
         }
-    if( index >= retval_length )
-        {
-        retval_length <<= 1;
-        retval = static_cast<char *>(xrealloc(retval, retval_length));
-        }
-    retval[index++] = '\0';
+      }
+    else
+      {
+      prior_ch = ch;
+      *d++ = ch;
+      }
 
-    size_t dest_length = strlen(retval);
-
-    // We have to take into account the possibility that the currency symbol
-    // mapping might be to a string of more than one character:
-
-    if( currency_symbol )
-        {
-        size_t sign_length = strlen(symbol_currency(currency_symbol)) - 1;
-        if( sign_length )
-            {
-            char *pcurrency = strchr(retval, currency_symbol);
-            assert(pcurrency);
-            memmove(    pcurrency + sign_length,
-                        pcurrency,
-                        dest_length+1 - (pcurrency-retval));
-            for(size_t i=0; i<sign_length; i++)
-                {
-                pcurrency[i] = 'B';
-                }
-            }
-        }
-
-    return retval;
+    if( ! __gg__currency_signs[ch].empty() )
+      {
+      // We are going to be mapping ch to a string in the final result:
+      prior_ch = ch;
+      currency_symbol = ch;
+      }
     }
+
+  size_t dest_length = d-retval;
+
+  // We have to take into account the possibility that the currency symbol
+  // mapping might be to a string of more than one character:
+
+  if( currency_symbol )
+    {
+    size_t sign_length = __gg__currency_signs[currency_symbol].size();
+    assert(0 < sign_length);
+    if( --sign_length )
+      {
+      char *pcurrency = strchr(retval, currency_symbol);
+      assert(pcurrency);
+      memmove(    pcurrency + sign_length,
+                  pcurrency,
+                  dest_length - (pcurrency-retval));
+      for(size_t i=0; i<sign_length; i++)
+        {
+        pcurrency[i] = ascii_B;
+        }
+      dest_length += sign_length;
+      }
+    }
+  retval[dest_length] = NULLCH;
+
+  // The 'V'
+
+
+  // To ease the workload on interpreting the PICTURE string at run time, we
+  // are going to convert everything we can to upper case.  We also convert
+  // V to decimal point, for the same reason.  Characters that might be
+  // currency symbols have to be left in their uppercase or lowercase original
+  // state.
+  for(size_t i=0; i<dest_length; i++)
+    {
+    switch(retval[i])
+      {
+      case ascii_a:
+      case ascii_e:
+      case ascii_n:
+      case ascii_p:
+      case ascii_s:
+      case ascii_x:
+      case ascii_z:
+      case ascii_v:
+        retval[i] = TOUPPER(retval[i]);
+        break;
+
+      // We need special processing for DB.  When they appear as the final two
+      // characters, they are the accounting sign "DB" indicator and we have to
+      // leave the case as the programmer established it.  Otherwise we have to
+      // make the 'B' uppercase.
+
+      case ascii_B:
+      case ascii_b:
+        if( i < dest_length-1 )
+          {
+          retval[i] = ascii_B;
+          }
+        else
+          {
+          if( i>=1 && retval[i-1] != ascii_D && retval[i-1] != ascii_d )
+            {
+            retval[i] = ascii_B;
+            }
+          }
+        break;
+      }
+    }
+
+  // The V character is virtual in numeric_editing, so get rid of it
+  char *pV = strchr(retval, ascii_V);
+  if( pV )
+    {
+    memmove(pV, pV+1, strlen(pV));
+    }
+  return retval;
+  }
+
+void
+expand_expanded(char *expanded)
+  {
+  if(strlen(expanded) == 0)
+    {
+    return;
+    }
+
+  unsigned char *dest = reinterpret_cast<unsigned char *>(expanded);
+
+  /* In order to make __gg__string_to_numeric_edited() run quickly, we are
+     going to process the expanded picture string especially for it.  What we
+     do here:
+
+     Convert B to space, taking care not to touch a final 'DB'
+
+     Find the currency picture symbol
+
+     Find the span of any '$$', '++', '--' 'Z', and '*' runs.
+
+     For any '$$', '++' and '--' runs, replace the first such char with a
+     space, and all the others with '9'
+
+     For any 'Z' and '*' runs, replace all the characters with '9'.
+
+     Figure out if any of the original picture characters are '9'.
+
+     That information gets encoded into six characters that are appended to
+     the modified string.
+
+     Offset 0:   The currency character
+     Offset 1:   The floating character (space if empty)
+     Offset 2-3: The starting index of the float.
+     Offset 3-4: The one-past-the-end index of the float.
+
+     When there are '9' characters in the original, the 0x40 bit of offset 2
+     is turned on, turning '0'-'9' into 'q'-'y'
+
+     Is everybody ready?  Then we'll begin.    */
+
+  int length_d = strlen(expanded);
+
+  unsigned char currency_char = ascii_space;
+  // Note that the currency_picture can be upper- or lower-case, and mean
+  // separate things in IBM.  In ISO COBOL, the comparison is case-insensitive.
+
+  unsigned floating_char = ascii_space;
+  int leftmost_float = -1;
+  int rightmost_float = -1;  // This is a one-past-the-end index
+
+  bool got_nines = false;
+
+  for(int i=0; i<length_d; i++)
+    {
+    int ch = (unsigned int)dest[i] & 0xFF;
+    if( !__gg__currency_signs[ch].empty() )
+      {
+      currency_char = ch;
+      break;
+      }
+    }
+
+  for(int i=0; i<length_d; i++)
+    {
+    if( dest[i] == ascii_9 )
+      {
+      got_nines = true;
+      break;
+      }
+    }
+
+  if( dest[0] == ascii_B )
+    {
+    dest[0] = ascii_space;
+    }
+  for(int i=1; i<length_d; i++)
+    {
+    if( dest[i] == ascii_B && dest[i-1] != ascii_D && dest[i-1] != ascii_d )
+      {
+      dest[i] = ascii_space;
+      }
+    }
+
+  if( currency_char != ascii_space )
+    {
+    leftmost_float =
+      static_cast<unsigned char *>(memchr(dest, currency_char, length_d)) - dest;
+    rightmost_float =
+      static_cast<unsigned char *>(memrchr(dest, currency_char, length_d)) - dest + 1;
+    if( rightmost_float > leftmost_float+1 )
+      {
+      floating_char = currency_char;
+      // Turn the first floating character into a space
+      dest[leftmost_float] = ascii_space;
+      for(int i=leftmost_float+1; i<rightmost_float; i++)
+        {
+        // Of the remainder, turn all floating characters into '9', so that
+        // they will be filled with numerical data from 'source'.
+        if( dest[i] == floating_char )
+          {
+          dest[i] = ascii_9;
+          }
+        }
+      }
+    else
+      {
+      leftmost_float = rightmost_float = -1;
+      }
+    }
+
+  if( memchr(dest, ascii_minus, length_d) )
+    {
+    int leftmost =
+      static_cast<unsigned char *>(memchr(dest, ascii_minus, length_d)) - dest;
+    int rightmost =
+      static_cast<unsigned char *>(memrchr(dest, ascii_minus, length_d)) - dest + 1;
+    if( rightmost > leftmost+1 )
+      {
+      floating_char = ascii_minus;
+      leftmost_float = leftmost;
+      rightmost_float = rightmost;
+      for(int i=leftmost_float+1; i<rightmost_float; i++)
+        {
+        // Of the remainder, turn all floating characters into '9', so that
+        // they will be filled with numerical data from 'source'.
+        if( dest[i] == floating_char )
+          {
+          dest[i] = ascii_9;
+          }
+        }
+      }
+    }
+
+  if( memchr(dest, ascii_plus, length_d) )
+    {
+    int leftmost =
+      static_cast<unsigned char *>(memchr(dest, ascii_plus, length_d)) - dest;
+    int rightmost =
+      static_cast<unsigned char *>(memrchr(dest, ascii_plus, length_d)) - dest + 1;
+    if( rightmost > leftmost+1 )
+      {
+      floating_char = ascii_plus;
+      leftmost_float = leftmost;
+      rightmost_float = rightmost;
+      for(int i=leftmost_float+1; i<rightmost_float; i++)
+        {
+        // Of the remainder, turn all floating characters into '9', so that
+        // they will be filled with numerical data from 'source'.
+        if( dest[i] == floating_char )
+          {
+          dest[i] = ascii_9;
+          }
+        }
+      }
+    }
+
+  if( memchr(dest, ascii_asterisk, length_d) )
+    {
+    floating_char = ascii_asterisk;
+    leftmost_float =
+      static_cast<unsigned char *>(memchr(dest, ascii_asterisk, length_d)) - dest;
+    rightmost_float =
+      static_cast<unsigned char *>(memrchr(dest, ascii_asterisk, length_d)) - dest + 1;
+    for(int i=leftmost_float; i<rightmost_float; i++)
+      {
+      // Turn all floating characters into '9', so that
+      // they will be filled with numerical data from 'source'.
+      if( dest[i] == floating_char )
+        {
+        dest[i] = ascii_9;
+        }
+      }
+    }
+
+  if( memchr(dest, ascii_Z, length_d) )
+    {
+    floating_char = ascii_Z;
+    leftmost_float =
+      static_cast<unsigned char *>(memchr(dest, ascii_Z, length_d)) - dest;
+    rightmost_float =
+      static_cast<unsigned char *>(memrchr(dest, ascii_Z, length_d)) - dest + 1;
+    for(int i=leftmost_float; i<rightmost_float; i++)
+      {
+      // Turn all floating characters into '9', so that
+      // they will be filled with numerical data from 'source'.
+      if( dest[i] == floating_char )
+        {
+        dest[i] = ascii_9;
+        }
+      }
+    }
+
+  char extra[7] = "      ";
+  extra[0] = currency_char;
+  if( floating_char != ascii_space )
+    {
+    extra[1] = floating_char;
+    extra[2] = leftmost_float  / 10 + ascii_0;
+    extra[3] = leftmost_float  % 10 + ascii_0;
+    extra[4] = rightmost_float / 10 + ascii_0;
+    extra[5] = rightmost_float % 10 + ascii_0;
+    if( got_nines )
+      {
+      extra[2] |= 0x40;
+      }
+    }
+  strcat(expanded, extra);
+  }
 
 int
 length_of_picture(const char *picture)
@@ -5096,15 +5434,27 @@ symbol_program_local( const char tgt_name[] ) {
  */
 std::map<char, const char *> currencies;
 
+static bool
+symbol_currency_symbol_ok( const char symbol ) {
+  static std::string never("ABCDEGNPRSUVXZ0-9abcdegnprsuvxz,.*/;()'\"=+-");
+  return std::string::npos == never.find(symbol);
+}
+
 // cppcheck-suppress-begin [nullPointerRedundantCheck]
 bool
 symbol_currency_add( const char symbol[], const char sign[] ) {
+  static const std::string never("ABCDEGNPRSUVXZ0-9abcdegnprsuvxz,.*/;()'\"=+-");
   // In service of CURRENCY sign PICTURE SYMBOL symbol
   // The single-character 'symbol' is replaced with multi-char 'sign'
   // by the NumericEdited processing.
   if( !symbol ) {
     symbol = xasprintf("%c", *sign);
+  } else {
+    if( ! symbol_currency_symbol_ok(symbol[0]) ) {
+      return false;
+    }
   }
+
   currencies[*symbol] = sign;
   return true;
 }
@@ -5496,7 +5846,7 @@ cbl_file_t::filename_of() const {
   if( filename != 0 ) { return cbl_field_of(symbol_at(filename))->name; }
   if( device != 0 ) {
     auto dev = cbl_special_name_of(symbol_at(device));
-    if( dev->os_filename[0] != '\0' ) return dev->os_filename; 
+    if( dev->os_filename[0] != '\0' ) return dev->os_filename;
   }
   return nullptr;
 }

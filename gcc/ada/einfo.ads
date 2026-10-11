@@ -650,9 +650,9 @@ package Einfo is
 --       the corresponding implicitly declared class-wide type. For a
 --       class-wide type, returns itself. Set to Empty for untagged types.
 
---    Class_Wide_Equivalent_Type
---       Defined in all type entities. Used to store an internally generated
---       class-wide equivalent type for an associated mutably tagged type.
+--    Class_Wide_Equivalent_Type [base type only]
+--       Defined in class-wide types. Used to store an internally generated
+--       class-wide equivalent type for a mutably tagged type.
 
 --    Cloned_Subtype
 --       Defined in E_Record_Subtype and E_Class_Wide_Subtype entities.
@@ -1279,6 +1279,18 @@ package Einfo is
 --       subtype Natural is created (see description of field Extra_Formal),
 --       and the Extra_Accessibility_Of_Result field of the function points to
 --       the entity for this extra formal.
+
+--    Extra_Accessibility_Of_Subprogram
+--       Defined in (non-generic) subprograms. Normally Empty, but if expansion
+--       is active, and the subprogram has either at least one formal parameter
+--       with Extra_Accessibility_Of_Object, or Extra_Accessibility_Of_Result,
+--       or its parent subprogram has Extra_Accessibility_Of_Subprogram, then
+--       a local constant of type Natural is created in the subprogram, whose
+--       initialization expression is the maximum of all the values mentioned
+--       above, and the Extra_Accessibility_Of_Subprogram points to the entity.
+--       It is used to offset the static nesting depth of the local entities,
+--       both objects, subprograms, and types declared in the subprogram, for
+--       the computation of the dynamic accessibility level of these entities.
 
 --    Extra_Constrained
 --       Defined in formal parameters in the non-generic case. Normally Empty,
@@ -2591,17 +2603,16 @@ package Einfo is
 --       that the constructed subtype itself will be constrained.
 
 --    Is_Controlled_Active [base type only]
---       Defined in all type entities. Indicates that the type is controlled,
---       i.e. has been declared with the Finalizable or the Destructor aspect
---       or has inherited the aspect from an ancestor. Can only be set for
---       record types, tagged or untagged.
---       System.Finalization_Root.Root_Controlled is an example of the former
---       case while Ada.Finalization.Controlled and
+--       Defined in all types. Set only for record types, tagged or untagged.
+--       Indicates that the type is controlled, i.e. has been declared with
+--       the Finalizable or the Destructor aspect, or has inherited one of the
+--       aspects from an ancestor. System.Finalization_Root.Root_Controlled is
+--       an example of the former case, while Ada.Finalization.Controlled and
 --       Ada.Finalization.Limited_Controlled are examples of the latter.
 
 --    Is_Controlled (synth) [base type only]
---       Defined in all type entities. Set if Is_Controlled_Active is set for
---       the type, and Disable_Controlled is not set.
+--       Defined in all type entities. Set if both Is_Controlled_Active is set
+--       and Disable_Controlled is not set for the type.
 
 --    Is_Controlling_Formal
 --       Defined in all Formal_Kind entities. Marks the controlling parameters
@@ -3105,8 +3116,8 @@ package Einfo is
 --    Is_Modular_Integer_Type (synthesized)
 --       Applies to all entities. True if entity is a modular integer type
 
---    Is_Mutably_Tagged_Type
---       Defined in all type entities. Used to signify that a given type is a
+--    Is_Mutably_Tagged_Type [base type only]
+--       Defined in all types and subtypes. Set to indicate that the type is a
 --       "mutably tagged" class-wide type where 'Size'Class has been specified.
 
 --    Is_Non_Static_Subtype
@@ -3724,14 +3735,6 @@ package Einfo is
 --       parameter. See full description in the spec of Sem_Mech. This field
 --       is also set (to the default value of zero = Default_Mechanism) in a
 --       subprogram body entity but not used in this context.
-
---    Minimum_Accessibility
---       Defined in formal parameters in the non-generic case. Normally Empty,
---       but if expansion is active, and a parameter exists for which a
---       dynamic accessibility check is required, then an object is generated
---       within such a subprogram representing the accessibility level of the
---       subprogram or the formal's Extra_Accessibility - whichever one is
---       lesser. The Minimum_Accessibility field then points to this object.
 
 --    Modulus [implementation base type only]
 --       Defined in modular types. Contains the modulus. For the binary case,
@@ -5169,6 +5172,7 @@ package Einfo is
    --    Is_Frozen
    --    Is_Generic_Actual_Type
    --    Is_Independent
+   --    Is_Mutably_Tagged_Type               (base type only)
    --    Is_Non_Static_Subtype
    --    Is_Packed                            (base type only)
    --    Is_Private_Composite
@@ -5350,6 +5354,7 @@ package Einfo is
    --    Direct_Primitive_Operations
    --    Cloned_Subtype                        (subtype case only)
    --    First_Entity
+   --    Class_Wide_Equivalent_Type            (base type only)
    --    Equivalent_Type                       (always Empty for type)
    --    Non_Limited_View
    --    Last_Entity
@@ -5611,7 +5616,6 @@ package Einfo is
    --    Alias                                (non-generic case only)
    --    Renamed_Entity
    --    Renamed_Object $$$
-   --    Extra_Accessibility_Of_Result        (non-generic case only)
    --    Last_Entity
    --    Interface_Name
    --    Scope_Depth_Value
@@ -5625,6 +5629,8 @@ package Einfo is
    --    Overridden_Inherited_Operation
    --    Overridden_Operation
    --    Wrapped_Entity                       (non-generic case only)
+   --    Extra_Accessibility_Of_Result        (non-generic case only)
+   --    Extra_Accessibility_Of_Subprogram    (non-generic case only)
    --    Extra_Formals
    --    Extra_Formals_Known                  (non-generic case only)
    --    Anonymous_Collections                (non-generic case only)
@@ -5760,7 +5766,6 @@ package Einfo is
    --    Default_Value
    --    Protected_Formal
    --    Extra_Constrained
-   --    Minimum_Accessibility
    --    Last_Assignment                      (OUT, IN-OUT only)
    --    Activation_Record_Component
    --    Has_Initial_Value
@@ -5829,13 +5834,14 @@ package Einfo is
    --  E_Operator
    --    First_Entity
    --    Alias
-   --    Extra_Accessibility_Of_Result
    --    Last_Entity
    --    Subps_Index
    --    Overridden_Inherited_Operation
    --    Overridden_Operation
    --    Linker_Section_Pragma
    --    Contract
+   --    Extra_Accessibility_Of_Result
+   --    Extra_Accessibility_Of_Subprogram
    --    Extra_Formals
    --    Extra_Formals_Known
    --    Import_Pragma
@@ -5992,6 +5998,7 @@ package Einfo is
    --    Overridden_Inherited_Operation
    --    Overridden_Operation                 (never for init proc)
    --    Wrapped_Entity                       (non-generic case only)
+   --    Extra_Accessibility_Of_Subprogram    (non-generic case only)
    --    Extra_Formals
    --    Extra_Formals_Known                  (non-generic case only)
    --    Anonymous_Collections                (non-generic case only)

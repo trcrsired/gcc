@@ -205,7 +205,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-nested.h"
 #include "dbgcnt.h"
 #include "lto-section-names.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "ipa-inline.h"
 #include "omp-offload.h"
@@ -2683,7 +2682,12 @@ cgraph_node::create_wrapper (cgraph_node *target)
       arguments = TREE_CHAIN (arguments);
     }
 
+  /* Forced GIMPLE thunks are normally ignored because they are created
+     after early debug.  ICF wrappers retain the original function decl and
+     its early DIE, so preserve its original debug state.  */
+  bool ignored_p = DECL_IGNORED_P (decl);
   expand_thunk (this, false, true);
+  DECL_IGNORED_P (decl) = ignored_p;
   thunk_info::remove (this);
 
   /* Inline summary set-up.  */

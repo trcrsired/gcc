@@ -133,16 +133,10 @@ static int high_function_linenum;
 /* Filename of last NOTE.  */
 static const char *last_filename;
 
-/* Override filename, line and column number.  */
-static const char *override_filename;
-static int override_linenum;
-static int override_columnnum;
-static int override_discriminator;
-
 /* Whether to force emission of a line note before the next insn.  */
 static bool force_source_line = false;
 
-extern const int length_unit_log; /* This is defined in insn-attrtab.cc.  */
+extern const int length_unit_log; /* Defined in generated attribute code.  */
 
 /* Nonzero while outputting an `asm' with operands.
    This means that inconsistencies are the user's fault, so don't die.
@@ -3000,13 +2994,6 @@ notice_source_line (rtx_insn *insn, bool *is_stmt)
       columnnum = xloc.column;
       discriminator = compute_discriminator (loc);
       force_source_line = true;
-    }
-  else if (override_filename)
-    {
-      filename = override_filename;
-      linenum = override_linenum;
-      columnnum = override_columnnum;
-      discriminator = override_discriminator;
     }
   else if (INSN_HAS_LOCATION (insn))
     {

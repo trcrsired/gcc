@@ -2789,7 +2789,7 @@ package body Exp_Ch3 is
              Selector_Name             =>
                Make_Identifier (Loc, Name_uInit_Level),
              Explicit_Actual_Parameter =>
-               Accessibility_Level (Id_Ref, Dynamic_Level)));
+               Dynamic_Accessibility_Level (Id_Ref)));
       end if;
 
       Append_To (Res,
@@ -3352,7 +3352,10 @@ package body Exp_Ch3 is
          --  Create an extra accessibility parameter to capture the level of
          --  the object being initialized when its type is a limited record.
 
-         if Is_Limited_Record (Rec_Type) then
+         if Is_Limited_Record (Rec_Type)
+           and then not Is_RTE (Rec_Type, RE_Activation_Chain)
+           and then not Is_RTE (Rec_Type, RE_Finalization_Master)
+         then
             Append_To (Parameters,
               Make_Parameter_Specification (Loc,
                 Defining_Identifier => Make_Defining_Identifier
@@ -6456,6 +6459,17 @@ package body Exp_Ch3 is
             Set_CPP_Constructors (Typ);
 
          else
+            --  If the type is derived from an untagged private type whose
+            --  full view is tagged, the type is marked tagged for layout
+            --  reasons, but it has no dispatch table.
+
+            if Is_Derived_Type (Typ)
+              and then not Is_Tagged_Type (Etype (Typ))
+            then
+               pragma Assert (Is_Private_Type (Etype (Typ)));
+               return;
+            end if;
+
             if not Building_Static_DT (Typ) then
 
                --  Usually inherited primitives are not delayed but the first
@@ -6547,17 +6561,6 @@ package body Exp_Ch3 is
             end if;
 
             Set_Is_Frozen (Typ);
-
-            --  If the type is derived from an untagged private type whose
-            --  full view is tagged, the type is marked tagged for layout
-            --  reasons, but it has no dispatch table.
-
-            if Is_Derived_Type (Typ)
-              and then not Is_Tagged_Type (Etype (Typ))
-            then
-               pragma Assert (Is_Private_Type (Etype (Typ)));
-               return;
-            end if;
 
             Set_All_DT_Position (Typ);
 
@@ -6991,8 +6994,7 @@ package body Exp_Ch3 is
             if Ekind (Etype (Comp)) /= E_Void
               and then Is_Mutably_Tagged_Type (Etype (Comp))
             then
-               Set_Etype
-                 (Comp, Class_Wide_Equivalent_Type (Etype (Comp)));
+               Set_Etype (Comp, Class_Wide_Equivalent_Type (Etype (Comp)));
             end if;
             Next_Entity (Comp);
          end loop;
@@ -8669,6 +8671,28 @@ package body Exp_Ch3 is
                               and then OK_To_Rename_Ref (Prefix (Expr_Q))
                               and then not Special_Ret_Obj));
 
+            --  If the object is of a mutably tagged type and is initialized
+            --  by something other than a function call, do the initialization
+            --  as an assignment so that only the bits present in the initial
+            --  value are copied.
+
+            if Is_Mutably_Tagged_CW_Equivalent_Type (Typ)
+              and then Nkind (Expr_Q) /= N_Function_Call
+              and then not Rewrite_As_Renaming
+            then
+               declare
+                  Stat : constant Node_Id :=
+                           Make_Assignment_Statement (Loc,
+                             Name       => New_Occurrence_Of (Def_Id, Loc),
+                             Expression => Relocate_Node (Expr));
+               begin
+                  Set_Assignment_OK (Name (Stat));
+                  Set_No_Finalize_Actions (Stat);
+                  Insert_Action_After (Init_After, Stat);
+                  Set_Expression (N, Empty);
+                  Set_No_Initialization (N);
+               end;
+
             --  If the type needs finalization and is not inherently limited,
             --  then the target is adjusted after the copy and attached to the
             --  finalization list. However, no adjustment is needed in the case
@@ -8680,7 +8704,7 @@ package body Exp_Ch3 is
             --  Similarly, no adjustment is needed if we are going to rewrite
             --  the object declaration into a renaming declaration.
 
-            if Needs_Finalization (Typ)
+            elsif Needs_Finalization (Typ)
               and then not Is_Inherently_Limited_Type (Typ)
               and then Nkind (Expr_Q) /= N_Function_Call
               and then not Is_Two_Pass_Aggregate (Expr_Q)
@@ -8753,7 +8777,7 @@ package body Exp_Ch3 is
             --  General case
 
             else
-               Level_Expr := Accessibility_Level (Expr, Dynamic_Level);
+               Level_Expr := Dynamic_Accessibility_Level (Expr);
             end if;
 
             Level_Decl :=
@@ -10062,8 +10086,9 @@ package body Exp_Ch3 is
                   if Is_Part_Of_Formal
                     or else Is_Part_Of_Dereference
                     or else
-                      Type_Access_Level (Def_Id)
-                        > Static_Accessibility_Level (Pool, Object_Decl_Level)
+                      Static_Type_Access_Level (Def_Id)
+                        > Static_Accessibility_Level
+                            (Pool, Object_Decl_Level => True)
                   then
                      --  Generate:
                      --    if RSP'Class?(Def_Id) in RSPWS'Class then
@@ -12326,7 +12351,7 @@ package body Exp_Ch3 is
       --  Set to True if Tag_Typ has a primitive that renames the predefined
       --  equality operator. Used to implement (RM 8-5-4(8)).
 
-   --  Start of processing for Make_Predefined_Primitive_Specs
+   --  Start of processing for Make_Predefined_Primitive_Eq_Spec
 
    begin
       Renamed_Eq := Empty;

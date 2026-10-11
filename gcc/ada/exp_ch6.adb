@@ -95,7 +95,7 @@ package body Exp_Ch6 is
    --  front end, or in the back end, or partly in both ends, depending on the
    --  result type.
 
-   --    Result type    |  Return mechanism    |    Front end    |   Back end
+   --    Result type    |  Return mechanism        |  Front end  |   Back end
    --    --------------------------------------------------------------------
 
    --     Limited           Build In Place              All
@@ -106,13 +106,12 @@ package body Exp_Ch6 is
    --     Needs Fin.        Secondary Stack             All
    --     (BERS False)
 
-   --     Needs Fin.        Invisible Parameter         All            All
-   --     (BERS True)                                 (return)        (call)
+   --     Needs Fin.        Invisible Parameter         All
+   --     (BERS True)
 
    --     By Reference      Invisible Parameter                        All
 
-   --     Others            Primary stack/                             All
-   --                       Registers
+   --     Others            Primary stack/Registers                    All
 
    --    Needs Fin.: type needs finalization [RM 7.6(9.1/2-9.6/2)]
    --    BERS: Opt.Back_End_Return_Slot setting
@@ -1830,8 +1829,8 @@ package body Exp_Ch6 is
                     Make_Assignment_Statement (Loc,
                       Name       => New_Occurrence_Of (
                         Extra_Accessibility (Entity (Lhs)), Loc),
-                      Expression => Make_Integer_Literal (Loc,
-                        Type_Access_Level (E_Formal))));
+                      Expression =>
+                        Dynamic_Type_Access_Level (E_Formal)));
 
                else
                   if Is_Access_Type (E_Formal)
@@ -2907,15 +2906,6 @@ package body Exp_Ch6 is
       --  default parameters and for extra actuals (for Extra_Formals). The
       --  argument is an N_Parameter_Association node.
 
-      procedure Add_Cond_Expression_Extra_Actual (Formal : Entity_Id);
-      --  Adds extra accessibility actuals in the case of a conditional
-      --  expression corresponding to Formal.
-
-      --  Note: Conditional expressions used as actuals for anonymous access
-      --  formals complicate the process of propagating extra accessibility
-      --  actuals and must be handled in a recursive fashion since they can
-      --  be embedded within each other.
-
       procedure Add_Dummy_Build_In_Place_Actuals
         (Function_Id             : Entity_Id;
          Num_Added_Extra_Actuals : Nat := 0);
@@ -2927,177 +2917,6 @@ package body Exp_Ch6 is
       --  Adds an extra actual to the list of extra actuals. Expr is the
       --  expression for the value of the actual, EF is the entity for the
       --  extra formal.
-
-      --------------------------------------
-      -- Add_Cond_Expression_Extra_Actual --
-      --------------------------------------
-
-      procedure Add_Cond_Expression_Extra_Actual
-        (Formal : Entity_Id)
-      is
-         Decl : Node_Id;
-         Lvl  : Entity_Id;
-
-         procedure Insert_Level_Assign (Branch : Node_Id);
-         --  Recursively add assignment of the level temporary on each branch
-         --  while moving through nested conditional expressions.
-
-         -------------------------
-         -- Insert_Level_Assign --
-         -------------------------
-
-         procedure Insert_Level_Assign (Branch : Node_Id) is
-
-            procedure Expand_Branch (Res_Assn : Node_Id);
-            --  Perform expansion or iterate further within nested
-            --  conditionals given the object declaration or assignment to
-            --  result object created during expansion which represents a
-            --  branch of the conditional expression.
-
-            -------------------
-            -- Expand_Branch --
-            -------------------
-
-            procedure Expand_Branch (Res_Assn : Node_Id) is
-            begin
-               pragma Assert (Nkind (Res_Assn) in
-                               N_Assignment_Statement |
-                               N_Object_Declaration);
-
-               --  There are more nested conditional expressions so we must go
-               --  deeper.
-
-               if Nkind (Expression (Res_Assn)) = N_Expression_With_Actions
-                 and then
-                   Nkind (Original_Node (Expression (Res_Assn)))
-                     in N_Case_Expression | N_If_Expression
-               then
-                  Insert_Level_Assign
-                    (Expression (Res_Assn));
-
-               --  Add the level assignment
-
-               else
-                  Insert_Before_And_Analyze (Res_Assn,
-                    Make_Assignment_Statement (Loc,
-                      Name       => New_Occurrence_Of (Lvl, Loc),
-                      Expression =>
-                        Accessibility_Level
-                          (Expr            => Expression (Res_Assn),
-                           Level           => Dynamic_Level,
-                           Allow_Alt_Model => False)));
-               end if;
-            end Expand_Branch;
-
-            Cond : Node_Id;
-            Alt  : Node_Id;
-
-         --  Start of processing for Insert_Level_Assign
-
-         begin
-            --  Examine further nested conditionals
-
-            pragma Assert (Nkind (Branch) =
-                            N_Expression_With_Actions);
-
-            --  Find the relevant statement in the actions
-
-            Cond := First (Actions (Branch));
-            while Present (Cond) loop
-               exit when Nkind (Cond) in N_Case_Statement | N_If_Statement;
-               Next (Cond);
-            end loop;
-
-            --  The conditional expression may have been optimized away, so
-            --  examine the actions in the branch.
-
-            if No (Cond) then
-               Expand_Branch (Last (Actions (Branch)));
-
-            --  Iterate through if expression branches
-
-            elsif Nkind (Cond) = N_If_Statement then
-               Expand_Branch (Last (Then_Statements (Cond)));
-               Expand_Branch (Last (Else_Statements (Cond)));
-
-            --  Iterate through case alternatives
-
-            elsif Nkind (Cond) = N_Case_Statement then
-
-               Alt := First (Alternatives (Cond));
-               while Present (Alt) loop
-                  Expand_Branch (Last (Statements (Alt)));
-                  Next (Alt);
-               end loop;
-            end if;
-         end Insert_Level_Assign;
-
-      --  Start of processing for cond expression case
-
-      begin
-         --  Create declaration of a temporary to store the accessibility
-         --  level of each branch of the conditional expression.
-
-         Lvl  := Make_Temporary (Loc, 'L');
-         Decl := Make_Object_Declaration (Loc,
-                   Defining_Identifier => Lvl,
-                   Object_Definition   =>
-                     New_Occurrence_Of (Standard_Natural, Loc));
-
-         --  Install the declaration and perform necessary expansion if we
-         --  are dealing with a procedure call.
-
-         if Nkind (Call_Node) = N_Procedure_Call_Statement then
-            --  Generate:
-            --    Lvl : Natural;
-            --    Call (
-            --     {do
-            --        If_Exp_Res : Typ;
-            --        if Cond then
-            --           Lvl        := 0; --  Access level
-            --           If_Exp_Res := Exp;
-            --        ...
-            --      in If_Exp_Res end;},
-            --      Lvl,
-            --      ...
-            --    )
-
-            Insert_Before_And_Analyze (Call_Node, Decl);
-
-         --  Ditto for a function call. Note that we do not wrap the function
-         --  call into an expression with action to avoid bad interactions with
-         --  Exp_Ch4.Process_Transient_In_Expression.
-
-         else
-            --  Generate:
-            --    Lvl : Natural;  --  placed above the function call
-            --    ...
-            --    Func_Call (
-            --     {do
-            --        If_Exp_Res : Typ
-            --        if Cond then
-            --           Lvl := 0; --  Access level
-            --           If_Exp_Res := Exp;
-            --      in If_Exp_Res end;},
-            --      Lvl,
-            --      ...
-            --    )
-
-            Insert_Action (Call_Node, Decl);
-            Analyze (Call_Node);
-         end if;
-
-         --  Decorate the conditional expression with assignments to our level
-         --  temporary.
-
-         Insert_Level_Assign (Prev);
-
-         --  Make our level temporary the passed actual
-
-         Add_Extra_Actual
-           (Expr => New_Occurrence_Of (Lvl, Loc),
-            EF   => Extra_Accessibility (Formal));
-      end Add_Cond_Expression_Extra_Actual;
 
       --------------------------------------
       -- Add_Dummy_Build_In_Place_Actuals --
@@ -3336,8 +3155,10 @@ package body Exp_Ch6 is
                goto Skip_Extra_Actual_Generation;
 
             else
-               --  If the actual is a type conversion, then the constrained
-               --  test applies to the actual, not the target type.
+               --  If the actual is a type conversion and the target type is
+               --  constrained, then the view is constrained (RM 4.6(54)).
+               --  Otherwise, the test needs to be applied to the operand of
+               --  the conversion.
 
                declare
                   Act_Prev : Node_Id;
@@ -3350,6 +3171,9 @@ package body Exp_Ch6 is
                   while Nkind (Act_Prev) in N_Type_Conversion
                                           | N_Unchecked_Type_Conversion
                   loop
+                     exit when Nkind (Act_Prev) = N_Type_Conversion
+                       and then Is_Constrained (Etype (Act_Prev));
+
                      Act_Prev := Expression (Act_Prev);
                   end loop;
 
@@ -3365,6 +3189,11 @@ package body Exp_Ch6 is
                   then
                      Add_Extra_Actual
                        (Expr => New_Occurrence_Of (Standard_False, Loc),
+                        EF   => Extra_Constrained (Formal));
+
+                  elsif Nkind (Act_Prev) = N_Type_Conversion then
+                     Add_Extra_Actual
+                       (Expr => New_Occurrence_Of (Standard_True, Loc),
                         EF   => Extra_Constrained (Formal));
 
                   else
@@ -3415,20 +3244,10 @@ package body Exp_Ch6 is
                   end if;
 
                   Add_Extra_Actual
-                    (Expr => Accessibility_Level
-                               (Expr            => Parm_Ent,
-                                Level           => Dynamic_Level,
-                                Allow_Alt_Model => False),
+                    (Expr => Dynamic_Accessibility_Level
+                               (Parm_Ent, Allow_Alt_Model => False),
                      EF   => Extra_Accessibility (Formal));
                end;
-
-            --  Conditional expressions
-
-            elsif Nkind (Prev) = N_Expression_With_Actions
-              and then Nkind (Original_Node (Prev)) in
-                         N_If_Expression | N_Case_Expression
-            then
-               Add_Cond_Expression_Extra_Actual (Formal);
 
             --  Internal constant generated to remove side effects (normally
             --  from the expansion of dispatching calls).
@@ -3458,9 +3277,8 @@ package body Exp_Ch6 is
                   end if;
 
                   Add_Extra_Actual
-                    (Expr => Accessibility_Level
-                               (Expr            => Expression (Parent (Ent)),
-                                Level           => Dynamic_Level,
+                    (Expr => Dynamic_Accessibility_Level
+                               (Expression (Parent (Ent)),
                                 Allow_Alt_Model => False),
                      EF   => Extra_Accessibility (Formal));
                end;
@@ -3469,10 +3287,8 @@ package body Exp_Ch6 is
 
             else
                Add_Extra_Actual
-                 (Expr => Accessibility_Level
-                            (Expr            => Prev,
-                             Level           => Dynamic_Level,
-                             Allow_Alt_Model => False),
+                 (Expr => Dynamic_Accessibility_Level
+                            (Prev, Allow_Alt_Model => False),
                   EF   => Extra_Accessibility (Formal));
             end if;
          end if;
@@ -3515,10 +3331,8 @@ package body Exp_Ch6 is
             --  Otherwise get the level normally based on the call node
 
             else
-               Level := Accessibility_Level
-                          (Expr            => Call_Node,
-                           Level           => Dynamic_Level,
-                           Allow_Alt_Model => False);
+               Level := Dynamic_Accessibility_Level
+                          (Call_Node, Allow_Alt_Model => False);
             end if;
 
             --  It may be possible that we are re-expanding an already
@@ -7603,7 +7417,7 @@ package body Exp_Ch6 is
             --    [Constraint_Error when not (Exp in R_Type)]
 
             In_Test : constant Node_Id :=
-              Make_Not_In
+              Make_In
                 (Loc,
                  Duplicate_Subexpr (Exp),
                  New_Occurrence_Of (R_Type, Loc));
@@ -9877,8 +9691,8 @@ package body Exp_Ch6 is
         and then (Has_Task (Typ)
                     or else (Is_Class_Wide_Type (Typ)
                                and then Is_Limited_Record (Typ)
-                               and then not Has_Aspect
-                                 (Etype (Typ), Aspect_No_Task_Parts)));
+                               and then not Has_Enabled_Aspect
+                                 (Root_Type (Typ), Aspect_No_Task_Parts)));
    end Might_Have_Tasks;
 
    ----------------------------

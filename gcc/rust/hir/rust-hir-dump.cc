@@ -406,7 +406,8 @@ void
 Dump::do_typepathfunction (TypePathFunction &e)
 {
   visit_collection ("params", e.get_params ());
-  visit_field ("return_type", e.get_return_type ());
+  if (e.has_return_type ())
+    visit_field ("return_type", e.get_return_type ());
 }
 
 void
@@ -2375,6 +2376,8 @@ Dump::visit (SlicePatternItemsHasRest &e)
 {
   begin ("SlicePatternItemsHasRest");
   visit_collection ("lower_patterns", e.get_lower_patterns ());
+  if (e.has_rest_bind ())
+    visit_field ("rest_bind", e.get_rest_bind ());
   visit_collection ("upper_patterns", e.get_upper_patterns ());
   end ("SlicePatternItemsHasRest");
 }

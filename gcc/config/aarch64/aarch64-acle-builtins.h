@@ -650,6 +650,7 @@ public:
   tree force_vector (gimple_seq &, tree, tree);
   tree convert_pred (gimple_seq &, tree, unsigned int);
   tree fold_contiguous_base (gimple_seq &, tree);
+  gimple *fold_contiguous_load (internal_fn);
   tree load_store_cookie (tree);
 
   gcall *redirect_call (const function_instance &);
@@ -1393,6 +1394,18 @@ function_expander::result_mode () const
 #define TYPES_s_float_sd_integer(S, D, T) \
   TYPES_s_float (S, D, T), TYPES_sd_integer (S, D, T)
 
+/* _f32
+   _s8 _s16 _s32
+   _u8 _u16 _u32.  */
+#define TYPES_s_float_bhs_integer(S, D, T) \
+  TYPES_s_float (S, D, T), TYPES_bhs_integer (S, D, T)
+
+/* _f32 _f64
+   _s8 _s16 _s32 _s64
+   _u8 _u16 _u32 _u64.  */
+#define TYPES_sd_float_all_integer(S, D, T) \
+  TYPES_sd_float (S, D, T), TYPES_all_integer (S, D, T)
+
 /* _s32.  */
 #define TYPES_s_signed(S, D, T) \
   S (s32)
@@ -1580,9 +1593,35 @@ function_expander::result_mode () const
   D (s16, s32), \
   D (u16, u32)
 
+/* _s8_s16
+   _u8_u16
+   _s16_s32
+   _u16_u32.  */
+#define TYPES_qshr_x2(S, D, T) \
+  D (s8, s16), \
+  D (u8, u16), \
+  D (s16, s32), \
+  D (u16, u32)
+
+/* _s8_s16
+   _u8_u16.  */
+#define TYPES_qrshr_x2_8(S, D, T) \
+  D (s8, s16), \
+  D (u8, u16)
+
 /* _u16_s32.  */
 #define TYPES_qrshru_x2(S, D, T) \
   D (u16, s32)
+
+/* _u8_s16
+   _u16_s32.  */
+#define TYPES_qshru_x2(S, D, T) \
+  D (u8, s16), \
+  D (u16, s32)
+
+/* _u8_s16.  */
+#define TYPES_qrshrun_x2(S, D, T) \
+  D (u8, s16)
 
 /* _s8_s32
    _s16_s64
@@ -1788,6 +1827,80 @@ function_expander::result_mode () const
 /* _za64_u16.  */
 #define TYPES_mop_i16i64_unsigned(S, D, T) \
   D (za64, u16)
+
+// svmop4a[_1x1]_za32[_f32]
+// svmop4a[_1x1]_za32[_f16_f16]
+// svmop4a[_1x1]_za32[_bf16_bf16]
+// svmop4a[_1x1]_za32[_s16_s16]
+// svmop4a[_1x1]_za32[_u16_u16]
+// svmop4a[_1x1]_za32[_s8_s8]
+// svmop4a[_1x1]_za32[_u8_u8]
+// svmop4a[_1x1]_za32[_s8_u8]
+// svmop4a[_1x1]_za32[_u8_s8]
+#define TYPES_mop4_base(S, D, T) \
+  T (za32, f32, f32), \
+  T (za32, f16, f16), \
+  T (za32, bf16, bf16), \
+  T (za32, s16, s16), \
+  T (za32, u16, u16), \
+  T (za32, s8, s8), \
+  T (za32, u8, u8), \
+  T (za32, s8, u8), \
+  T (za32, u8, s8)
+
+// svmop4a[_1x1]_za16[_bf16_bf16] (only if __ARM_FEATURE_SME_B16B16 != 0)
+#define TYPES_mop4_b16b16(S, D, T) \
+  T (za16, bf16, bf16)
+
+// svmop4a[_1x1]_za16[_mf8_mf8]_fpm (only if __ARM_FEATURE_SME_F8F16 != 0)
+#define TYPES_mop4_f8f16(S, D, T) \
+  T (za16, mf8, mf8)
+
+// svmop4a[_1x1]_za32[_mf8_mf8]_fpm (only if __ARM_FEATURE_SME_F8F32 != 0)
+#define TYPES_mop4_f8f32(S, D, T) \
+  T (za32, mf8, mf8)
+
+// svmop4a[_1x1]_za16[_f16_f16] (only if __ARM_FEATURE_SME_F16F16 != 0)
+#define TYPES_mop4_f16f16(S, D, T) \
+  T (za16, f16, f16)
+
+// svmop4a[_1x1]_za64[_f64_f64] (only if __ARM_FEATURE_SME_F64F64 != 0)
+#define TYPES_mop4_f64f64(S, D, T) \
+  T (za64, f64, f64)
+
+// svmop4a[_1x1]_za64[_s16_s16] (only if __ARM_FEATURE_SME_I16I64 != 0)
+// svmop4a[_1x1]_za64[_u16_u16] (only if __ARM_FEATURE_SME_I16I64 != 0)
+// svmop4a[_1x1]_za64[_s16_u16] (only if __ARM_FEATURE_SME_I16I64 != 0)
+// svmop4a[_1x1]_za64[_u16_s16] (only if __ARM_FEATURE_SME_I16I64 != 0)
+#define TYPES_mop4_i16i64(S, D, T) \
+  T (za64, s16, s16), \
+  T (za64, u16, u16), \
+  T (za64, s16, u16), \
+  T (za64, u16, s16)
+
+/* _za32 x { _s8_s8 _u8_u8
+	     _s8_u8 _u8_s8
+	     _s16_s16 _u16_u16
+	     _bf16_bf16 _f16_f16
+	     _f32_f32 }.  */
+#define TYPES_tmop_base(S, D, T) \
+  T (za32, s8, s8), T (za32, u8, u8), \
+  T (za32, s8, u8), T (za32, u8, s8), \
+  T (za32, s16, s16), T (za32, u16, u16), \
+  T (za32, bf16, bf16), T (za32, f16, f16), \
+  T (za32, f32, f32)
+
+#define TYPES_tmop_h_bfloat(S, D, T) \
+  T (za16, bf16, bf16)
+
+#define TYPES_tmop_h_float(S, D, T) \
+  T (za16, f16, f16)
+
+#define TYPES_tmop_h_mf8(S, D, T) \
+  T (za16, mf8, mf8)
+
+#define TYPES_tmop_s_mf8(S, D, T) \
+  T (za32, mf8, mf8)
 
 /* _za.  */
 #define TYPES_za(S, D, T) \
@@ -2008,6 +2121,8 @@ DEF_SVE_TYPES_ARRAY (hsd_integer);
 DEF_SVE_TYPES_ARRAY (hsd_data);
 DEF_SVE_TYPES_ARRAY (s_float);
 DEF_SVE_TYPES_ARRAY (s_float_hsd_integer);
+DEF_SVE_TYPES_ARRAY (s_float_bhs_integer);
+DEF_SVE_TYPES_ARRAY (sd_float_all_integer);
 DEF_SVE_TYPES_ARRAY (s_float_mf8);
 DEF_SVE_TYPES_ARRAY (s_float_sd_integer);
 DEF_SVE_TYPES_ARRAY (s_signed);
@@ -2039,9 +2154,13 @@ DEF_SVE_TYPES_ARRAY (cvttb);
 DEF_SVE_TYPES_ARRAY (inc_dec_n);
 DEF_SVE_TYPES_ARRAY (qcvt_x2);
 DEF_SVE_TYPES_ARRAY (qcvt_x4);
+DEF_SVE_TYPES_ARRAY (qshr_x2);
 DEF_SVE_TYPES_ARRAY (qrshr_x2);
+DEF_SVE_TYPES_ARRAY (qrshr_x2_8);
 DEF_SVE_TYPES_ARRAY (qrshr_x4);
 DEF_SVE_TYPES_ARRAY (qrshru_x2);
+DEF_SVE_TYPES_ARRAY (qrshrun_x2);
+DEF_SVE_TYPES_ARRAY (qshru_x2);
 DEF_SVE_TYPES_ARRAY (qrshru_x4);
 DEF_SVE_TYPES_ARRAY (reinterpret);
 DEF_SVE_TYPES_ARRAY (reinterpret_b);
@@ -2077,6 +2196,18 @@ DEF_SVE_TYPES_ARRAY (mop_base_unsigned);
 DEF_SVE_TYPES_ARRAY (mop_i16i64);
 DEF_SVE_TYPES_ARRAY (mop_i16i64_signed);
 DEF_SVE_TYPES_ARRAY (mop_i16i64_unsigned);
+DEF_SVE_TYPES_ARRAY (mop4_f16f16);
+DEF_SVE_TYPES_ARRAY (mop4_b16b16);
+DEF_SVE_TYPES_ARRAY (mop4_base);
+DEF_SVE_TYPES_ARRAY (mop4_f64f64);
+DEF_SVE_TYPES_ARRAY (mop4_i16i64);
+DEF_SVE_TYPES_ARRAY (mop4_f8f16);
+DEF_SVE_TYPES_ARRAY (mop4_f8f32);
+DEF_SVE_TYPES_ARRAY (tmop_base);
+DEF_SVE_TYPES_ARRAY (tmop_h_float);
+DEF_SVE_TYPES_ARRAY (tmop_h_bfloat);
+DEF_SVE_TYPES_ARRAY (tmop_h_mf8);
+DEF_SVE_TYPES_ARRAY (tmop_s_mf8);
 DEF_SVE_TYPES_ARRAY (za);
 
 DEF_SVE_TYPES_ARRAY (b_float);

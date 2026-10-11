@@ -81,11 +81,27 @@ source_format_t::indicated( char *bol, const char *eol, char ch ) {
   auto ind = bol + left_margin();
   if( eol <= ind ) return NULL; // left margin would be after end of line
   // If TAB is in the line-number region, nothing is in the indicator column.
-  bool has_tab = std::any_of(bol, ind,
-                             [](const char ch) { return ch == '\t'; } );
-  if( has_tab ) return NULL;
+  auto ptab = std::find(bol, ind, '\t');
+  if( ptab != ind) return ptab;
   if( (bol += left_margin()) > eol ) return NULL;
   return ch == '\0' || ch == *bol? bol : NULL;
+}
+
+/* Advance past a quoted literal */
+static char *
+skip_quoted_literal( char *p, char *pend ) {
+  const char delimiter = *p++;
+  while( p < pend ) {
+    p = std::find(p, pend, delimiter);
+    if( p == pend )
+      return pend;
+    if( p + 1 < pend && p[1] == delimiter ) {
+      p += 2; // nested quote
+      continue;
+    }
+    return ++p;
+  }
+  return pend;
 }
 
 static char *
@@ -93,13 +109,22 @@ remove_inline_comment( char *bol, char *eol ) {
   char *nl = std::find(bol, eol, '\n');
 
   if( bol < nl ) {
-    static char ends = '\0';
-    std::swap(*nl, ends);
-    char *comment = strstr(bol, "*>");
-    if( comment ) {
-      std::fill(comment, nl, SPACE);
+    /* skip *> in alphanumeric literals */
+    static const char markers[] = { '\'', '"', '*' };
+    for( char *p = bol; p < nl; ) {
+      p = std::find_first_of(p, nl, markers, markers + sizeof(markers));
+      if( p == nl )
+        break;
+      if( isquote(*p) ) {
+        p = skip_quoted_literal(p, nl);
+        continue;
+      }
+      if( p + 1 < nl && p[1] == '>' ) {
+        std::fill(p, nl, SPACE);
+        break;
+      }
+      p++;
     }
-    std::swap(*nl, ends);
   }
   return eol;
 }
@@ -420,20 +445,28 @@ struct buffer_t : public bytespan_t {
   }
 };
 
-static inline bool is_p( char ch ) { return TOUPPER(ch) == 'P'; }
+static inline bool is_pf( char ch ) { return TOUPPER(ch) == 'P' || TOUPPER(ch) == 'F'; }
 
 static bool
 is_program_id( const char *p, const char *eol ) {
-  static const std::string program_id("PROGRAM-ID");
-  auto eop = p + program_id.size();
-  if( eop < eol ) {
-    // PROGRAM-ID must be followed by a dot, perhaps with intervening whitespace.
-    for( const char *dot=eop; dot < eol && *dot != '.'; dot++ ) {
-      if( !ISSPACE(*dot) ) return false;
+  static const std::vector<std::string> ids { "PROGRAM-ID", "FUNCTION-ID" };
+  for( const auto& id : ids ) {
+    auto eop = p + id.size();
+    if( eop < eol ) {
+      bool valid = true;
+      // PROGRAM-ID must be followed by a dot, perhaps with intervening whitespace.
+      for( const char *dot=eop; dot < eol && *dot != '.'; dot++ ) {
+        if( !ISSPACE(*dot) ) {
+          valid = false;
+          break;
+        }
+      }
+      if (!valid)
+        continue;
+      std::string line (p, eop);
+      std::transform(line.begin(), line.end(), line.begin(), ::toupper);
+      return line == id;
     }
-    std::string line (p, eop);
-    std::transform(line.begin(), line.end(), line.begin(), ::toupper);
-    return line == program_id;
   }
   return false;
 }
@@ -1393,8 +1426,6 @@ find_filter( const char filter[] ) {
   return NULL;
 }
 
-bool verbose_file_reader = false;
-
 typedef std::pair <char *, std::list<std::string> > preprocessor_filter_t;
 static std::list<preprocessor_filter_t> preprocessor_filters;
 static std::list<const char *> included_files;
@@ -1417,12 +1448,11 @@ preprocess_filter_add( const char input[] ) {
   size_t pos = filter.find(",");
 
   if( pos != filter.npos ) {
-    std::vector<char> others( filter.size() - pos, '\0' );
-    std::copy( filter.begin() + pos + 1, filter.end(), others.begin() );
+    std::string args( filter.begin() + pos + 1, filter.end() );
     filter.resize(pos);
-    char *optstr = others.data();
-    for( char *opt = optstr + 1; (opt = strtok(opt, ",")); opt = NULL ) {
-      options.push_back(opt);
+
+    for( char *arg = xstrdup(args.c_str()); (arg = strtok(arg, ",")); arg = NULL ) {
+      options.push_back(arg);
     }
   }
 
@@ -1477,13 +1507,6 @@ cdftext::lex_open( const char filename[] ) {
    * redundant.
    */
 
-  source_format_stack_t source_format;
-  source_format_t format;  // free-form by default
-  if( command_line_indicator_column ) {
-    format.indicator_column_set(command_line_indicator_column);
-  }
-  source_format.push(format);
-
   int input = open_input( filename );
   if( input == -1 ) return NULL;
 
@@ -1492,6 +1515,13 @@ cdftext::lex_open( const char filename[] ) {
   
   // Process any files supplied by the -include command-line option.
   for( auto name : included_files ) {
+    source_format_stack_t source_format;
+    source_format_t format;  // free-form by default
+    if( command_line_indicator_column || explicit_format ) {
+      format.indicator_column_set(command_line_indicator_column);
+    }
+    source_format.push(format);
+
     int input; // cppcheck-suppress shadowVariable
     if( -1 == (input = open(name, O_RDONLY)) ) {
       cbl_message(LexIncludeE, "cannot open %<-include%> file %qs", name);
@@ -1507,6 +1537,13 @@ cdftext::lex_open( const char filename[] ) {
     dbgmsg("lex_open: processed %zu of %zu: '%s'", n, included_files.size(), name);
     cobol_filename_restore(); // process_file restores only for COPY
   }
+  source_format_stack_t source_format;
+  source_format_t format;  // free-form by default
+  if( command_line_indicator_column || explicit_format ) {
+    format.indicator_column_set(command_line_indicator_column);
+  }
+  source_format.push(format);
+
   included_files.clear();
   dbgmsg("lex_open: '%s'", filename);
 
@@ -1585,11 +1622,6 @@ cdftext::open_input( const char filename[] ) {
     dbgmsg( "could not open '%s': %s", filename, xstrerror(erc) );
   }
 
-  verbose_file_reader = NULL != getenv("GCOBOL_TEMPDIR");
-
-  if( verbose_file_reader ) {
-    cbl_message(LexInputN, "opening %s for input", filename);
-  }
   return fd;
 }
 
@@ -1672,7 +1704,7 @@ static const char *
 valid_sequence_area( const char *data, const char *eodata ) {
 
   for( const char *p = data; // find every 'P' to try Program-ID
-       (p = std::find_if(p, eodata, is_p)) != eodata;
+       (p = std::find_if(p, eodata, is_pf)) != eodata;
        p++ )
   {
     auto eol = std::find(p, eodata, '\n');
@@ -1747,8 +1779,8 @@ cdftext::free_form_reference_format( int input,
 
     if( mfile.is_blank_line() ) continue;
 
-    char *indcol = format.top().indicated(mfile.cur, mfile.eol); // true only for fixed
-    //                                              // format
+    // indcol is true only for fixed format
+    char *indcol = format.top().indicated(mfile.cur, mfile.eol); 
 
     if( format.top().is_fixed() && !indcol ) { // short line
       erase_source(mfile.cur, mfile.eol);
@@ -1764,7 +1796,7 @@ cdftext::free_form_reference_format( int input,
         }
       }
 
-      switch( TOUPPER(*indcol) ) {
+      switch(*indcol) {
       case '-':
         gcc_assert(0 < current.line.size());
         /*
@@ -1787,8 +1819,10 @@ cdftext::free_form_reference_format( int input,
         }
         gcc_assert( ! mfile.line_contains_nul() );
         continue;
+      case TAB:
       case SPACE:
         break;
+      case 'd':
       case 'D':
         /*
          * Pass the D to the lexer as 0x8D, because WITH DEBUGGING MODE is
@@ -1818,10 +1852,13 @@ cdftext::free_form_reference_format( int input,
         __attribute__ ((fallthrough));
       default: // flag other characters in indicator area
         if( ! ISSPACE(indcol[0]) ) {
-          yyerrorvl( mfile.lineno(), cobol_filename(),
-                     "error: stray indicator '%c' (0x%x): \"%.*s\"",
-                     indcol[0], indcol[0],
-                     int(mfile.line_length() - 1), mfile.cur );
+          // TODO: initialize diagnostic system earlier and use it here.
+          if( ! cbl_diagnostic_ignored(LexIndicatorE) ) {
+            yyerrorvl( mfile.lineno(), cobol_filename(),
+                       "error: stray indicator '%c' (0x%x): \"%.*s\"",
+                       indcol[0], indcol[0],
+                       int(mfile.line_length() - 1), mfile.cur );
+          }
           *indcol = SPACE;
         }
         break;
@@ -1837,13 +1874,33 @@ cdftext::free_form_reference_format( int input,
 
 bool cdftext::please_push_filename = false;
 int cdftext::command_line_indicator_column = 0;
+bool cdftext::explicit_format = false;
 
 void
 cobol_set_indicator_column( int column ) {
   cdftext::command_line_indicator_column = column;
+  cdftext::explicit_format = true;
   source_format_t local;
   local.indicator_column_set(column);
   dbgmsg("%s: format now %s", __func__, local.description());
+}
+
+static inline void
+output_segment(const char *beg, const char *end,
+               std::ostream_iterator<char> ofs )
+{
+#if 1
+  std::copy(beg, end, ofs);
+#else
+  // Replace each tab with 8 spaces.
+  for (auto p = beg; p < end; ++p) {
+    if (*p == '\t') {
+      std::generate_n(ofs, 8, [](){ return ' '; });
+      continue;
+    } 
+    *ofs = *p;
+  }
+#endif
 }
 
 void
@@ -1936,7 +1993,7 @@ cdftext::process_file( filespan_t mfile, int output,
       copy.mfile = free_form_reference_format( copy.in, source_format );
 
       if( copied.partial_line.size() ) {
-        std::copy(copied.partial_line.p, copied.partial_line.pend, ofs);
+        output_segment(copied.partial_line.p, copied.partial_line.pend, ofs);
       }
       out.flush();
 
@@ -1974,14 +2031,14 @@ cdftext::process_file( filespan_t mfile, int output,
                     []( char ch ) { return ch == '\n'; } );
     }
     if( replace_directives.empty() ) {
-      std::copy(mfile.cur, mfile.eol, ofs);
+      output_segment(mfile.cur, mfile.eol, ofs);
       continue; // No active REPLACE directive.
     }
 
     std::list<span_t> segments = segment_line(mfile);
 
     for( const auto& segment : segments ) {
-      std::copy(segment.p, segment.pend, ofs);
+      output_segment(segment.p, segment.pend, ofs);
     }
 
     out.flush();
@@ -1989,7 +2046,7 @@ cdftext::process_file( filespan_t mfile, int output,
   // end of file
   if( !second_pass && --nfiles ) {
     static const char file_pop[] = "\f#FILE POP\f";
-    std::copy(file_pop, file_pop + strlen(file_pop), ofs);
+    output_segment(file_pop, file_pop + strlen(file_pop), ofs);
     out.flush();
   }
   if( !included_files.empty() ) { --nfiles; };

@@ -87,7 +87,7 @@ static std::vector<cl_decoded_option>new_opt;
 
 static bool need_libgcobol = true;
 static bool need_libcompat = false; // This one need for dialect mf or ibm
-static bool need_libposix = false;
+static bool need_libposix = true;
 
 // #define NOISY 1
 
@@ -268,6 +268,8 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
         need_libgcobol   = false;
         need_libdl       = false;
         need_libstdc     = false;
+        need_libcompat   = false;
+        need_libposix    = false;
         break;
 
       case OPT_static_libgcobol:
@@ -394,8 +396,6 @@ lang_specific_driver (struct cl_decoded_option **in_decoded_options,
             || strstr(decoded_options[i].arg, "mf") )
           {
           need_libcompat = true;
-          // libcompat depends on libposix.
-          need_libposix = true;
           }
         break;
 

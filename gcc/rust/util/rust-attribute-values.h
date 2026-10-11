@@ -105,11 +105,18 @@ public:
   static constexpr auto &NON_EXHAUSTIVE = "non_exhaustive";
 
   static constexpr auto &RUSTFMT = "rustfmt";
+  static constexpr auto &CLIPPY = "clippy";
+  static constexpr auto &DIAGNOSTIC = "diagnostic";
+  static constexpr auto &MIRI = "miri";
+  static constexpr auto &RUST_ANALYZER = "rust_analyzer";
 
   static constexpr auto &TEST = "test";
 
   static constexpr auto &RUSTC_ARGS_REQUIRED_CONST
     = "rustc_args_required_const";
+
+  static constexpr auto &RUSTC_LEGACY_CONST_GENERICS
+    = "rustc_legacy_const_generics";
 
   static constexpr auto &NEEDS_ALLOCATOR = "needs_allocator";
 
@@ -118,6 +125,8 @@ public:
 
   static constexpr auto &RUSTC_CONVERSION_SUGGESTION
     = "rustc_conversion_suggestion";
+
+  static constexpr auto &CFI_ENCODING = "cfi_encoding";
 };
 } // namespace Values
 } // namespace Rust

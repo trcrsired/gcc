@@ -981,7 +981,7 @@
 
 ;; Widening operations
 
-(define_expand "widen_ssum<v_double_width><mode>3"
+(define_expand "reduc_widen_ssum<v_double_width><mode>3"
   [(set (match_operand:<V_double_width> 0 "s_register_operand")
 	(plus:<V_double_width>
 	 (sign_extend:<V_double_width>
@@ -1040,7 +1040,7 @@
 }
   [(set_attr "type" "neon_add_widen")])
 
-(define_insn "widen_ssum<V_widen_l><mode>3"
+(define_insn "reduc_widen_ssum<V_widen_l><mode>3"
   [(set (match_operand:<V_widen> 0 "s_register_operand" "=w")
 	(plus:<V_widen>
 	 (sign_extend:<V_widen>
@@ -1051,7 +1051,7 @@
   [(set_attr "type" "neon_add_widen")]
 )
 
-(define_expand "widen_usum<v_double_width><mode>3"
+(define_expand "reduc_widen_usum<v_double_width><mode>3"
   [(set (match_operand:<V_double_width> 0 "s_register_operand")
 	(plus:<V_double_width>
 	 (zero_extend:<V_double_width>
@@ -1110,7 +1110,7 @@
 }
   [(set_attr "type" "neon_add_widen")])
 
-(define_insn "widen_usum<V_widen_l><mode>3"
+(define_insn "reduc_widen_usum<V_widen_l><mode>3"
   [(set (match_operand:<V_widen> 0 "s_register_operand" "=w")
 	(plus:<V_widen> (zero_extend:<V_widen>
 			  (match_operand:VW 1 "s_register_operand" "%w"))
@@ -4710,9 +4710,15 @@ if (BYTES_BIG_ENDIAN)
 			  VSHLL_N))]
   "TARGET_NEON"
 {
-  /* The boundaries are: 0 < imm <= size.  */
-  arm_const_bounds (operands[2], 0, neon_element_bits (<MODE>mode) + 1);
-  return "vshll.<sup>%#<V_sz_elem>\t%q0, %P1, %2";
+  /* The boundaries are: 0 <= imm <= size, but the upper and lower
+     bounds need specific handling.  */
+  HOST_WIDE_INT elt_size = neon_element_bits (<MODE>mode);
+  arm_const_bounds (operands[2], 0, elt_size + 1);
+  if (INTVAL (operands[2]) == 0)
+    return "vmovl.<sup><V_sz_elem>\t%q0, %P1";
+  else if (INTVAL (operands[2]) == elt_size)
+    return "vshll.i<V_sz_elem>\t%q0, %P1, %2";
+  return "vshll.<sup><V_sz_elem>\t%q0, %P1, %2";
 }
   [(set_attr "type" "neon_shift_imm_long")]
 )

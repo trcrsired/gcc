@@ -677,8 +677,8 @@
 ;; Keep this in sync with enum riscv_microarchitecture.
 (define_attr "tune"
   "generic,sifive_7,sifive_p400,sifive_p600,xiangshan,generic_ooo,mips_p8700,
-   tt_ascalon_d8,andes_25_series,andes_23_series,andes_45_series,spacemit_x60,
-   arcv_rmx100,arcv_rhx100,xt_c908"
+   tt_ascalon_d8,tt_ascalon_xg,andes_25_series,andes_23_series,andes_45_series,
+   spacemit_x60,arcv_rmx100,arcv_rhx100,xt_c908"
   (const (symbol_ref "((enum attr_tune) riscv_microarchitecture)")))
 
 ;; Describe a user's asm statement.
@@ -2877,6 +2877,45 @@
   DONE;
 })
 
+;; We don't have a real TImode move but the middle-end demands it if we're
+;; allowing TImode.  Just move the individual registers.
+(define_expand "movti"
+  [(set (match_operand:TI 0 "nonimmediate_operand")
+	(match_operand:TI 1 "general_operand"))]
+  "TARGET_64BIT"
+{
+  /* TODO: Rather than spilling everything we could catch loads or stores
+     of subreg-punned vector registers like
+      (set (mem:TI ...) (subreg:TI (reg:V4SI ...)))
+     and emit a vector load/store right away.  The same is true for the
+     OImode expander.  */
+  riscv_split_doubleword_move (operands[0], operands[1]);
+  DONE;
+})
+
+;; Similar for OImode.
+(define_expand "movoi"
+  [(set (match_operand:OI 0 "nonimmediate_operand")
+	(match_operand:OI 1 "general_operand"))]
+  "TARGET_64BIT"
+{
+  riscv_split_quadword_move (operands[0], operands[1]);
+  DONE;
+})
+
+;; And TFmode.
+(define_expand "movtf"
+  [(set (match_operand:TF 0 "nonimmediate_operand")
+	(match_operand:TF 1 "general_operand"))]
+  ""
+{
+  if (TARGET_64BIT)
+    riscv_split_doubleword_move (operands[0], operands[1]);
+  else
+    riscv_split_quadword_move (operands[0], operands[1]);
+  DONE;
+})
+
 (define_expand "cmpmemsi"
   [(parallel [(set (match_operand:SI 0)
                (compare:SI (match_operand:BLK 1)
@@ -2915,7 +2954,7 @@
 	      (use (match_operand:SI 3 "const_int_operand"))])]
   ""
 {
-  if (riscv_expand_block_move (operands[0], operands[1], operands[2]))
+  if (riscv_expand_block_move (operands[0], operands[1], operands[2], false))
     DONE;
   else
     FAIL;
@@ -2934,16 +2973,7 @@
 	      (use (match_operand:SI 3 "const_int_operand"))])]
  ""
 {
-  /* If TARGET_VECTOR is false, this routine will return false and we will
-     try scalar expansion.  */
-  if (riscv_vector::expand_vec_setmem (operands[0], operands[1], operands[2]))
-    DONE;
-
-  /* If value to set is not zero, use the library routine.  */
-  if (operands[2] != const0_rtx)
-    FAIL;
-
-  if (riscv_expand_block_clear (operands[0], operands[1]))
+  if (riscv_expand_setmem (operands[0], operands[1], operands[2], false))
     DONE;
   else
     FAIL;
@@ -2954,10 +2984,9 @@
    (match_operand:BLK 1 "general_operand"))
     (use (match_operand:P 2 "const_int_operand"))
     (use (match_operand:SI 3 "const_int_operand"))])]
-  "TARGET_VECTOR"
+  ""
 {
-  if (riscv_vector::expand_block_move (operands[0], operands[1], operands[2],
-				       true))
+  if (riscv_expand_block_move (operands[0], operands[1], operands[2], true))
     DONE;
   else
     FAIL;
@@ -3185,7 +3214,7 @@
 ;; Canonical form for an extend of a logical shift right (sign/zero extraction).
 ;; Special cases, that are ignored (handled elsewhere):
 ;; * Single-bit extraction (Zbs/XTheadBs)
-;; * Single-bit extraction (Zicondops/XVentanaCondops)
+;; * Single-bit extraction (Zicondops)
 ;; * Single-bit extraction (SFB)
 ;; * Extraction instruction th.ext(u) (XTheadBb)
 ;; * lshrsi3_extend_2 (see above)
@@ -3196,7 +3225,7 @@
        (match_operand     2 "const_int_operand")
        (match_operand     3 "const_int_operand")))]
   "!((TARGET_ZBS || TARGET_XTHEADBS || TARGET_ZICOND
-      || TARGET_XVENTANACONDOPS || TARGET_SFB_ALU)
+      || TARGET_SFB_ALU)
      && (INTVAL (operands[2]) == 1))
    && !TARGET_XTHEADBB
    && !TARGET_XANDESPERF
@@ -3478,7 +3507,7 @@
 	(if_then_else:GPR (match_operand 1 "comparison_operator")
 			  (match_operand:GPR 2 "movcc_operand")
 			  (match_operand:GPR 3 "movcc_operand")))]
-  "TARGET_SFB_ALU || TARGET_XTHEADCONDMOV || TARGET_ZICOND_LIKE
+  "TARGET_SFB_ALU || TARGET_XTHEADCONDMOV || TARGET_ZICOND
    || TARGET_MOVCC || TARGET_XMIPSCMOV"
 {
   if (riscv_expand_conditional_move (operands[0], operands[1],
@@ -3486,6 +3515,32 @@
     DONE;
   else
     FAIL;
+})
+
+(define_expand "neg<mode>cc"
+  [(set (match_operand:GPR 0 "register_operand")
+	(if_then_else:GPR (match_operand 1 "comparison_operator")
+			  (neg:GPR (match_operand:GPR 2 "register_operand"))
+			  (match_operand:GPR 3 "register_operand")))]
+  ""
+{
+  rtx cmp = operands[1];
+  rtx cmp0 = XEXP (cmp, 0);
+  rtx cmp1 = XEXP (cmp, 1);
+
+  if (!INTEGRAL_MODE_P (GET_MODE (cmp0))
+      || !rtx_equal_p (operands[2], operands[3]))
+    FAIL;
+
+  rtx cmp_result = gen_reg_rtx (<MODE>mode);
+  riscv_expand_int_scc (cmp_result, GET_CODE (cmp), cmp0, cmp1);
+
+  rtx mask = gen_reg_rtx (<MODE>mode);
+  riscv_emit_unary (NEG, mask, cmp_result);
+  rtx xor_result = gen_reg_rtx (<MODE>mode);
+  riscv_emit_binary (XOR, xor_result, operands[2], mask);
+  riscv_emit_binary (PLUS, operands[0], xor_result, cmp_result);
+  DONE;
 })
 
 (define_expand "add<mode>cc"
@@ -5081,6 +5136,10 @@
 		 (match_operand 3 "const_int_operand" "n")))
    (clobber (match_scratch:DI 4 "=&r"))]
   "(TARGET_64BIT
+    /* If this might reasonably be a pack, then reject.  */
+    && !(TARGET_ZBKB
+	 && INTVAL (operands[2]) == BITS_PER_WORD / 2
+	 && (INTVAL (operands[3]) & ~HOST_WIDE_INT_C (0xffffffff)) == 0)
     && riscv_const_insns (operands[3], false) == 1
     && riscv_const_insns (GEN_INT (INTVAL (operands[3])
 			  << INTVAL (operands[2])), false) != 1)"
@@ -5375,7 +5434,9 @@
 	 (match_operand:DI 5 "const_int_operand")))
    (clobber (match_operand:DI 6 "register_operand"))]
   "(TARGET_64BIT
+    && INTVAL (operands[3]) == 0
     && INTVAL (operands[2]) + INTVAL (operands[4]) == 32
+    && sext_hwi (INTVAL (operands[5]), 32) == INTVAL (operands[5])
     && SMALL_OPERAND (INTVAL (operands[5]) >> INTVAL (operands[4])))"
   [(set (match_dup 6) (and:DI (match_dup 1) (match_dup 5)))
    (set (match_dup 0) (sign_extend:DI (ashift:SI (match_dup 7) (match_dup 4))))]
@@ -5445,6 +5506,35 @@
 }
   [(set_attr "type" "slt")
    (set_attr "mode" "<X:MODE>")])
+
+;; If the input operands are registers then we want to steer towards
+;; ADD, otherwise steer towards IOR.
+(define_expand "aop<mode>3"
+  [(set (match_operand:GPR 0 "register_operand")
+        (ior:GPR (match_operand:GPR 1 "register_operand")
+                 (match_operand:GPR 2 "arith_operand")))]
+  ""          
+  {
+    /* If we have shift-add insns and arguments are all registers, steer
+       towards PLUS, otherwise steer towards IOR.  */
+    if (TARGET_ZBA && REG_P (operands[2]))
+      emit_insn (gen_add<mode>3 (operands[0], operands[1], operands[2]));
+    else
+      {
+	/* We accept GPRs, so we need to do the right thing for SI on rv64.  */
+	if (GET_MODE (operands[0]) != word_mode)
+	  {
+	    operands[0] = gen_lowpart (word_mode, operands[0]);
+	    operands[1] = gen_lowpart (word_mode, operands[1]);
+	    operands[2] = gen_lowpart (word_mode, operands[2]);
+	    emit_insn (gen_iordi3 (operands[0], operands[1], operands[2]));
+	  }
+	else
+	  emit_insn (gen_ior<mode>3 (operands[0], operands[1], operands[2]));
+      }
+    DONE;
+  }
+) 
 
 (include "bitmanip.md")
 (include "crypto.md")

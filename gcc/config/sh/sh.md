@@ -2776,6 +2776,19 @@
   "xor	%2,%0"
   [(set_attr "type" "arith")])
 
+;; When we can use PLUS, IOR, or XOR interchangably, use IOR.
+(define_expand "aopsi3"
+  [(set (match_operand:SI 0 "arith_reg_dest")
+       (ior:SI (match_operand:SI 1 "arith_reg_operand")
+               (match_operand:SI 2 "logical_operand")))]
+  ""
+  {
+    emit_insn (gen_iorsi3 (operands[0], operands[1], operands[2]));
+    DONE;
+  }
+)
+
+
 ;; The *logical_op_t pattern helps combine eliminating sign/zero extensions
 ;; of results where one of the inputs is a T bit store.  Notice that this
 ;; pattern must not match during reload.  If reload picks this pattern it
@@ -11227,12 +11240,11 @@
   rtx_insn* i = emit_insn (gen_rtx_SET (operands[2],
 		    sh_remove_overlapping_post_inc (operands[2], operands[3])));
 
-  recog_data_d prev_recog_data = recog_data;
-  bool i_invalid = insn_invalid_p (i, false); 
-  recog_data = prev_recog_data;
-  
-  if (i_invalid)
-    FAIL;
+  {
+    recog_state_saver recog_save;
+    if (insn_invalid_p (i, false))
+      FAIL;
+  }
     
   sh_check_add_incdec_notes (i);
 
@@ -11267,12 +11279,11 @@
   rtx_insn* i = emit_insn (gen_rtx_SET (operands[2],
 		    sh_remove_overlapping_post_inc (operands[2], operands[3])));
 
-  recog_data_d prev_recog_data = recog_data;
-  bool i_invalid = insn_invalid_p (i, false); 
-  recog_data = prev_recog_data;
-  
-  if (i_invalid)
-    FAIL;
+  {
+    recog_state_saver recog_save;
+    if (insn_invalid_p (i, false))
+      FAIL;
+  }
     
   sh_check_add_incdec_notes (i);
   

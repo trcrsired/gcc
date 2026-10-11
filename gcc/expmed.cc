@@ -55,6 +55,13 @@ static bool store_integral_bit_field (rtx, opt_scalar_int_mode,
 				      unsigned HOST_WIDE_INT,
 				      poly_uint64, poly_uint64,
 				      machine_mode, rtx, bool, bool);
+/* The constant divisor of the last division expanded, so that a modulo by
+   the same constant can reuse the quotient.  Reset for each function by
+   prepare_function_start: carrying it across functions would make a
+   function's code depend on what was expanded before it in the translation
+   unit.  */
+HOST_WIDE_INT last_div_const = 0;
+
 static void store_fixed_bit_field (rtx, opt_scalar_int_mode,
 				   unsigned HOST_WIDE_INT,
 				   unsigned HOST_WIDE_INT,
@@ -858,12 +865,16 @@ store_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
      valid for integral modes.  */
   opt_scalar_int_mode op0_mode = int_mode_for_mode (GET_MODE (op0));
   scalar_int_mode imode;
+  bool need_stack_p = false;
   if (!op0_mode.exists (&imode) || imode != GET_MODE (op0))
     {
       if (MEM_P (op0))
 	op0 = adjust_bitfield_address_size (op0, op0_mode.else_blk (),
 					    0, MEM_SIZE (op0));
-      else if (!op0_mode.exists ())
+      else if (!op0_mode.exists ()
+	       || maybe_lt
+	       ((unsigned) UNITS_PER_WORD,
+		(poly_uint64) REGMODE_NATURAL_SIZE (GET_MODE (op0))))
 	{
 	  if (ibitnum == 0
 	      && known_eq (ibitsize, GET_MODE_BITSIZE (GET_MODE (op0)))
@@ -876,16 +887,28 @@ store_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
 	    }
 	  if (!fallback_p)
 	    return false;
-	  rtx temp = assign_stack_temp (GET_MODE (op0),
-					GET_MODE_SIZE (GET_MODE (op0)));
-	  emit_move_insn (temp, op0);
-	  store_bit_field_1 (temp, bitsize, bitnum, 0, 0, fieldmode, value,
-			     reverse, fallback_p, undefined_p);
-	  emit_move_insn (op0, temp);
-	  return true;
+	  need_stack_p = true;
 	}
       else
 	op0 = gen_lowpart (op0_mode.require (), op0);
+    }
+  else if (!MEM_P (op0)
+	   && maybe_lt ((unsigned) UNITS_PER_WORD,
+			(poly_uint64) REGMODE_NATURAL_SIZE (GET_MODE (op0))))
+    need_stack_p = true;
+
+  /* With or without punning we might be faced with a mode that we cannot
+     split into words.  If so, spill OP0 to the stack and recurse.
+     This happens at most once.  */
+  if (need_stack_p)
+    {
+      rtx temp = assign_stack_temp (GET_MODE (op0),
+				    GET_MODE_SIZE (GET_MODE (op0)));
+      emit_move_insn (temp, op0);
+      store_bit_field_1 (temp, bitsize, bitnum, 0, 0, fieldmode, value,
+			 reverse, fallback_p, undefined_p);
+      emit_move_insn (op0, temp);
+      return true;
     }
 
   return store_integral_bit_field (op0, op0_mode, ibitsize, ibitnum,
@@ -1008,7 +1031,9 @@ store_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 	      in BLKmode to handle unaligned memory references and to shift the
 	      last chunk right on big-endian machines if need be.  */
 	  rtx value_word
-	    = fieldmode == BLKmode
+	    = (fieldmode == BLKmode
+	       || maybe_lt ((unsigned) UNITS_PER_WORD,
+			    (poly_uint64) REGMODE_NATURAL_SIZE (value_mode)))
 	      ? extract_bit_field (value, new_bitsize, wordnum * BITS_PER_WORD,
 				   1, NULL_RTX, word_mode, word_mode, false,
 				   NULL)
@@ -1344,6 +1369,16 @@ store_fixed_bit_field_1 (rtx op0, scalar_int_mode mode,
   if (reverse)
     value = flip_storage_order (mode, value);
 
+  /* A field filling the whole of a MEM has no surrounding bits to preserve,
+     so store it directly: the read of a volatile OP0 cannot be removed later
+     and would be a spurious access with side effects (PR71048).  */
+  if (MEM_P (op0) && bitnum == 0 && bitsize == GET_MODE_BITSIZE (mode))
+    {
+      op0 = copy_rtx (op0);
+      emit_move_insn (op0, value);
+      return;
+    }
+
   /* Now clear the chosen bits in OP0,
      except that if VALUE is -1 we need not bother.  */
   /* We keep the intermediates in registers to allow CSE to combine
@@ -1365,8 +1400,9 @@ store_fixed_bit_field_1 (rtx op0, scalar_int_mode mode,
 
   if (! all_zero)
     {
-      temp = expand_binop (mode, ior_optab, temp, value,
-			   NULL_RTX, 1, OPTAB_LIB_WIDEN);
+      /* Use aop_optab if the field has been cleared.  */
+      temp = expand_binop (mode, all_one ? ior_optab : aop_optab,
+			   temp, value, NULL_RTX, 1, OPTAB_LIB_WIDEN);
       temp = force_reg (mode, temp);
     }
 
@@ -1834,12 +1870,16 @@ extract_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
      if we aren't.  */
   opt_scalar_int_mode op0_mode = int_mode_for_mode (GET_MODE (op0));
   scalar_int_mode imode;
+  bool need_stack_p = false;
   if (!op0_mode.exists (&imode) || imode != GET_MODE (op0))
     {
       if (MEM_P (op0))
 	op0 = adjust_bitfield_address_size (op0, op0_mode.else_blk (),
 					    0, MEM_SIZE (op0));
-      else if (op0_mode.exists (&imode))
+      else if (op0_mode.exists (&imode)
+	       && known_ge
+	       ((unsigned) UNITS_PER_WORD,
+		(poly_uint64) REGMODE_NATURAL_SIZE (GET_MODE (op0))))
 	{
 	  op0 = gen_lowpart (imode, op0);
 
@@ -1849,12 +1889,19 @@ extract_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
 	    op0 = force_reg (imode, op0);
 	}
       else
-	{
-	  poly_int64 size = GET_MODE_SIZE (GET_MODE (op0));
-	  rtx mem = assign_stack_temp (GET_MODE (op0), size);
-	  emit_move_insn (mem, op0);
-	  op0 = adjust_bitfield_address_size (mem, BLKmode, 0, size);
-	}
+	need_stack_p = true;
+    }
+  else if (!MEM_P (op0)
+	   && maybe_lt ((unsigned) UNITS_PER_WORD,
+			(poly_uint64) REGMODE_NATURAL_SIZE (GET_MODE (op0))))
+    need_stack_p = true;
+
+  if (need_stack_p)
+    {
+      poly_int64 size = GET_MODE_SIZE (GET_MODE (op0));
+      rtx mem = assign_stack_temp (GET_MODE (op0), size);
+      emit_move_insn (mem, op0);
+      op0 = adjust_bitfield_address_size (mem, BLKmode, 0, size);
     }
 
   /* ??? We currently assume TARGET is at least as big as BITSIZE.
@@ -1975,14 +2022,16 @@ extract_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 				   (unsignedp ? 1 : -1), target_part,
 				   mode, word_mode, reverse, fallback_p, NULL);
 
-	  gcc_assert (target_part);
 	  if (!result_part)
 	    {
 	      delete_insns_since (last);
 	      return NULL;
 	    }
 
-	  if (result_part != target_part)
+	  if (!target_part)
+	    store_bit_field (target, BITS_PER_WORD, i * BITS_PER_WORD,
+			     0, 0, word_mode, result_part, false, i == 0);
+	  else if (result_part != target_part)
 	    emit_move_insn (target_part, result_part);
 	}
 
@@ -3584,7 +3633,9 @@ expand_mult (machine_mode mode, rtx op0, rtx op1, rtx target,
       else if (CONST_DOUBLE_AS_INT_P (scalar_op1))
 #endif
 	{
-	  int shift = wi::exact_log2 (rtx_mode_t (scalar_op1, mode));
+	  machine_mode scalar_mode = VECTOR_MODE_P (mode)
+				     ? GET_MODE_INNER (mode) : mode;
+	  int shift = wi::exact_log2 (rtx_mode_t (scalar_op1, scalar_mode));
 	  /* Perfect power of 2 (other than 1, which is handled above).  */
 	  if (shift > 0)
 	    return expand_shift (LSHIFT_EXPR, mode, op0,
@@ -4370,7 +4421,6 @@ expand_divmod (int rem_flag, enum tree_code code, machine_mode mode,
   optab optab1, optab2;
   int op1_is_constant, op1_is_pow2 = 0;
   int max_cost, extra_cost;
-  static HOST_WIDE_INT last_div_const = 0;
   bool speed = optimize_insn_for_speed_p ();
 
   op1_is_constant = CONST_INT_P (op1);

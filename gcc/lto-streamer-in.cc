@@ -1113,25 +1113,25 @@ input_cfg (class lto_input_block *ib, class data_in *data_in,
 	bb = make_new_block (fn, index);
 
       edge_count = streamer_read_uhwi (ib);
+      vec_safe_reserve (bb->preds, edge_count);
 
       /* Connect up the CFG.  */
       for (i = 0; i < edge_count; i++)
 	{
 	  bitpack_d bp = streamer_read_bitpack (ib);
-	  unsigned int dest_index = bp_unpack_var_len_unsigned (&bp);
+	  unsigned int src_index = bp_unpack_var_len_unsigned (&bp);
 	  unsigned int edge_flags = bp_unpack_var_len_unsigned (&bp);
-	  basic_block dest = BASIC_BLOCK_FOR_FN (fn, dest_index);
+	  basic_block src = BASIC_BLOCK_FOR_FN (fn, src_index);
 
-	  if (dest == NULL)
-	    dest = make_new_block (fn, dest_index);
+	  if (src == NULL)
+	    src = make_new_block (fn, src_index);
 
-	  edge e = make_edge (bb, dest, edge_flags);
+	  edge e = make_edge (src, bb, edge_flags);
 	  data_in->location_cache.input_location_and_block (&e->goto_locus,
 							    &bp, ib, data_in);
 	  e->probability = profile_probability::stream_in (ib);
 	  if (!e->probability.initialized_p ())
 	    full_profile = false;
-
 	}
 
       index = streamer_read_hwi (ib);
@@ -2140,7 +2140,8 @@ lto_input_mode_table (struct lto_file_decl_data *file_data)
 	  break;
 	}
       /* First search just the GET_CLASS_NARROWEST_MODE to wider modes,
-	 if not found, fallback to all modes.  */
+	 if not found, fallback to all modes.  When found, pass is 3 (2 + 1),
+	 when not found, pass is 2 ('< 2' check + 1).  */
       int pass;
       for (pass = 0; pass < 2; pass++)
 	for (machine_mode mr = pass ? VOIDmode
@@ -2163,8 +2164,19 @@ lto_input_mode_table (struct lto_file_decl_data *file_data)
 	    continue;
 	  else
 	    {
+	      /* Found.  */
 	      table[m] = mr;
-	      pass = 2;
+	      pass = 2;  /* Will be 3 after the outer loop.  */
+#ifdef ACCEL_COMPILER
+	      /* A mode used by the host code - and generally supported by the
+		 offloading-target compiler might not actually be available,
+		 depending e.g. on -march or other other commandline options.
+		 Hence, check again and, if failing, diagnose it below.  */
+	      if (scalar_mode::includes_p (mr)
+		  && !targetm.scalar_mode_supported_p (
+			scalar_mode::from_int (mr)))
+		pass = 1;  /* Such that pass == 2 after the outer loop. */
+#endif
 	      break;
 	    }
       unsigned int mname_len;

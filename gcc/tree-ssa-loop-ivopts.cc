@@ -133,6 +133,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "dbgcnt.h"
 #include "cfganal.h"
 #include "gimple-fold.h"
+#include "gimple-range.h"
 
 /* For lang_hooks.types.type_for_mode.  */
 #include "langhooks.h"
@@ -4037,9 +4038,9 @@ get_computation_aff_1 (struct ivopts_data *data, gimple *at, struct iv_use *use,
   common_type = determine_common_wider_type (&ubase, &cbase);
 
   /* use = ubase - ratio * cbase + ratio * var.  */
-  tree_to_aff_combination (ubase, common_type, aff_inv);
-  tree_to_aff_combination (cbase, common_type, &aff_cbase);
-  tree_to_aff_combination (var, uutype, aff_var);
+  tree_to_aff_combination (ubase, common_type, aff_inv, at);
+  tree_to_aff_combination (cbase, common_type, &aff_cbase, at);
+  tree_to_aff_combination (var, uutype, aff_var, at);
 
   /* We need to shift the value if we are after the increment.  */
   if (stmt_after_increment (data->current_loop, cand, at))
@@ -4051,14 +4052,14 @@ get_computation_aff_1 (struct ivopts_data *data, gimple *at, struct iv_use *use,
       else
 	cstep_common = cstep;
 
-      tree_to_aff_combination (cstep_common, common_type, &cstep_aff);
+      tree_to_aff_combination (cstep_common, common_type, &cstep_aff, at);
       aff_combination_add (&aff_cbase, &cstep_aff);
     }
 
   aff_combination_scale (&aff_cbase, -rat);
   aff_combination_add (aff_inv, &aff_cbase);
   if (common_type != uutype)
-    aff_combination_convert (aff_inv, uutype);
+    aff_combination_convert (aff_inv, uutype, at);
 
   aff_combination_scale (aff_var, rat);
   return true;
@@ -5234,14 +5235,40 @@ difference_cannot_overflow_p (struct ivopts_data *data, tree base, tree offset)
     }
 }
 
+/* Return true if STEP * VAL, computed in OFF_TYPE, is known to be a
+   non-negative offset which does not overflow, i.e. if the value of VAL is
+   non-negative and multiplying it by STEP fits in the signed range of
+   OFF_TYPE.  */
+
+static bool
+nonneg_scaled_offset_p (tree val, HOST_WIDE_INT step, tree off_type)
+{
+  if (!INTEGRAL_TYPE_P (TREE_TYPE (val)) || step == 0)
+    return false;
+
+  signop sgn = TYPE_SIGN (TREE_TYPE (val));
+  int_range_max r;
+  if (!get_range_query (cfun)->range_of_expr (r, val)
+      || r.undefined_p ()
+      || wi::neg_p (r.lower_bound (), sgn))
+    return false;
+
+  widest_int max = widest_int::from (r.upper_bound (), sgn);
+  widest_int limit
+    = widest_int::from (wi::max_value (TYPE_PRECISION (off_type), SIGNED),
+			SIGNED);
+  return wi::leu_p (max, wi::udiv_trunc (limit, absu_hwi (step)));
+}
+
 /* Tries to replace loop exit by one formulated in terms of a LT_EXPR
    comparison with CAND.  NITER describes the number of iterations of
-   the loops.  If successful, the comparison in COMP_P is altered accordingly.
+   the loops.  If successful, the comparison in COMP_P is altered accordingly
+   and the bound in BOUND_P is recomputed.
 
    We aim to handle the following situation:
 
    sometype *base, *p;
-   int a, b, i;
+   unsigned a, b, i;
 
    i = a;
    p = p_0 = base + a;
@@ -5263,22 +5290,45 @@ difference_cannot_overflow_p (struct ivopts_data *data, tree base, tree offset)
        bla (*p);
        p++;
      }
-   while (p < p_0 - a + b);
+   while (p < p_0 - (a + 1) + (b + 1));
 
-   This preserves the correctness, since the pointer arithmetics does not
-   overflow.  More precisely:
+   Note that the bound has to be computed as p_0 - (a + 1) + (b + 1) and not
+   from the number of iterations as p_0 + (b - a): the latter is only
+   equivalent if b - a does not wrap, which is not the case when the loop
+   rolls zero times.
 
-   1) if a + 1 <= b, then p_0 - a + b is the final value of p, hence there is no
-      overflow in computing it or the values of p.
-   2) if a + 1 > b, then we need to verify that the expression p_0 - a does not
-      overflow.  To prove this, we use the fact that p_0 = base + a.  */
+   Note also that a + 1 must be used as the offset it is, i.e. converted to
+   the type of the offsets as a whole, and not rewritten into a and 1, since
+   it may wrap around in the type of a: this is precisely the case where the
+   loop rolls but b - a is not the number of iterations either.  Conversely
+   b + 1 must be computed in the type of the offsets, where it cannot wrap
+   around, since nothing constrains b when the loop rolls zero times.
+
+   For this to preserve correctness, we need to know that the values compared
+   in the transformed loop are ordered the same way as i and b are.  Since the
+   comparison of the pointers is performed modulo the size of the address
+   space, this needs a + 1 > b to be an unsigned comparison, and the offsets
+   a, b, a + 1 and b + 1 scaled by the step of the candidate to be
+   non-negative and to not overflow.  Then:
+
+   1) if a + 1 <= b, then the loop rolls b - (a + 1) times, so that (b + 1)
+      - (a + 1) computed on the offsets is its number of iterations, and
+      p_0 - (a + 1) + (b + 1) is the final value of p, hence there is no
+      overflow in computing it or the values of p, and the pointers increase
+      monotonically together with i.
+   2) if a + 1 > b, then the loop exits at the first test and a + 1 does not
+      wrap around, so b <= a implies that p_0 - (a + 1) + (b + 1) = p_0 - a
+      + b lies between the valid addresses p_0 - a and p_0, so the test indeed
+      fails.  Here we also need to verify that the expression p_0 - a does not
+      overflow, which we prove using p_0 = base + a.  */
 
 static bool
-iv_elimination_compare_lt (struct ivopts_data *data,
+iv_elimination_compare_lt (struct ivopts_data *data, struct iv_use *use,
 			   struct iv_cand *cand, enum tree_code *comp_p,
-			   class tree_niter_desc *niter)
+			   class tree_niter_desc *niter, tree *bound_p)
 {
-  tree cand_type, a, b, mbz, nit_type = TREE_TYPE (niter->niter), offset;
+  tree cand_type, a, a1, b, b1, mbz, nit_type = TREE_TYPE (niter->niter);
+  tree off_type, offset, bound;
   class aff_tree nit, tmpa, tmpb;
   enum tree_code comp;
   HOST_WIDE_INT step;
@@ -5303,6 +5353,11 @@ iv_elimination_compare_lt (struct ivopts_data *data,
     return false;
   step = int_cst_value (cand->iv->step);
 
+  /* The bound we compute below is the value the candidate has after the last
+     iteration, so the exit test has to see the incremented candidate.  */
+  if (!stmt_after_increment (data->current_loop, cand, use->stmt))
+    return false;
+
   /* Check that the number of iterations matches the expected pattern:
      a + 1 > b ? 0 : b - a - 1.  */
   mbz = niter->may_be_zero;
@@ -5312,6 +5367,7 @@ iv_elimination_compare_lt (struct ivopts_data *data,
       tree op0 = TREE_OPERAND (mbz, 0);
       if (TREE_CODE (op0) == PLUS_EXPR && integer_onep (TREE_OPERAND (op0, 1)))
 	{
+	  a1 = op0;
 	  a = TREE_OPERAND (op0, 0);
 	  b = TREE_OPERAND (mbz, 1);
 	}
@@ -5325,6 +5381,7 @@ iv_elimination_compare_lt (struct ivopts_data *data,
       /* Handle b < a + 1.  */
       if (TREE_CODE (op1) == PLUS_EXPR && integer_onep (TREE_OPERAND (op1, 1)))
 	{
+	  a1 = op1;
 	  a = TREE_OPERAND (op1, 0);
 	  b = TREE_OPERAND (mbz, 0);
 	}
@@ -5346,12 +5403,33 @@ iv_elimination_compare_lt (struct ivopts_data *data,
   if (tmpb.n != 0 || maybe_ne (tmpb.offset, 1))
     return false;
 
-  /* Finally, check that CAND->IV->BASE - CAND->IV->STEP * A does not
-     overflow.  */
-  offset = fold_build2 (MULT_EXPR, TREE_TYPE (cand->iv->step),
-			cand->iv->step,
-			fold_convert (TREE_TYPE (cand->iv->step), a));
+  /* The comparison A + 1 > B only tells us that B is at most A if it is
+     an unsigned one; otherwise B may well be negative.  */
+  if (!TYPE_UNSIGNED (TREE_TYPE (a)))
+    return false;
+
+  /* Check that CAND->IV->BASE - CAND->IV->STEP * A does not overflow.  */
+  off_type = TREE_TYPE (cand->iv->step);
+  offset = fold_build2 (MULT_EXPR, off_type, cand->iv->step,
+			fold_convert (off_type, a));
   if (!difference_cannot_overflow_p (data, cand->iv->base, offset))
+    return false;
+
+  /* Convert A + 1 as a whole, since it may wrap around in the type of A, but
+     compute B + 1 in OFF_TYPE, where it cannot wrap around.  */
+  a1 = fold_convert (off_type, a1);
+  b1 = fold_build2 (PLUS_EXPR, off_type, fold_convert (off_type, b),
+		    build_one_cst (off_type));
+
+  /* The candidate is compared as an unsigned quantity, so the offsets by
+     which A + 1 and B + 1 move it away from CAND->IV->BASE - CAND->IV->STEP
+     * (A + 1) have to be ordered the same way as A + 1 and B + 1 themselves.
+     The same is required of A and B, in terms of which the bound is
+     expressed when the loop rolls zero times.  */
+  if (!nonneg_scaled_offset_p (a, step, off_type)
+      || !nonneg_scaled_offset_p (b, step, off_type)
+      || !nonneg_scaled_offset_p (a1, step, off_type)
+      || !nonneg_scaled_offset_p (b1, step, off_type))
     return false;
 
   /* Determine the new comparison operator.  */
@@ -5362,6 +5440,21 @@ iv_elimination_compare_lt (struct ivopts_data *data,
     *comp_p = invert_tree_comparison (comp, false);
   else
     gcc_unreachable ();
+
+  /* Recompute the bound as CAND->IV->BASE - CAND->IV->STEP * (A + 1)
+     + CAND->IV->STEP * (B + 1).  Deriving it from the number of iterations,
+     as cand_value_at does, is not correct here: B - A is computed in NIT_TYPE
+     and converting it to OFF_TYPE is not value preserving when the loop
+     rolls zero times and B - A is thus negative.  */
+  bound = fold_build2 (MINUS_EXPR, off_type,
+		       fold_build2 (MULT_EXPR, off_type, cand->iv->step, b1),
+		       fold_build2 (MULT_EXPR, off_type, cand->iv->step, a1));
+  cand_type = TREE_TYPE (cand->iv->base);
+  if (POINTER_TYPE_P (cand_type))
+    *bound_p = fold_build_pointer_plus (cand->iv->base, bound);
+  else
+    *bound_p = fold_build2 (PLUS_EXPR, cand_type, cand->iv->base,
+			    fold_convert (cand_type, bound));
 
   return true;
 }
@@ -5472,12 +5565,6 @@ may_eliminate_iv (struct ivopts_data *data,
 			 aff_combination_to_tree (&bnd));
   *comp = iv_elimination_compare (data, use);
 
-  /* It is unlikely that computing the number of iterations using division
-     would be more profitable than keeping the original induction variable.  */
-  bool cond_overflow_p;
-  if (expression_expensive_p (*bound, &cond_overflow_p))
-    return false;
-
   /* Sometimes, it is possible to handle the situation that the number of
      iterations may be zero unless additional assumptions by using <
      instead of != in the exit condition.
@@ -5485,8 +5572,15 @@ may_eliminate_iv (struct ivopts_data *data,
      TODO: we could also calculate the value MAY_BE_ZERO ? 0 : NITER and
 	   base the exit condition on it.  However, that is often too
 	   expensive.  */
-  if (!integer_zerop (desc->may_be_zero))
-    return iv_elimination_compare_lt (data, cand, comp, desc);
+  if (!integer_zerop (desc->may_be_zero)
+      && !iv_elimination_compare_lt (data, use, cand, comp, desc, bound))
+    return false;
+
+  /* It is unlikely that computing the number of iterations using division
+     would be more profitable than keeping the original induction variable.  */
+  bool cond_overflow_p;
+  if (expression_expensive_p (*bound, &cond_overflow_p))
+    return false;
 
   return true;
 }
@@ -6093,27 +6187,22 @@ ivopts_estimate_reg_pressure (struct ivopts_data *data, unsigned n_invs,
     available_regs = available_regs - target_clobbered_regs;
 
   /* If we have enough registers.  */
-  if (regs_needed + target_res_regs < available_regs)
+  if (regs_needed <= available_regs)
     cost = 0;
-  /* If close to running out of registers, try to preserve them.  */
-  else if (regs_needed <= available_regs)
-    cost = target_reg_cost [speed] * regs_needed;
   /* If we run out of available registers but the number of candidates
-     does not, we penalize extra registers using target_spill_cost.  */
+     does not, we penalize extra registers using target_spill_cost.
+     As we tend to spill invariants here, only take loading the
+     invariant into account, because the invariant won't change for the
+     duration of the loop and storing it every iteration is unnecessary. */
   else if (n_cands <= available_regs)
-    cost = target_reg_cost [speed] * available_regs
-	   + target_spill_cost [speed] * (regs_needed - available_regs);
-  /* If the number of candidates runs out available registers, we penalize
-     extra candidate registers using target_spill_cost * 2.  Because it is
-     more expensive to spill induction variable than invariant.  */
+    cost = target_spill_cost [speed] * (regs_needed - available_regs) / 2;
+  /* If both IV cands and invariants spill, calculate additional cost for
+     having to store spilled candidates. */
   else
-    cost = target_reg_cost [speed] * available_regs
-	   + target_spill_cost [speed] * (n_cands - available_regs) * 2
-	   + target_spill_cost [speed] * (regs_needed - n_cands);
+    cost = (target_spill_cost [speed] * (regs_needed - available_regs) / 2
+	    + target_spill_cost[speed] * (n_cands - available_regs) / 2);
 
-  /* Finally, add the number of candidates, so that we prefer eliminating
-     induction variables if possible.  */
-  return cost + n_cands;
+  return cost;
 }
 
 /* For each size of the induction variable set determine the penalty.  */
@@ -7257,10 +7346,15 @@ create_new_iv (struct ivopts_data *data, struct iv_cand *cand)
       name_info (data, cand->var_before)->preserve_biv = true;
       name_info (data, cand->var_after)->preserve_biv = true;
 
-      /* Rewrite the increment so that it uses var_before directly.  */
+      /* Rewrite the increment so that it uses var_before directly.  Missed
+	 optimization can result in a use IV with zero step, avoid
+	 crashing in that case.  */
       use = find_interesting_uses_op (data, cand->var_after);
-      group = data->vgroups[use->group_id];
-      group->selected = cand;
+      if (use)
+	{
+	  group = data->vgroups[use->group_id];
+	  group->selected = cand;
+	}
       return;
     }
 
@@ -8246,6 +8340,8 @@ tree_ssa_iv_optimize (void)
   tree_ssa_iv_optimize_init (&data);
   mark_ssa_maybe_undefs ();
 
+  enable_ranger (cfun, false);
+
   /* Optimize the loops starting with the innermost ones.  */
   for (auto loop : loops_list (cfun, LI_FROM_INNERMOST))
     {
@@ -8257,6 +8353,8 @@ tree_ssa_iv_optimize (void)
 
       tree_ssa_iv_optimize_loop (&data, loop, toremove);
     }
+
+  disable_ranger (cfun);
 
   /* Remove eliminated IV defs.  */
   release_defs_bitset (toremove);

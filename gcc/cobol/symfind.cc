@@ -61,7 +61,7 @@ struct funcname {
     std::reverse_iterator<const char *> rbeg(pend), rend(p);
     // Find the last character that could not by part of the function name.
     const std::string stop(" *&");
-    auto rp = std::find_if( rbeg, rend, 
+    auto rp = std::find_if( rbeg, rend,
                             [stop]( char ch ) {
                               return stop.find(ch) != std::string::npos;
                             } );
@@ -136,7 +136,7 @@ static class symbol_file_names_t : protected symbol_map_t {
     std::vector<size_t> ids( 1, file.default_record );
     sym_name_t key(program, file.name, 0);
     (*this)[key] = ids;
-    // Keep track of symbols we added, so the parser can ask. 
+    // Keep track of symbols we added, so the parser can ask.
     auto f = cbl_field_of(symbol_at(ids.front()));
     assert('_' == f->name[0]); // not a COBOL name
     named_defaults.insert(ids.front());
@@ -144,16 +144,16 @@ static class symbol_file_names_t : protected symbol_map_t {
   symbol_map_t find( size_t program, const char name[] ) const {
     symbol_map_t output;
     std::copy_if( cbegin(), cend(),
-                  std::inserter(output, output.begin()), 
+                  std::inserter(output, output.begin()),
                   [program, name]( const auto& elem ) {
                     return match(program, name, elem);
                   } );
-    
+
     dbgmsg("%s:%d: found %lu #%lu for %s", __funcsig__, __LINE__,
            (unsigned long)output.size(),
            output.empty()? 0ul : (unsigned long)output.begin()->second.front(),
            name);
-           
+
     return output;
   }
   bool exists( const cbl_field_t * field ) const {
@@ -585,7 +585,7 @@ symbol_match2( size_t program,
  * N-1.
  */
 static symbol_map_t
-symbol_match( size_t program, const std::list<const char *>& names ) {
+symbol_match( size_t program, const std::list<const char *>& names, bool diagnose ) {
   auto matched = symbol_match2( program, names );
   symbol_map_t output;
 
@@ -596,12 +596,12 @@ symbol_match( size_t program, const std::list<const char *>& names ) {
     symbol_map_t::key_type key( e->program, f->name, f->parent );
     auto p = symbol_map.find(key);
     if( p == symbol_map.end() ) {
-      yyerror("%s is not defined", key.name);
+      yyerror("%qs is not defined", key.name);
       continue;
     }
     auto inserted = output.insert(*p);
-    if( ! inserted.second ) {
-      error_msg_direct("%s is not a unique reference", key.name);
+    if( diagnose && ! inserted.second ) {
+      error_msg_direct("%qs is not a unique reference", key.name);
     }
   }
   return output;
@@ -619,8 +619,8 @@ symbol_field_alias_end() {
 }
 
 std::pair <symbol_elem_t *, bool>
-symbol_find( size_t program, std::list<const char *> names ) {
-  symbol_map_t items = symbol_match(program, names);
+symbol_find( size_t program, std::list<const char *> names, bool diagnose ) {
+  symbol_map_t items = symbol_match(program, names, diagnose);
 
   if( symbol_field_alias_01 && items.size() != 1 ) {
     symbol_map_t qualified;
@@ -673,7 +673,7 @@ public:
 
 symbol_elem_t *
 symbol_find_of( size_t program, std::list<const char *> names, size_t group ) {
-  symbol_map_t input = symbol_match(program, names);
+  symbol_map_t input = symbol_match(program, names, true);
 
   symbol_map_t items;
   std::copy_if( input.begin(), input.end(),

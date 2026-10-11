@@ -5644,7 +5644,7 @@ expand_omp_for_static_nochunk (struct omp_region *region,
 						   cont_bb, body_bb);
     }
 
-  if (flag_openmp_ompt_detailed)
+  if (flag_openmp_ompt == OMP_OMPT_LEVEL_EXTENDED)
     {
       /* Insert call to GOMP_*_static_worksharing_dispatch at the end of
 	 seq_start_bb.  */
@@ -6492,7 +6492,7 @@ expand_omp_for_static_chunk (struct omp_region *region,
     }
   gsi_remove (&gsi, true);
 
-  if (flag_openmp_ompt_detailed)
+  if (flag_openmp_ompt == OMP_OMPT_LEVEL_EXTENDED)
     {
       /* Insert call to GOMP_*_static_worksharing_dispatch at the end of
 	 seq_start_bb.  */
@@ -9257,7 +9257,7 @@ expand_omp_atomic_fetch_op (basic_block load_bb,
      use the RELAXED memory model.  */
   call = build_call_expr_loc (loc, decl, 3, addr,
 			      fold_convert_loc (loc, itype, rhs),
-			      build_int_cst (NULL, mo));
+			      build_int_cst (integer_type_node, mo));
 
   if (need_old || need_new)
     {
@@ -9408,8 +9408,8 @@ expand_omp_atomic_cas (basic_block load_bb, tree addr,
   bool need_old = gimple_omp_atomic_need_value_p (load_stmt);
   bool weak = gimple_omp_atomic_weak_p (load_stmt);
   enum omp_memory_order omo = gimple_omp_atomic_memory_order (load_stmt);
-  tree mo = build_int_cst (NULL, omp_memory_order_to_memmodel (omo));
-  tree fmo = build_int_cst (NULL, omp_memory_order_to_fail_memmodel (omo));
+  tree mo = build_int_cst (integer_type_node, omp_memory_order_to_memmodel (omo));
+  tree fmo = build_int_cst (integer_type_node, omp_memory_order_to_fail_memmodel (omo));
   gcc_checking_assert (!need_old || !need_new);
 
   enum built_in_function fncode
@@ -9583,8 +9583,8 @@ expand_omp_atomic_pipeline (basic_block load_bb, basic_block store_bb,
   gcc_assert (gimple_code (gsi_stmt (si)) == GIMPLE_OMP_ATOMIC_LOAD);
   location_t loc = gimple_location (gsi_stmt (si));
   enum omp_memory_order omo = gimple_omp_atomic_memory_order (gsi_stmt (si));
-  tree mo = build_int_cst (NULL, omp_memory_order_to_memmodel (omo));
-  tree fmo = build_int_cst (NULL, omp_memory_order_to_fail_memmodel (omo));
+  tree mo = build_int_cst (integer_type_node, omp_memory_order_to_memmodel (omo));
+  tree fmo = build_int_cst (integer_type_node, omp_memory_order_to_fail_memmodel (omo));
 
   /* For floating-point values, we'll need to view-convert them to integers
      so that we can perform the atomic compare and swap.  Simplify the
@@ -9618,7 +9618,7 @@ expand_omp_atomic_pipeline (basic_block load_bb, basic_block store_bb,
     initial
       = fold_convert (atype,
 		      build_call_expr (loaddecl, 2, iaddr,
-				       build_int_cst (NULL_TREE,
+				       build_int_cst (integer_type_node,
 						      MEMMODEL_RELAXED)));
   else
     {

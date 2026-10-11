@@ -1,3 +1,25 @@
+2026-09-08  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR middle-end/126622
+	* objc-act.cc (objc_finish_foreach_loop): Use
+	build_int_cst (integer_type_node, cst).
+	* objc-gnu-runtime-abi-01.cc (gnu_runtime_abi_01_build_const_string_constructor):
+	Ditto.
+	(generate_protocol_list): Ditto.
+	(generate_v1_meth_descriptor_table): Ditto.
+	(build_shared_structure_initializer): Ditto.
+	(generate_ivars_list): Ditto.
+	(get_proto_encoding): Ditto.
+	* objc-next-runtime-abi-01.cc (next_runtime_01_initialize): Ditto.
+	(next_runtime_abi_01_build_const_string_constructor): Ditto.
+	(generate_v1_meth_descriptor_table): Ditto.
+	(build_v1_category_initializer): Ditto.
+	(build_next_objc_exception_stuff): Ditto.
+	* objc-next-runtime-abi-02.cc (next_runtime_abi_02_build_const_string_constructor): Ditto.
+	(generate_v2_meth_descriptor_table): Ditto.
+	(generate_v2_protocols): Ditto.
+	* objc-runtime-shared-support.cc (build_ivar_list_initializer): Ditto.
+
 2026-07-05  Iain Sandoe  <iain@sandoe.co.uk>
 
 	PR objc/124260

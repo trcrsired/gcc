@@ -3099,6 +3099,48 @@ gimple_fold_builtin_fputs (gimple_stmt_iterator *gsi,
     }
 }
 
+/* Fold a call to fwrite (PTR, SIZE, N, STREAM) at *GSI.  UNLOCKED says whether
+   the callee is fwrite_unlocked rather than fwrite.  A call that transfers a
+   single byte and whose result is nobody's business writes the same byte as
+   fputc (*PTR, STREAM), which reaches the stream without going through the
+   generic buffered-write path.  Return true if the call was folded.  */
+
+static bool
+gimple_fold_builtin_fwrite (gimple_stmt_iterator *gsi, bool unlocked)
+{
+  gimple *stmt = gsi_stmt (*gsi);
+
+  /* fwrite reports the number of items transferred and fputc the character
+     written, so only fold when nothing looks at the result.  */
+  if (gimple_call_lhs (stmt))
+    return false;
+
+  /* fwrite transfers SIZE * N bytes, so writing a single byte needs both
+     counts to be one: no other pair of non-negative values multiplies to
+     one.  */
+  if (!integer_onep (gimple_call_arg (stmt, 1))
+      || !integer_onep (gimple_call_arg (stmt, 2)))
+    return false;
+
+  /* If we're using an unlocked function, assume the other unlocked
+     functions exist explicitly.  */
+  tree const fn_fputc = (unlocked
+			 ? builtin_decl_explicit (BUILT_IN_FPUTC_UNLOCKED)
+			 : builtin_decl_implicit (BUILT_IN_FPUTC));
+  if (!fn_fputc || (!gimple_vdef (stmt) && gimple_in_ssa_p (cfun)))
+    return false;
+
+  location_t loc = gimple_location (stmt);
+  gimple_seq stmts = NULL;
+  tree byte = gimple_load_first_char (loc, gimple_call_arg (stmt, 0), &stmts);
+  tree c = gimple_convert (&stmts, integer_type_node, byte);
+  tree stream = gimple_call_arg (stmt, 3);
+  gcall *repl = gimple_build_call (fn_fputc, 2, c, stream);
+  gimple_seq_add_stmt_without_update (&stmts, repl);
+  gsi_replace_with_seq_vops (gsi, stmts);
+  return true;
+}
+
 /* Fold a call to the __mem{cpy,pcpy,move,set}_chk builtin.
    DEST, SRC, LEN, and SIZE are the arguments to the call.
    IGNORE is true, if return value can be ignored.  FCODE is the BUILT_IN_*
@@ -5583,6 +5625,10 @@ gimple_fold_builtin (gimple_stmt_iterator *gsi)
     case BUILT_IN_FPUTS_UNLOCKED:
       return gimple_fold_builtin_fputs (gsi, gimple_call_arg (stmt, 0),
 					gimple_call_arg (stmt, 1), true);
+    case BUILT_IN_FWRITE:
+      return gimple_fold_builtin_fwrite (gsi, false);
+    case BUILT_IN_FWRITE_UNLOCKED:
+      return gimple_fold_builtin_fwrite (gsi, true);
     case BUILT_IN_MEMCPY_CHK:
     case BUILT_IN_MEMPCPY_CHK:
     case BUILT_IN_MEMMOVE_CHK:
@@ -5938,7 +5984,7 @@ partial_load_store_mask_state (gcall *call, tree vectype)
   if (len && poly_int_tree_p (len))
     {
       gcc_assert (TREE_CODE (bias) == INTEGER_CST);
-      wlen = wi::to_poly_widest (len) + wi::to_widest (bias);
+      wlen = wi::to_poly_widest (len) - wi::to_widest (bias);
 
       if (known_eq (wlen, 0))
 	return MASK_ALL_INACTIVE;
@@ -7577,6 +7623,9 @@ and_comparisons_1 (tree type, enum tree_code code1, tree op1a, tree op1b,
   /* Perhaps the first comparison is (NAME != 0) or (NAME == 1) where
      NAME's definition is a truth value.  See if there are any simplifications
      that can be done against the NAME's definition.  */
+  /* ???  Do the same for op2a, but as we are recursing we have to track
+     whether we swap the order of the comparsions since that's important
+     with respect to exceptions.  */
   if (TREE_CODE (op1a) == SSA_NAME
       && (code1 == NE_EXPR || code1 == EQ_EXPR)
       && (integer_zerop (op1b) || integer_onep (op1b)))
@@ -7860,8 +7909,10 @@ gimple_binop_def_p (enum tree_code code, tree t, tree op[2])
    *PAND_MASK is initially set to a mask with nonzero precision, that mask is
    combined with the found mask, or adjusted in precision to match.
 
-   *PSIGNBIT is set to TRUE if, before clipping to *PBITSIZE, the mask
-   encompassed bits that corresponded to extensions of the sign bit.
+   *PSIGNBIT is set to 1 if, before clipping to *PBITSIZE, the mask
+   encompassed bits that corresponded to extensions of the sign bit, or to -1
+   if the mask encompassed bits that would be extensions of the sign bit
+   and zeroed them out.  Otherwise, it is set to 0.
 
    *PXORP is to be FALSE if EXP might be a XOR used in a compare, in which
    case, if PXOR_CMP_OP is a zero constant, it will be overridden with *PEXP,
@@ -7883,7 +7934,7 @@ static tree
 decode_field_reference (tree *pexp, HOST_WIDE_INT *pbitsize,
 			HOST_WIDE_INT *pbitpos,
 			bool *punsignedp, bool *preversep, bool *pvolatilep,
-			wide_int *pand_mask, bool *psignbit,
+			wide_int *pand_mask, int *psignbit,
 			bool *pxorp, tree *pxor_cmp_op, wide_int *pxor_and_mask,
 			gimple **pload, location_t loc[4])
 {
@@ -7895,7 +7946,7 @@ decode_field_reference (tree *pexp, HOST_WIDE_INT *pbitsize,
   tree res_ops[2];
   machine_mode mode;
   bool convert_before_shift = false;
-  bool signbit = false;
+  int signbit = 0;
   bool xorp = false;
   tree xor_cmp_op;
   wide_int xor_and_mask;
@@ -7956,6 +8007,8 @@ decode_field_reference (tree *pexp, HOST_WIDE_INT *pbitsize,
 	{
 	  exp = res_ops[1];
 	  gcc_checking_assert (!pxor_cmp_op && !pxor_and_mask);
+	  if (outer_type && TREE_CODE (exp) == INTEGER_CST)
+	    exp = fold_convert (outer_type, exp);
 	}
       else if (!pxor_cmp_op)
 	/* Not much we can do when xor appears in the right-hand compare
@@ -8088,11 +8141,16 @@ decode_field_reference (tree *pexp, HOST_WIDE_INT *pbitsize,
   if (and_mask.get_precision () != 0)
     {
       /* If the AND_MASK encompasses bits that would be extensions of
-	 the sign bit, set SIGNBIT.  */
+	 the sign bit, set SIGNBIT to 1 if any such bit is set, or -1 if
+	 they are all clear.  */
       if (!unsignedp
-	  && and_mask.get_precision () > bs
-	  && (and_mask & wi::mask (bs, true, and_mask.get_precision ())) != 0)
-	signbit = true;
+	  && and_mask.get_precision () > bs)
+	{
+	  if ((and_mask & wi::mask (bs, true, and_mask.get_precision ())) != 0)
+	    signbit = 1;
+	  else
+	    signbit = -1;
+	}
       and_mask = wide_int::from (and_mask, bs, UNSIGNED);
     }
 
@@ -8392,7 +8450,7 @@ fold_truth_andor_for_ifcombine (enum tree_code code, tree truth_type,
   HOST_WIDE_INT rnbitsize, rnbitpos, rnprec;
   bool ll_unsignedp, lr_unsignedp, rl_unsignedp, rr_unsignedp;
   bool ll_reversep, lr_reversep, rl_reversep, rr_reversep;
-  bool ll_signbit, lr_signbit, rl_signbit, rr_signbit;
+  int ll_signbit, lr_signbit, rl_signbit, rr_signbit;
   scalar_int_mode lnmode, lnmode2, rnmode;
   wide_int ll_and_mask, lr_and_mask, rl_and_mask, rr_and_mask;
   wide_int l_const, r_const;
@@ -8576,7 +8634,7 @@ fold_truth_andor_for_ifcombine (enum tree_code code, tree truth_type,
     return 0;
 
   /* ??? Can we do anything with these?  */
-  if (lr_signbit || rr_signbit)
+  if (lr_signbit > 0 || rr_signbit > 0)
     return 0;
 
   /* If the mask encompassed extensions of the sign bit before
@@ -8584,7 +8642,7 @@ fold_truth_andor_for_ifcombine (enum tree_code code, tree truth_type,
      comparing with zero, don't even try to deal with it (for now?).
      If we've already committed to a sign test, the extended (before
      clipping) mask could already be messing with it.  */
-  if (ll_signbit)
+  if (ll_signbit > 0)
     {
       if (!integer_zerop (lr_arg) || lsignbit)
 	return 0;
@@ -8595,7 +8653,7 @@ fold_truth_andor_for_ifcombine (enum tree_code code, tree truth_type,
 	ll_and_mask |= sign;
     }
 
-  if (rl_signbit)
+  if (rl_signbit > 0)
     {
       if (!integer_zerop (rr_arg) || rsignbit)
 	return 0;
@@ -8900,18 +8958,18 @@ fold_truth_andor_for_ifcombine (enum tree_code code, tree truth_type,
 	 check that they're sign or zero extensions, depending on how the
 	 left-hand operand would be extended.  If it is unsigned, or if there's
 	 a mask that zeroes out extension bits, whether because we've checked
-	 for upper bits in the mask and did not set ll_signbit, or because the
-	 sign bit itself is masked out, check that the right-hand operand is
-	 zero-extended.  */
+	 for upper bits in the mask and found them all clear (ll_signbit < 0),
+	 or because the sign bit itself is masked out, check that the
+	 right-hand operand is zero-extended.  */
       bool l_non_ext_bits = false;
       if (ll_bitsize < lr_bitsize)
 	{
 	  wide_int zext = wi::zext (l_const, ll_bitsize);
 	  if ((ll_unsignedp
+	       || ll_signbit < 0
 	       || (ll_and_mask.get_precision ()
-		   && (!ll_signbit
-		       || ((ll_and_mask & wi::mask (ll_bitsize - 1, true, ll_bitsize))
-			   == 0)))
+		   && ((ll_and_mask & wi::mask (ll_bitsize - 1, true, ll_bitsize))
+		       == 0))
 	       ? zext : wi::sext (l_const, ll_bitsize)) == l_const)
 	    l_const = zext;
 	  else
@@ -8939,10 +8997,10 @@ fold_truth_andor_for_ifcombine (enum tree_code code, tree truth_type,
 	{
 	  wide_int zext = wi::zext (r_const, rl_bitsize);
 	  if ((rl_unsignedp
+	       || rl_signbit < 0
 	       || (rl_and_mask.get_precision ()
-		   && (!rl_signbit
-		       || ((rl_and_mask & wi::mask (rl_bitsize - 1, true, rl_bitsize))
-			   == 0)))
+		   && ((rl_and_mask & wi::mask (rl_bitsize - 1, true, rl_bitsize))
+		       == 0))
 	       ? zext : wi::sext (r_const, rl_bitsize)) == r_const)
 	    r_const = zext;
 	  else
@@ -9010,6 +9068,27 @@ fold_truth_andor_for_ifcombine (enum tree_code code, tree truth_type,
 	  /* Make sure the two fields on the right
 	     correspond to the left without being swapped.  */
 	  || ll_bitpos - rl_bitpos != lr_bitpos - rr_bitpos)
+	return 0;
+
+      /* Each compare tests, for every bit in its masks, either that the bits
+	 on both sides are equal (bit in both masks), or that the bit on one
+	 side is zero (bit in one mask only).  The combined compare can only
+	 express one such test per bit, so reject combinations in which both
+	 compares test the same bit in different ways.  Check this in the
+	 left-hand frame, since the right-hand fields are laid out alike.  */
+      wide_int lr_m, rr_m;
+      if (lr_and_mask.get_precision ())
+	lr_m = wi::lshift (wide_int::from (lr_and_mask, lnprec, UNSIGNED),
+			   xll_bitpos);
+      else
+	lr_m = wi::shifted_mask (xll_bitpos, lr_bitsize, false, lnprec);
+      if (rr_and_mask.get_precision ())
+	rr_m = wi::lshift (wide_int::from (rr_and_mask, lnprec, UNSIGNED),
+			   xrl_bitpos);
+      else
+	rr_m = wi::shifted_mask (xrl_bitpos, rr_bitsize, false, lnprec);
+      if (((ll_mask | lr_m) & (rl_mask | rr_m)
+	   & ((ll_mask ^ rl_mask) | (lr_m ^ rr_m))) != 0)
 	return 0;
 
       bool r_split_load;
@@ -9265,10 +9344,6 @@ maybe_fold_and_comparisons (tree type,
 			    basic_block outer_cond_bb)
 {
   if (tree t = and_comparisons_1 (type, code1, op1a, op1b, code2, op2a, op2b,
-				  outer_cond_bb))
-    return t;
-
-  if (tree t = and_comparisons_1 (type, code2, op2a, op2b, code1, op1a, op1b,
 				  outer_cond_bb))
     return t;
 
@@ -10914,10 +10989,12 @@ arith_code_with_undefined_signed_overflow (tree_code code)
    integer types involves undefined behavior on overflow and the
    operation can be expressed with unsigned arithmetic.
    Also returns true if STMT is a VCE that needs to be rewritten
-   if moved to be executed unconditionally.   */
+   if moved to be executed unconditionally.
+   SHIFT_COUNT additionally asks for a shift or rotate whose count may be
+   out of range; rewrite_to_defined_unconditional reduces such a count.  */
 
 bool
-gimple_needing_rewrite_undefined (gimple *stmt)
+gimple_needing_rewrite_undefined (gimple *stmt, bool shift_count)
 {
   if (!is_gimple_assign (stmt))
     return false;
@@ -10952,10 +11029,22 @@ gimple_needing_rewrite_undefined (gimple *stmt)
       && TYPE_PRECISION (lhs_type)
 	  < TYPE_PRECISION (TREE_TYPE (TREE_OPERAND (rhs, 0))))
     return true;
+  /* A shift or rotate by a count that may be out of range; the count can
+     be reduced into range.  */
+  enum tree_code code = gimple_assign_rhs_code (stmt);
+  if (shift_count
+      && (code == LSHIFT_EXPR
+	  || code == RSHIFT_EXPR
+	  || code == LROTATE_EXPR
+	  || code == RROTATE_EXPR)
+      && INTEGRAL_TYPE_P (lhs_type)
+      && (TREE_CODE (gimple_assign_rhs2 (stmt)) != INTEGER_CST
+	  || wi::geu_p (wi::to_wide (gimple_assign_rhs2 (stmt)),
+			TYPE_PRECISION (lhs_type))))
+    return true;
   if (!TYPE_OVERFLOW_UNDEFINED (lhs_type))
     return false;
-  if (!arith_code_with_undefined_signed_overflow
-	(gimple_assign_rhs_code (stmt)))
+  if (!arith_code_with_undefined_signed_overflow (code))
     return false;
   return true;
 }
@@ -10974,7 +11063,7 @@ static gimple_seq
 rewrite_to_defined_unconditional (gimple_stmt_iterator *gsi, gimple *stmt,
 				  bool in_place)
 {
-  gcc_assert (gimple_needing_rewrite_undefined (stmt));
+  gcc_assert (gimple_needing_rewrite_undefined (stmt, true));
   if (dump_file && (dump_flags & TDF_DETAILS))
     {
       fprintf (dump_file, "rewriting stmt for being unconditional defined");
@@ -11051,6 +11140,36 @@ rewrite_to_defined_unconditional (gimple_stmt_iterator *gsi, gimple *stmt,
 	  gimple_set_modified (stmt, true);
 	  gimple_seq_add_stmt (&stmts, stmt);
 	}
+      return stmts;
+    }
+  /* Reduce a shift or rotate count into range.  The mask keeps the count's
+     own type where that holds PREC - 1, so that a SHIFT_COUNT_TRUNCATED
+     target folds it away; MIN needs an unsigned count so a negative one
+     clamps.  */
+  enum tree_code code = gimple_assign_rhs_code (stmt);
+  if (code == LSHIFT_EXPR
+      || code == RSHIFT_EXPR
+      || code == LROTATE_EXPR
+      || code == RROTATE_EXPR)
+    {
+      unsigned prec = TYPE_PRECISION (TREE_TYPE (lhs));
+      bool pow2 = pow2p_hwi (prec);
+      tree count = gimple_assign_rhs2 (stmt);
+      tree type = TREE_TYPE (count);
+      if (!pow2 || wi::ltu_p (wi::max_value (type), prec - 1))
+	type = unsigned_type_node;
+      count = gimple_convert (&stmts, type, count);
+      count = gimple_build (&stmts, pow2 ? BIT_AND_EXPR : MIN_EXPR, type,
+			    count, build_int_cst (type, prec - 1));
+      gimple_assign_set_rhs2 (stmt, count);
+      gimple_set_modified (stmt, true);
+      if (in_place)
+	{
+	  gsi_insert_seq_before (gsi, stmts, GSI_SAME_STMT);
+	  update_stmt (stmt);
+	  return NULL;
+	}
+      gimple_seq_add_stmt (&stmts, stmt);
       return stmts;
     }
   tree type = unsigned_type_for (TREE_TYPE (lhs));

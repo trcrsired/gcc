@@ -27,6 +27,7 @@
 
 #include "asm-defs.h"
 #include "libf7.h"
+#include "config.h"
 
 #define ZERO __zero_reg__
 #define TMP  __tmp_reg__
@@ -96,6 +97,9 @@
 ;; Make a weak alias if double is 64 bits wide.
 .macro  DALIAS  sym
 #if defined (WITH_LIBF7_MATH_SYMBOLS) && __SIZEOF_DOUBLE__ == 8
+#if defined (HAVE_AS_AVR_GNU_ATTRIBUTE)
+    .gnu_attribute 8,64
+#endif
 ALIAS \sym
 #endif
 .endm
@@ -103,6 +107,9 @@ ALIAS \sym
 ;; Make a weak alias if long double is 64 bits wide.
 .macro  LALIAS  sym
 #if defined (WITH_LIBF7_MATH_SYMBOLS) && __SIZEOF_LONG_DOUBLE__ == 8
+#if defined (HAVE_AS_AVR_GNU_ATTRIBUTE)
+    .gnu_attribute 12,64
+#endif
 ALIAS \sym
 #endif
 .endm
@@ -602,12 +609,21 @@ DEFUN to_integer
     brmi    .Lsaturate.T    ;   > INTxx_MAX  =>  saturate
 
     brtc 9f                 ;   >= 0         =>  return
+#ifdef __AVR_ERRATA_SKIP_JMP_CALL__
+    ;; Some cores have a problem skipping 2-word instructions.
+    sbrs    Mask,   5
+    rjmp    0f
+    XJMP    __negdi2
+0:  sbrs    Mask,   4
+    rjmp    1f
+    XJMP    __negsi2
+1:
+#else
     sbrc    Mask,   5
-    .global __negdi2
     XJMP    __negdi2
     sbrc    Mask,   4
-    .global __negsi2
     XJMP    __negsi2
+#endif /* __AVR_ERRATA_SKIP_JMP_CALL__ */
     neg     C6
     neg     C5
     sbci    C6,     0

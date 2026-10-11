@@ -1025,7 +1025,11 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 /*  r16,  r17, r18, r19, r20, r21, r22, r23*/			\
      0,   0,   0,   0,   0,   0,   0,   0,			\
 /*  r24,  r25, r26, r27, r28, r29, r30, r31*/			\
-     0,   0,   0,   0,   0,   0,   0,   0}			\
+     0,   0,   0,   0,   0,   0,   0,   0,			\
+/*  tmm*/							\
+     1,								\
+/*  bsr0*/							\
+     1}								\
 
 /* 1 for registers not available across function calls.
    These must include the FIXED_REGISTERS and also any
@@ -1066,7 +1070,11 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 /*  r16,  r17, r18, r19, r20, r21, r22, r23*/			\
      1,   1,   1,   1,   1,   1,   1,   1,			\
 /*  r24,  r25, r26, r27, r28, r29, r30, r31*/			\
-     1,   1,   1,   1,   1,   1,   1,   1}			\
+     1,   1,   1,   1,   1,   1,   1,   1,			\
+/*  tmm*/							\
+     1,								\
+/*  bsr0*/							\
+     1}								\
 
 /* Order in which to allocate registers.  Each register must be
    listed once, even those in FIXED_REGISTERS.  List frame pointer
@@ -1083,16 +1091,13 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
   32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,	\
   48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63,	\
   64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79,	\
-  80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91}
+  80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93}
 
 /* ADJUST_REG_ALLOC_ORDER is a macro which permits reg_alloc_order
    to be rearranged based on a particular function.  When using sse math,
    we want to allocate SSE before x87 registers and vice versa.  */
 
 #define ADJUST_REG_ALLOC_ORDER x86_order_regs_for_local_alloc ()
-
-#define INSN_BASE_REG_CLASS(INSN) \
-  ix86_insn_base_reg_class (INSN)
 
 #define REGNO_OK_FOR_INSN_BASE_P(NUM, INSN) \
   ix86_regno_ok_for_insn_base_p (NUM, INSN)
@@ -2105,7 +2110,8 @@ do {							\
  "xmm28", "xmm29", "xmm30", "xmm31",					\
  "k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7",			\
  "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23",		\
- "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31" }
+ "r24", "r25", "r26", "r27", "r28", "r29", "r30", "r31",		\
+ "tmm", "bsr0"}
 
 #define REGISTER_NAMES HI_REGISTER_NAMES
 
@@ -3054,9 +3060,9 @@ extern void debug_dispatch_window (int);
 /* The value at zero is only defined for the BMI instructions
    LZCNT and TZCNT, not the BSR/BSF insns in the original isa.  */
 #define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
-	((VALUE) = GET_MODE_BITSIZE (MODE), TARGET_BMI ? 2 : 0)
+	((VALUE) = GET_MODE_UNIT_BITSIZE (MODE), TARGET_BMI ? 2 : 0)
 #define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
-	((VALUE) = GET_MODE_BITSIZE (MODE), TARGET_LZCNT ? 2 : 0)
+	((VALUE) = GET_MODE_UNIT_BITSIZE (MODE), TARGET_LZCNT ? 2 : 0)
 
 
 /* Flags returned by ix86_get_callcvt ().  */
@@ -3084,6 +3090,15 @@ extern void debug_dispatch_window (int);
 #define TARGET_RECIP_SQRT	((recip_mask & RECIP_MASK_SQRT) != 0)
 #define TARGET_RECIP_VEC_DIV	((recip_mask & RECIP_MASK_VEC_DIV) != 0)
 #define TARGET_RECIP_VEC_SQRT	((recip_mask & RECIP_MASK_VEC_SQRT) != 0)
+
+/* -m128bit-atomic requires CMPXCHG16B and SSE2.
+
+   Note: Pre-Tiger Lake (Desktop/Mobile): Generations including Kaby
+   Lake, Coffee Lake, and Comet Lake (e.g., Pentium Gold G5400, Celeron
+   G5900, N4020) do not support AVX.  However, 128-bit aligned SSE loads
+   and stores are atomic on these processors.  Should AVX be required?  */
+#define TARGET_128BIT_ATOMIC_ENABLED \
+  (TARGET_CX16 && TARGET_SSE2 && TARGET_128BIT_ATOMIC)
 
 /* Use 128-bit AVX instructions in the auto-vectorizer.  */
 #define TARGET_PREFER_AVX128	(prefer_vector_width_type == PVW_AVX128)

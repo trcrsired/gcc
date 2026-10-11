@@ -287,7 +287,7 @@ enum cbl_file_mode_t {
   file_mode_any_e,
 };
 
-enum cbl_round_t {
+enum cbl_round_t : int {
   away_from_zero_e,
   nearest_toward_zero_e,
   toward_greater_e,
@@ -614,11 +614,15 @@ typedef std::vector<cbl_declarative_t> cbl_declaratives_t;
 
 class cbl_enabled_exceptions_t : protected std::set<cbl_enabled_exception_t>
 {
+  static void complain( ec_type_t ec );
+
   void apply( bool enabled, const cbl_enabled_exception_t& elem ) {
     if( ! enabled ) {
       erase(elem);
       return;
     }
+    complain( elem.ec );
+
     auto inserted = insert( elem );
     if( ! inserted.second ) {
       erase(inserted.first);

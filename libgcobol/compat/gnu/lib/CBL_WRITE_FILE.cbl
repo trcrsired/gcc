@@ -50,12 +50,10 @@
        77  file-size        		Binary-Long.
        77 Lk-whence             PIC S9(9) USAGE COMP-5 VALUE 0.
        77 func-return           Binary-Long.
-       77 errno-val             Binary-Long.
        77 remaining-bytes       Binary-Long.
        77 bytes-written         Binary-Long.
 
        LINKAGE SECTION.
-       77  RETCODE			    Binary-Long value 0.
        01  file-handle    	PIC X(4) COMP-5.
        01  file-offset    	PIC X(8) COMP-x.
        01  byte-count     	pic x(4) comp-x.
@@ -67,8 +65,7 @@
                    By Reference file-offset,
                    By Reference byte-count,
                    By Reference flags,
-                   By Reference buffer
-                RETURNING RETCODE.
+                   By Reference buffer.
         MAIN SECTION.
            *> special processing to truncate or extend the file
            If byte-count = 0
@@ -130,22 +127,22 @@
           PERFORM UNTIL bytes-written >= byte-count
             MOVE FUNCTION posix-write(file-handle,
               buffer (bytes-written + 1 : remaining-bytes),
-              remaining-bytes) TO RETCODE
+              remaining-bytes) TO RETURN-CODE
 
-            IF RETCODE < 0
+            IF RETURN-CODE < 0
               PERFORM RETURN-ERROR
               GOBACK
             ELSE
-              SUBTRACT RETCODE FROM remaining-bytes
-              ADD RETCODE TO bytes-written
+              SUBTRACT RETURN-CODE FROM remaining-bytes
+              ADD RETURN-CODE TO bytes-written
             END-IF
           END-PERFORM.
 
-          MOVE 0 TO RETCODE.
+          MOVE 0 TO RETURN-CODE.
           EXIT PARAGRAPH.
 
        RETURN-ERROR SECTION.
-          Move Function COBRT-FILE-STATUS() to RETCODE.
+          Move Function COBRT-FILE-STATUS() to RETURN-CODE.
           EXIT PARAGRAPH.
 
        >> POP SOURCE FORMAT

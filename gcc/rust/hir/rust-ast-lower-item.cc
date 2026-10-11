@@ -412,7 +412,7 @@ ASTLoweringItem::visit (AST::Function &function)
   std::unique_ptr<HIR::Type> return_type
     = function.has_return_type () ? std::unique_ptr<HIR::Type> (
 	ASTLoweringType::translate (function.get_return_type (), false,
-				    true /* impl trait is allowed here*/))
+				    ASTLoweringType::ImplTrait::Allow))
 				  : nullptr;
 
   std::vector<HIR::FunctionParam> function_params;
@@ -765,6 +765,7 @@ ASTLoweringItem::visit (AST::TraitImpl &impl_block)
   translated = hir_impl_block;
 
   mappings.insert_hir_impl_block (hir_impl_block);
+
   for (auto &impl_item_id : impl_item_ids)
     {
       mappings.insert_impl_item_mapping (impl_item_id, hir_impl_block);

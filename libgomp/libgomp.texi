@@ -442,7 +442,7 @@ to address of matching mapped list item per 5.1, Sect. 2.21.7.2 @tab N @tab
 
 @multitable @columnfractions .60 .10 .25
 @headitem Description @tab Status @tab Comments
-@item For Fortran, optional comma between directive and clause @tab N @tab
+@item For Fortran, optional comma between directive and clause @tab Y @tab
 @item Conforming device numbers and @code{omp_initial_device} and
       @code{omp_invalid_device} enum/PARAMETER @tab Y @tab
 @item Initial value of @var{default-device-var} ICV with
@@ -483,7 +483,8 @@ to address of matching mapped list item per 5.1, Sect. 2.21.7.2 @tab N @tab
 @item The OpenMP directive syntax was extended to include C23 attribute
       specifiers @tab Y @tab
 @item Support for pure directives in Fortran's @code{do concurrent} @tab N @tab
-@item All inarguable clauses take now an optional Boolean argument @tab N @tab
+@item All inarguable clauses take now an optional Boolean argument @tab P @tab
+      Only Fortran
 @item The @code{adjust_args} clause was extended to specify the argument by position
       and supports variadic arguments @tab N @tab
 @item For Fortran, @emph{locator list} can be also function reference with
@@ -533,8 +534,9 @@ to address of matching mapped list item per 5.1, Sect. 2.21.7.2 @tab N @tab
 @item @code{delete} as delete-modifier not as map type @tab N @tab
 @item For Fortran, the @code{automap} modifier to the @code{enter} clause
       of @code{declare_target} @tab N @tab
-@item @code{groupprivate} directive @tab N @tab
-@item @code{local} clause to @code{declare_target} directive @tab N @tab
+@item @code{groupprivate} directive @tab P @tab
+      Only Fortran with @code{device_type(nohost)} with only nvptx GPUs
+@item @code{local} clause to @code{declare_target} directive @tab Y @tab
 @item @code{part_size} allocator trait for @code{interleaved} allocator
       partitions @tab N @tab
 @item @code{pin_device}, @code{preferred_device} and @code{target_access}
@@ -544,7 +546,8 @@ to address of matching mapped list item per 5.1, Sect. 2.21.7.2 @tab N @tab
 @item New @code{partitioner} value to @code{partition} allocator trait
       @tab N @tab
 @item Semicolon-separated list to @code{uses_allocators} @tab Y @tab
-@item New @code{need_device_addr} modifier to @code{adjust_args} clause @tab N @tab
+@item New @code{need_device_addr} modifier to @code{adjust_args} clause @tab P
+      @tab Not supported in C++
 @item @code{interop} clause to @code{dispatch} @tab Y @tab
 @item Scope requirement changes for @code{declare_target} @tab N @tab
 @item @code{message} and @code{severity} clauses to @code{parallel} directive
@@ -641,7 +644,7 @@ to address of matching mapped list item per 5.1, Sect. 2.21.7.2 @tab N @tab
 
 @unnumberedsubsec Other new OpenMP 6.0 features
 @multitable @columnfractions .60 .10 .25
-@item Multi-word directives now use underscore by default @tab N @tab
+@item Multi-word directives now use underscore by default @tab P @tab Only in Fortran
 @item Relaxed Fortran restrictions to the @code{aligned} clause @tab N @tab
 @item Mapping lambda captures @tab N @tab
 @item New @code{omp_pause_stop_tool} constant for @code{omp_pause_resource}
@@ -690,6 +693,7 @@ Technical Report (TR) 15 is the second preview for OpenMP 6.1.
 @item @code{grid} and @code{tile} modifier to the @code{size} clause @tab N @tab
 @item New @code{flatten} loop-transforming directive @tab N @tab
 @item @code{scaled} modifier to @code{simdlen} clause @tab N @tab
+      (@uref{https://gcc.gnu.org/PR127723,PR127723})
 @item Lifted restriction on the first chunk size for the @code{schedule} clause
       with @code{simd} modifier @tab N @tab
 @item Change to the used chunk-size with the @code{schedule} clause and no
@@ -4475,6 +4479,37 @@ specification.  In older versions, the type @code{int} was used for the
 @item                   @tab @code{integer :: modifier}
 @end multitable
 
+@item @emph{Note}:
+In Fortran code, an argument can passed to the tool by creating a C wrapper
+function in the user code; however, as in GCC---and likely in most
+implementations---the C/C++ and Fortran use compatible integer kinds/types,
+it is simpler to add an INTERFACE block such as the following one.
+
+@smallexample
+interface
+  ! Or to permit using 'omp_control_tool' for both the two and
+  ! three argument version, use a generic interface; the two-
+  ! argument version comes from the 'omp_lib' module.
+!interface omp_control_tool
+
+  integer(omp_control_tool_result_kind) &
+  function omp_control_tool_arg (command, modifier, arg) &
+      bind(C, name="omp_control_tool")
+    use omp_lib
+    use iso_c_binding
+    integer(kind=omp_control_tool_kind), VALUE :: command
+    integer(c_int) :: modifier
+
+    ! Either
+    type(c_ptr), VALUE :: arg
+    ! or
+    !type(*), dimension(*) :: arg ! Note:
+    ! Avoid type(*) for 'type(c_ptr)' actual arguments as this will pass a
+    ! reference to the C pointer and not the C pointer itself.
+  end
+end interface
+@end smallexample
+
 @c @item @emph{See also}:
 
 @item @emph{Reference}:
@@ -4611,6 +4646,7 @@ variable is not set.
 * OMP_WAIT_POLICY::         How waiting threads are handled
 * GOMP_CPU_AFFINITY::       Bind threads to specific CPUs
 * GOMP_DEBUG::              Enable debugging output
+* GOMP_RUNTIME_USM::        Control runtime Unified Shared Memory application
 * GOMP_STACKSIZE::          Set default thread stack size
 * GOMP_SPINCOUNT::          Set the busy-wait spin count
 * GOMP_RTEMS_THREAD_POOLS:: Set the RTEMS specific thread pools
@@ -5236,6 +5272,47 @@ Enable debugging output.  The variable should be set to @code{0}
 
 If enabled, some debugging output is printed during execution.
 This is currently not specified in more detail, and subject to change.
+@end table
+
+
+
+@node GOMP_RUNTIME_USM
+@section @env{GOMP_RUNTIME_USM} -- Control runtime Unified Shared Memory application
+@cindex Environment Variable
+@table @asis
+@item @emph{Description}:
+Control the behavior of devices which can access host memory, specifically
+whether data mapping copies data or uses self-mapping, such that the device
+directly accesses the corresponding host memory.  Setting the environment
+variable to @code{DISABLED} does not make use of Unified Shared Memory by
+default.  Setting it to @code{AUTO} conditionally enables Unified Shared
+Memory (USM) on specific integrated GPUs (APUs, in the verbiage of AMD).  In most
+workloads on these types of GPUs, self-mapping is expected to reduce runtime
+overhead.  Lastly, setting it to @code{ENABLED} unconditionally attempts
+to make use of Unified Shared Memory if the device claims to support it.
+For general caveats around Unified Shared Memory, please consult the relevant
+sections in @ref{Offload-Target Specifics}.
+
+When Unified Shared Memory is enabled by this environment variable, the
+following is currently @emph{unsupported}: using a global static variable,
+specified in an @code{enter} clause on a @code{declare target}, in a
+@code{map} clause with @code{always} modifier on either a @code{target} or
+a @code{target data} directive.  When the unsupported case is encountered,
+the program aborts with an error message.
+@c FIXME: This is tracked in PR libgomp/127186
+
+When specifying the @code{unified_shared_memory} or @code{self_maps} clauses
+with the @code{requires} directive causes that behavior to take precedence
+over the behavior set by this environment variable.
+
+OpenACC is unaffected by the value of this environment variable, however,
+hybrid usage of OpenMP and OpenACC offloading results in the first used
+framework taking precedent.  As an example, if one uses OpenMP offloading and
+then later OpenACC offloading, the capabilities the device possesses reflect
+the original OpenMP model.
+
+@item @emph{See also}:
+@ref{Offload-Target Specifics}, @ref{AMD Radeon}
 @end table
 
 
@@ -7715,6 +7792,11 @@ The implementation remark:
       available devices, possibly leaving only the initial device (``host
       fallback''); consider using @code{ROCR_VISIBLE_DEVICES} to only enable
       devices supporting unified-shared memory.
+@item APU (integrated GPU) systems that do not support XNACK, but make use of
+      Unified Shared Memory, may encounter issues, especially related to
+      device-side page-fault handling.
+@item The MI100 (gfx908) and gfx902 are not supported with the
+      @code{GOMP_RUNTIME_USM} environment variable.
 @item The available stack size can be changed using the @code{GCN_STACK_SIZE}
       environment variable; the default is 32 kiB per thread.
 @item Low-latency memory (@code{omp_low_lat_mem_space}) is supported when the

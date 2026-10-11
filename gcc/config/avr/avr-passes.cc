@@ -28,7 +28,11 @@
 #include "backend.h"
 #include "target.h"
 #include "rtl.h"
+#include "rtl-iter.h"
 #include "tree.h"
+#include "gimple.h"
+#include "gimple-iterator.h"
+#include "gimple-walk.h"
 #include "diagnostic-core.h"
 #include "cfghooks.h"
 #include "cfganal.h"
@@ -83,8 +87,7 @@ namespace
 {
 
 /////////////////////////////////////////////////////////////////////////////
-// Before we start with the very code, introduce some helpers that are
-// quite generic, though up to now only avr-fuse-add makes use of them.
+// Before we start with the very code, introduce some generic helpers.
 
 /* Get the next / previous NONDEBUG_INSN_P after INSN in basic block BB.
    This assumes we are in CFG layout mode so that BLOCK_FOR_INSN()
@@ -1053,6 +1056,28 @@ struct insninfo_t
     else
       gcc_unreachable ();
   }
+
+  gprmask_t scratch_mask () const
+  {
+    gprmask_t mask = m_scratch
+      ? regmask (m_scratch, 1)
+      : 0;
+
+    if (m_insn)
+      {
+	subrtx_iterator::array_type array;
+	FOR_EACH_SUBRTX (iter, array, PATTERN (m_insn), NONCONST)
+	  {
+	    rtx scratch_reg;
+	    if (GET_CODE (*iter) == CLOBBER
+		&& REG_P (scratch_reg = XEXP (*iter, 0))
+		&& END_REGNO (scratch_reg) <= REG_32)
+	      mask |= regmask (scratch_reg);
+	  }
+      }
+
+    return mask;
+  }
 }; // insninfo_t
 
 
@@ -1186,6 +1211,7 @@ optimize_data_t::emit_sequence (basic_block bb, rtx_insn *insns)
 	  avr_dump ("INCOMPLETE APPLICATION:\n");
 	  m2.dump ("regs old route=%s\n\n");
 	  n2.dump ("regs new route=%s\n\n");
+	  avr_dump ("ignore_mask = %08x\n\n", (unsigned) ignore_mask);
 	  avr_dump ("The new insns are:\n%L", insns);
 
 	  fatal_insn ("incomplete application of insn", insns);
@@ -1456,7 +1482,7 @@ plies_t::emit_blds (const insninfo_t &ii, int &n_insns, int istart) const
 
 // Emit insns for a contiguous sequence of SET ply_t's starting at
 // .plies[ISTART].  Advances N_INSNS by the number of emitted insns.
-// MEMO ist the state of the GPRs before II is executed, where II
+// MEMO is the state of the GPRs before II is executed, where II
 // represents the insn under optimization.
 // The emitted insns are "movqi_insn" or "*reload_inqi"
 // when .plies[ISTART].in_set_some is not set, and one "set_some" insn
@@ -2172,7 +2198,7 @@ memento_t::apply_insn1 (rtx_insn *insn, bool unused)
   // Get an abstract representation of src.  Bytes may be unknown,
   // known to equal some 8-bit compile-time constant (CTC) value,
   // or are known to equal some 8-bit register.
-  // TODO: Currently, only the ai[].val8 knowledge ist used.
+  // TODO: Currently, only the ai[].val8 knowledge is used.
   //       What's the best way to make use of ai[].regno ?
 
   absint_t ai = absint_t::explore (src, mold, mode);
@@ -2715,8 +2741,7 @@ optimize_data_t::try_split_ldi (bbinfo_t *bbi)
 
       n_new_insns = bbinfo_t::fpd->solution.emit_insns (curr.ii, curr.regs);
 
-      if (curr.ii.m_scratch)
-	ignore_mask = regmask (curr.ii.m_scratch, 1);
+      ignore_mask = curr.ii.scratch_mask ();
     }
 
   return found;
@@ -3057,8 +3082,7 @@ optimize_data_t::try_split_any (bbinfo_t *)
 	return fail ("too expensive");
     }
 
-  if (ii.m_scratch)
-    ignore_mask = regmask (ii.m_scratch, 1);
+  ignore_mask = ii.scratch_mask ();
 
   return true;
 }
@@ -3324,7 +3348,7 @@ public:
 
   bool gate (function *) final override
   {
-    return optimize > 0;
+    return optimize > 0 && avropt_fuse_ifelse;
   }
 
   unsigned int execute (function *func) final override;
@@ -3927,7 +3951,7 @@ public:
 
   bool gate (function *) final override
   {
-    return optimize > 0;
+    return optimize > 0 && avropt_demote_switch;
   }
 
   unsigned int execute (function *) final override;
@@ -4898,18 +4922,19 @@ bool
 avr_pass_2moves::optimize_2moves_bb (basic_block bb)
 {
   bool changed = false;
-  rtx_insn *insn1 = nullptr;
-  rtx_insn *insn2 = nullptr;
-  rtx_insn *curr;
+  rtx_insn *insn1 = next_nondebug_insn_bb (bb, BB_HEAD (bb));
 
-  FOR_BB_INSNS (bb, curr)
+  while (insn1)
     {
-      if (insn1 && INSN_P (insn1)
-	  && insn2 && INSN_P (insn2))
-	changed |= optimize_2moves (insn1, insn2);
+      rtx_insn *insn2 = next_nondebug_insn_bb (bb, insn1);
+      if (!insn2)
+	break;
 
-      insn1 = insn2;
-      insn2 = curr;
+      rtx_insn *next = next_nondebug_insn_bb (bb, insn2);
+
+      bool change = optimize_2moves (insn1, insn2);
+      changed |= change;
+      insn1 = change ? next : insn2;
     }
 
   return changed;
@@ -4949,7 +4974,10 @@ avr_pass_2moves::optimize_2moves (rtx_insn *insn1, rtx_insn *insn2)
       for (; use; use = DF_REF_NEXT_REG (use))
 	{
 	  rtx_insn *user = DF_REF_INSN (use);
-	  avr_dump (" %d", INSN_UID (user));
+	  bool debug_p = DEBUG_INSN_P (user);
+	  avr_dump (" %d%s", INSN_UID (user), debug_p ? "=debug_insn" : "");
+	  if (debug_p)
+	    continue;
 	  good |= INSN_UID (user) == INSN_UID (insn2);
 	  bad |= INSN_UID (user) != INSN_UID (insn2);
 	}
@@ -5533,6 +5561,92 @@ public:
   }
 }; // avr_pass_recompute_notes
 
+
+
+//////////////////////////////////////////////////////////////////////////////
+// Determine whether the target code uses some features:
+// - avr_uses_vtable_p: Are there vtable calls?
+// - avr_uses_double_p: Is double being used?
+// - avr_uses_long_double_p: Is long double being used?
+// In any case, avr_file_end handles objects in static storage.
+
+static const pass_data avr_pass_data_has =
+{
+  GIMPLE_PASS,   // type
+  "",            // name (will be patched)
+  OPTGROUP_NONE, // optinfo_flags
+  TV_NONE,       // tv_id
+  PROP_cfg | PROP_ssa, // properties_required
+  0,             // properties_provided
+  0,             // properties_destroyed
+  0,             // todo_flags_start
+  0              // todo_flags_finish
+};
+
+class avr_pass_has : public gimple_opt_pass
+{
+public:
+  avr_pass_has (gcc::context *ctxt, const char *name)
+    : gimple_opt_pass (avr_pass_data_has, ctxt)
+  {
+    this->name = name;
+  }
+
+  static tree op_callback (tree *t, int *walk_subtrees, void *data)
+  {
+    // Almost all of a function's data is piped through SSA_NAMEs, so that
+    // for the purpose of avr_uses_[long_]double_p it is sufficient to look
+    // at these and compile-time constants.
+    if (SSA_VAR_P (*t)
+	|| TREE_CODE (*t) == REAL_CST
+	|| TREE_CODE (*t) == COMPLEX_CST)
+      {
+	walk_stmt_info *wi = (walk_stmt_info *) data;
+	avr_find_double (TREE_TYPE (*t), wi->pset);
+      }
+
+    *walk_subtrees = 1;
+    return NULL_TREE;
+  }
+
+  void scan_bb (basic_block bb, walk_stmt_info &wi)
+  {
+    gimple_stmt_iterator gsi;
+    for (gsi = gsi_start_bb (bb); !gsi_end_p (gsi); gsi_next (&gsi))
+      {
+	tree fncall;
+	gimple *stmt = gsi_stmt (gsi);
+
+	if (is_gimple_call (stmt)
+	    && (fncall = gimple_call_fn (stmt))
+	    && TREE_CODE (fncall) == OBJ_TYPE_REF)
+	  avr_uses_vtable_p = true;
+
+	walk_gimple_op (stmt, op_callback, &wi);
+      }
+  }
+
+#ifndef HAVE_AS_AVR_GNU_ATTRIBUTE
+  bool gate (function *) final override
+  {
+    return false;
+  }
+#endif // !HAVE_AS_AVR_GNU_ATTRIBUTE
+
+  unsigned int execute (function *func) final override
+  {
+    walk_stmt_info wi;
+    hash_set<tree> hset;
+    wi.pset = &hset;
+
+    basic_block bb;
+    FOR_ALL_BB_FN (bb, func)
+      scan_bb (bb, wi);
+
+    return 0;
+  }
+}; // avr_pass_has
+
 } // anonymous namespace
 
 
@@ -5773,7 +5887,7 @@ avr_byte_maybe_mem (rtx x, int n)
 
 /* Split multi-byte load / stores into 1-byte such insns
    provided non-volatile, addr-space = generic, no reg-overlap
-   and the resulting addressings are all natively supported.
+   and the resulting addressing modes are all natively supported.
    Returns true when the  XOP[0] = XOP[1]  insn has been split and
    false, otherwise.  */
 
@@ -5827,6 +5941,14 @@ avr_split_ldst (rtx *xop)
 // Functions  make_<pass-name> (gcc::context*)  where <pass-name> is
 // according to the pass declaration in avr-passes.def.  GCC's pass
 // manager uses these function to create the respective pass object.
+
+// This pass sets `avr_uses_vtable_p'.
+
+gimple_opt_pass *
+make_avr_pass_has (gcc::context *ctxt)
+{
+  return new avr_pass_has (ctxt, "avr-has");
+}
 
 // Optimize results of the casesi expander for modes < SImode.
 

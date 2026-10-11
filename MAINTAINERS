@@ -175,8 +175,9 @@ go                      Ian Lance Taylor        <ian@airs.com>
 Modula-2 front end      Gaius Mulley            <gaiusmod2@gmail.com>
 objective-c/c++         Iain Sandoe             <iain@sandoe.co.uk>
 objective-c/c++         Mike Stump              <mikestump@comcast.net>
-Rust                    Arthur Cohen            <arthur.cohen@embecosm.com>
+Rust                    Arthur Cohen            <arthur.cohen@opensrcsec.com>
 Rust                    Philip Herron           <herron.philip@googlemail.com>
+Rust                    Pierre-Emmanuel Patry   <pierre.emmanuel.patry@opensrcsec.com>
 
                         Various Maintainers   (Area alphabetical order)
 
@@ -234,8 +235,9 @@ libgo                   Ian Lance Taylor        <ian@airs.com>
 libgomp                 Tobias Burnus           <tburnus@baylibre.com>
 libgomp                 Jakub Jelinek           <jakub@redhat.com>
 libgomp (OpenACC)       Thomas Schwinge         <tschwinge@baylibre.com>
-libgrust                Arthur Cohen            <arthur.cohen@embecosm.com>
+libgrust                Arthur Cohen            <arthur.cohen@opensrcsec.com>
 libgrust                Philip Herron           <herron.philip@googlemail.com>
+libgrust                Pierre-Emmanuel Patry   <pierre.emmanuel.patry@opensrcsec.com>
 libiberty               Ian Lance Taylor        <ian@airs.com>
 libitm                  Torvald Riegel          <triegel@redhat.com>
 libobjc                 Nicola Pero             <nicola.pero@meta-innovation.com>
@@ -293,7 +295,7 @@ C front end             Marek Polacek           <polacek@redhat.com>
 c++                     Patrick Palka           <ppalka@gcc.gnu.org>
 callgraph               Martin Jambor           <mjambor@suse.cz>
 CTF, BTF                Indu Bhagat             <indu.bhagat@oracle.com>
-CTF, BTF, bpf port      David Faust             <david.faust@oracle.com>
+CTF, BTF, bpf port      David Faust             <david.faust@oss.qualcomm.com>
 dataflow                Paolo Bonzini           <bonzini@gnu.org>
 dataflow                Seongbae Park           <seongbae.park@gmail.com>
 dataflow                Kenneth Zadeck          <zadeck@naturalbridge.com>
@@ -437,7 +439,7 @@ Tamar Christina                 tnfchris        <tamar.christina@arm.com>
 Eric Christopher                echristo        <echristo@gmail.com>
 Paul Clarke                     pc              <pc@us.ibm.com>
 Nick Clifton                    nickc           <nickc@redhat.com>
-Arthur Cohen                    cohenarthur     <arthur.cohen@embecosm.com>
+Arthur Cohen                    cohenarthur     <arthur.cohen@opensrcsec.com>
 William Cohen                   wcohen          <wcohen@redhat.com>
 Michael Collison                collison        <michael.collison@arm.com>
 Alejandro Colomar               alx             <alx@kernel.org>
@@ -463,11 +465,13 @@ Bud Davis                       bdavis          <jmdavis@link.com>
 Jerry DeLisle                   jvdelisle       <jvdelisle@gcc.gnu.org>
 DJ Delorie                      dj              <dj@delorie.com>
 Chris Demetriou                 cgd             <cgd@google.com>
+Michiel Derhaeg                 michiel         <michiel.derhaeg@globalfoundries.com>
 Sameera Deshpande               sameerad        <sameera.deshpande@linaro.org>
 Wilco Dijkstra                  wilco           <wilco.dijkstra@arm.com>
 Dimitar Dimitrov                dimitar         <dimitar@dinux.eu>
 Benoit Dupont de Dinechin       bd3             <benoit.dupont-de-dinechin@st.com>
 Lehua Ding                      lhtin           <lehua.ding@rivai.ai>
+Gabriel Dos Reis                gdr             <gdr@integrable-solutions.net>
 Ulrich Drepper                  drepper         <drepper@gmail.com>
 Robert Dubner                   rdubner         <rdubner@symas.com>
 François Dumont                 fdumont         <fdumont@gcc.gnu.org>
@@ -491,7 +495,7 @@ Doug Evans                      devans          <dje@google.com>
 Chris Fairles                   cfairles        <cfairles@gcc.gnu.org>
 Alessandro Fanfarillo           afanfa          <fanfarillo.gcc@gmail.com>
 Changpeng Fang                  cfang           <changpeng.fang@amd.com>
-David Faust                     dfaust          <david.faust@oracle.com>
+David Faust                     dfaust          <david.faust@oss.qualcomm.com>
 Sam Feifer                      sfeifer         <sfeifer@redhat.com>
 Eric Feng                       efric           <ef2648@columbia.edu>
 Li Feng                         lifeng          <nemokingdom@gmail.com>
@@ -599,6 +603,7 @@ Kean Johnston                   jkj             <jkj@sco.com>
 Phillip Jordan                  pmj             <phillip.m.jordan@gmail.com>
 Tim Josling                     timjosling      <tej@melbpc.org.au>
 Tomasz Kamiński                 tkaminsk        <tkaminsk@redhat.com>
+Rohith Kapelli                  kapellirohith   <kapellirohith@gmail.com>
 Victor Kaplansky                victork         <victork@il.ibm.com>
 Evgeny Karpov                   eukarpov        <evgeny.karpov@arm.com>
 Filip Kastl                     pheeck          <fkastl@suse.cz>
@@ -673,6 +678,7 @@ James K. Lowden                 jklowden        <jklowden@cobolworx.com>
 Martin v. Löwis                 loewis          <loewis@informatik.hu-berlin.de>
 Edwin Lu                        ewlu            <ewlu@rivosinc.com>
 H.J. Lu                         hjl             <hjl.tools@gmail.com>
+Longjun Luo                     anatasluo       <luolongjuna@gmail.com>
 Xiong Hu Luo                    luoxhu          <luoxhu@gcc.gnu.org>
 Bin Bin Lv                      shlb            <shlb@linux.ibm.com>
 Christophe Lyon                 clyon           <christophe.lyon@arm.com>
@@ -749,13 +755,14 @@ Alexandre Oliva                 aoliva          <aoliva@gcc.gnu.org>
 Andrea Ornstein                 andreao         <andrea.ornstein@st.com>
 Rainer Orth                     ro              <ro@CeBiTec.Uni-Bielefeld.DE>
 Maxim Ostapenko                 chefmax         <m.ostapenko@samsung.com>
+Dominic P                       dominicp        <gcc@gcc.dp11.uk>
 Jeevitha Palanisamy             jeevitha        <jeevitha@linux.ibm.com>
 Patrick Palka                   ppalka          <ppalka@gcc.gnu.org>
 Seongbae Park                   spark           <seongbae.park@gmail.com>
 Kishan Parmar                   kishan          <kishan@linux.ibm.com>
 Srinath Parvathaneni            sripar01        <srinath.parvathaneni@arm.com>
 Devang Patel                    dpatel          <dpatel@apple.com>
-Pierre-Emmanuel Patry           pep             <pierre-emmanuel.patry@embecosm.com>
+Pierre-Emmanuel Patry           pep             <pierre.emmanuel.patry@opensrcsec.com>
 Andris Pavenis                  andris          <andris.pavenis@iki.fi>
 Fernando Pereira                pronesto        <pronesto@gmail.com>
 Nicola Pero                     nicola          <nicola.pero@meta-innovation.com>
@@ -990,12 +997,15 @@ Giuseppe D'Angelo                               <giuseppe.dangelo@kdab.com>
 Robin Dapp                                      <rdapp.gcc@gmail.com>
 Robin Dapp                                      <rdapp@qti.qualcomm.com>
 Robin Dapp                                      <rdapp@ventanamicro.com>
+Gabriel Dos Reis                                <gdr@integrable-solutions.net>
+David Faust                                     <david.faust@oss.qualcomm.com>
 Kael Andrew Franco                              <kaelfandrew@gmail.com>
 Prachi Godbole                                  <pgodbole@nvidia.com>
 Eikansh Gupta                                   <eikansh.gupta@oss.qualcomm.com>
 Naveen H.S                                      <naveen.siddegowda@oss.qualcomm.com>
 Aldy Hernandez                                  <aldy@quesejoda.com>
 Michal Jires                                    <mjires@suse.cz>
+Rohith Kapelli                                  <kapellirohith@gmail.com>
 Matthias Kretz                                  <m.kretz@gsi.de>
 Prathamesh Kulkarni                             <prathameshk@nvidia.com>
 Tim Lange                                       <mail@tim-lange.me>
@@ -1008,6 +1018,7 @@ Bohan Lei                                       <garthlei@linux.alibaba.com>
 Jim Lin                                         <jim@andestech.com>
 Martin Liška                                    <martin.liska@hey.com>
 H.J. Lu                                         <hjl.tools@gmail.com>
+Longjun Luo                                     <luolongjuna@gmail.com>
 Yuao Ma                                         <yuao@gcc.gnu.org>
 Matthew Malcomson                               <mmalcomson@nvidia.com>
 Jose E. Marchesi                                <jemarch@gnu.org>
@@ -1016,7 +1027,9 @@ Gaius Mulley                                    <gaiusmod2@gmail.com>
 Shreya Munnangi                                 <smunnang@qti.qualcomm.com>
 Shreya Munnangi                                 <smunnangi1@ventanamicro.com>
 Szabolcs Nagy                                   <nsz@gcc.gnu.org>
+Dominic P                                       <gcc@gcc.dp11.uk>
 Pierre-Emmanuel Patry                           <pierre-emmanuel.patry@embecosm.com>
+Pierre-Emmanuel Patry                           <pierre.emmanuel.patry@opensrcsec.com>
 Mikael Pettersson                               <mikpelinux@gmail.com>
 Andrea Pinski                                   <andrew.pinski@oss.qualcomm.com>
 Andrea Pinski                                   <quic_apinski@quicinc.com>

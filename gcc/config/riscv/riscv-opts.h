@@ -61,6 +61,7 @@ enum riscv_microarchitecture_type {
   generic_ooo,
   mips_p8700,
   tt_ascalon_d8,
+  tt_ascalon_xg,
   andes_25_series,
   andes_23_series,
   andes_45_series,
@@ -157,8 +158,6 @@ enum rvv_vector_bits_enum {
   /* zvl indicates taking the value of zvl*b as the exactly vlen.  */
   RVV_VECTOR_BITS_ZVL,
 };
-
-#define TARGET_ZICOND_LIKE (TARGET_ZICOND || (TARGET_XVENTANACONDOPS && TARGET_64BIT))
 
 /* Bit of riscv_zvl_flags will set continually, N-1 bit will set if N-bit is
    set, e.g. MASK_ZVL64B has set then MASK_ZVL32B is set, so we can use

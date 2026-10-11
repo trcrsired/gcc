@@ -5717,29 +5717,14 @@
   "TARGET_P9_VECTOR"
 {
   int sh;
-  rtx cmpz1_result = gen_reg_rtx (<MODE>mode);
-  rtx cmpz2_result = gen_reg_rtx (<MODE>mode);
-  rtx cmpz_result = gen_reg_rtx (<MODE>mode);
-  rtx not_cmpz_result = gen_reg_rtx (<MODE>mode);
-  rtx and_result = gen_reg_rtx (<MODE>mode);
   rtx result = gen_reg_rtx (<MODE>mode);
-  rtx vzero = gen_reg_rtx (<MODE>mode);
 
-  /* Vector with zeros in elements that correspond to zeros in operands.  */
-  emit_move_insn (vzero, CONST0_RTX (<MODE>mode));
+  /* Vector with ones in elements that do not match or elements corresponding
+     to zeros in operands.  */
 
-  emit_insn (gen_vcmpne<VSX_EXTRACT_WIDTH> (cmpz1_result, operands[1], vzero));
-  emit_insn (gen_vcmpne<VSX_EXTRACT_WIDTH> (cmpz2_result, operands[2], vzero));
-  emit_insn (gen_and<mode>3 (and_result, cmpz1_result, cmpz2_result));
-
-  /* Vector with ones in elements that match.  */
-  emit_insn (gen_vcmpnez<VSX_EXTRACT_WIDTH> (cmpz_result, operands[1],
+  emit_insn (gen_vcmpnez<VSX_EXTRACT_WIDTH> (result, operands[1],
                                              operands[2]));
-  emit_insn (gen_one_cmpl<mode>2 (not_cmpz_result, cmpz_result));
 
-  /* Create vector with ones in elements where there was a zero in one of
-     the source elements or the elements did not match.  */
-  emit_insn (gen_nand<mode>3 (result, and_result, not_cmpz_result));
   sh = GET_MODE_SIZE (GET_MODE_INNER (<MODE>mode)) / 2;
 
   if (<MODE>mode == V16QImode)
@@ -6939,12 +6924,13 @@
 	 of element from 7.  */
       int value = INTVAL (operands[4]);
       rtx vreg = gen_reg_rtx (V16QImode);
+      rtx tmp = gen_reg_rtx (V16QImode);
 
       emit_insn (gen_xxspltib_v16qi (vreg, GEN_INT (-1)));
-      emit_insn (gen_xorv16qi3 (operands[3], operands[3], vreg));
+      emit_insn (gen_xorv16qi3 (tmp, operands[3], vreg));
       value = 7 - value;
       emit_insn (gen_xxpermx_inst (operands[0], operands[2],
-				   operands[1], operands[3],
+				   operands[1], tmp,
 				   GEN_INT (value)));
     }
 

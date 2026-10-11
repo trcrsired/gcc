@@ -1043,6 +1043,10 @@ mgeneral-regs-only
 Target RejectNegative Mask(GENERAL_REGS_ONLY) Var(ix86_target_flags) Save
 Generate code which uses only the general registers.
 
+m128bit-atomic
+Target Mask(128BIT_ATOMIC) Var(ix86_target_flags) Save
+Generate cmpxchg16b, 128-bit atomic vector loads and stores for the x86-64 architecture.
+
 mshstk
 Target Mask(ISA_SHSTK) Var(ix86_isa_flags) Save
 Enable shadow stack built-in functions from Control-flow Enforcement
@@ -1390,3 +1394,8 @@ mavx10v2aux
 Target Mask(ISA2_AVX10V2AUX) Var(ix86_isa_flags2) Save
 Support MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AVX, AVX2,
 AVX10.1 and AVX10V2AUX built-in functions and code generation.
+
+macev1
+Target Mask(ISA2_ACEV1) Var(ix86_isa_flags2) Save
+Support MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AVX, AVX2,
+AVX10.1 and ACEV1 built-in functions and code generation.

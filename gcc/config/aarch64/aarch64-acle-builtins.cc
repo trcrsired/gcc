@@ -456,8 +456,10 @@ function_instance::hash () const
 {
   inchash::hash h;
   /* BASE uniquely determines BASE_NAME, so we don't need to hash both.  */
-  h.add_ptr (base);
-  h.add_ptr (shape);
+  /* FUNCTION_TABLE has a fixed address relative to BASE and SHAPE within
+     the compiler binary, even if PIE changes the binary's load address.  */
+  h.add_hwi ((uintptr_t) base - (uintptr_t) &function_table);
+  h.add_hwi ((uintptr_t) shape - (uintptr_t) &function_table);
   h.add_int (mode_suffix_id);
   h.add_int (type_suffix_ids[0]);
   h.add_int (type_suffix_ids[1]);
@@ -1099,7 +1101,7 @@ function_resolver::lookup_form (mode_suffix_index mode, sve_type type)
 }
 
 /* Resolve the function to one with the mode suffix given by MODE, the
-   type suffixes given by TYPE0 and TYPE1, and group suffix given by
+   type suffixes given by TYPE0, TYPE1 and TYPE2, and group suffix given by
    GROUP.  Return its function decl on success, otherwise report an
    error and return error_mark_node.  */
 tree
@@ -2850,6 +2852,30 @@ gimple_folder::fold_contiguous_base (gimple_seq &stmts, tree vectype)
   return base;
 }
 
+/* Common code to fold a contiguous load intrinsic call into a gimple
+   call to IFN_CODE.  */
+gimple *
+gimple_folder::fold_contiguous_load (internal_fn ifn_code)
+{
+  if (vectors_per_tuple () != 1)
+    return nullptr;
+
+  tree vectype = vector_type (0);
+
+  /* Get the predicate and base pointer.  */
+  gimple_seq stmts = NULL;
+  tree pred = convert_pred (stmts, vectype, 0);
+  tree base = fold_contiguous_base (stmts, vectype);
+  tree els = build_zero_cst (vectype);
+  gsi_insert_seq_before (gsi, stmts, GSI_SAME_STMT);
+
+  tree cookie = load_store_cookie (TREE_TYPE (vectype));
+  gcall *new_call = gimple_build_call_internal (ifn_code, 4,
+						base, cookie, pred, els);
+  gimple_call_set_lhs (new_call, lhs);
+  return new_call;
+}
+
 /* Return the alignment and TBAA argument to an internal load or store
    function like IFN_MASK_LOAD or IFN_MASK_STORE, given that it accesses
    memory elements of type TYPE.  */
@@ -3011,7 +3037,16 @@ gimple_folder::fold_to_ptrue ()
 gimple *
 gimple_folder::fold_to_pfalse ()
 {
-  return gimple_build_assign (lhs, build_zero_cst (TREE_TYPE (lhs)));
+  if (type_suffix (0).tclass == TYPE_bool)
+    return gimple_build_assign (lhs, build_zero_cst (TREE_TYPE (lhs)));
+
+  if (type_suffix (0).tclass == TYPE_count)
+    {
+      tree svbool_type = abi_vector_types[VECTOR_TYPE_svbool_t];
+      return fold_call_to (build_zero_cst (svbool_type));
+    }
+
+  return NULL;
 }
 
 /* Fold an operation to a constant predicate in which the first VL
@@ -3104,11 +3139,11 @@ gimple_folder::fold ()
   if (!TARGET_SIMD && !TARGET_SVE)
     return NULL;
 
-  /* Punt if the function has a return type and no result location is
-     provided.  The attributes should allow target-independent code to
-     remove the calls if appropriate.  */
+  /* Create a placeholder variable for the result.
+     This allows implementers of `fold` to assume `lhs` will never be null.
+     If the result is unused, it will be optimized away later.  */
   if (!lhs && TREE_TYPE (gimple_call_fntype (call)) != void_type_node)
-    return NULL;
+    lhs = create_tmp_var (TREE_TYPE (gimple_call_fntype (call)));
 
   /* First try some simplifications that are common to many functions.  */
   if (auto *call = redirect_pred_x ())
@@ -4672,8 +4707,14 @@ gt_pch_nx (function_instance *)
 }
 
 inline void
-gt_pch_nx (function_instance *, gt_pointer_operator, void *)
+gt_pch_nx (function_instance *instance, gt_pointer_operator, void *)
 {
+  /* The instance is the first member of its containing GC object.  PCH
+     adjusts these pointers if the compiler has a different PIE load base.  */
+  static_assert (offsetof (registered_function, instance) == 0);
+  gt_pch_note_callback (&instance->base_name, instance);
+  gt_pch_note_callback (&instance->base, instance);
+  gt_pch_note_callback (&instance->shape, instance);
 }
 
 #include "gt-aarch64-acle-builtins.h"

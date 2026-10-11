@@ -32,11 +32,35 @@ along with GCC; see the file COPYING3.  If not see
 #include "cfganal.h"
 #include "tree.h"
 #include "tree-ssa.h"
+#include "tree-cfg.h"
 #include "cfgloop.h"
 #include "sreal.h"
 #include "profile.h"
 #include "diagnostics/sarif-sink.h"
 #include "custom-sarif-properties/cfg.h"
+#include "hierarchical_discriminator.h"
+
+/* Location used to allocate a copyid for a duplicated BB.  */
+
+static location_t
+copyid_location_from_bb (basic_block bb)
+{
+  if (!bb)
+    return UNKNOWN_LOCATION;
+
+  if (current_ir_type () == IR_GIMPLE)
+    {
+      gimple *last = last_nondebug_stmt (bb);
+      return last ? gimple_location (last) : UNKNOWN_LOCATION;
+    }
+
+  rtx_insn *insn;
+  FOR_BB_INSNS_REVERSE (bb, insn)
+    if (INSN_P (insn) && INSN_HAS_LOCATION (insn))
+      return INSN_LOCATION (insn);
+
+  return UNKNOWN_LOCATION;
+}
 
 /* Disable warnings about missing quoting in GCC diagnostics.  */
 #if __GNUC__ >= 10
@@ -1141,6 +1165,29 @@ can_duplicate_block_p (const_basic_block bb)
   return cfg_hooks->can_duplicate_block_p (bb);
 }
 
+/* Returns true if we can duplicate E's destination with E redirected to the
+   copy.  */
+
+bool
+can_duplicate_block_on_edge_p (edge e)
+{
+  basic_block bb = e->dest;
+
+  if (!can_duplicate_block_p (bb))
+    return false;
+
+  if (e->flags & EDGE_COMPLEX)
+    return false;
+
+  edge s;
+  edge_iterator ei;
+  FOR_EACH_EDGE (s, ei, bb->succs)
+    if (s->flags & EDGE_COMPLEX)
+      return false;
+
+  return true;
+}
+
 /* Duplicate basic block BB, place it after AFTER (if non-null) and redirect
    edge E to it (if non-null).  Return the new basic block.
 
@@ -1224,6 +1271,15 @@ duplicate_block (basic_block bb, edge e, basic_block after, copy_bb_data *id)
 	      loops_state_set (LOOPS_MAY_HAVE_MULTIPLE_LATCHES);
 	    }
 	}
+    }
+
+  /* Skip if copy_bbs assigns one copyid for the whole region.  */
+  if (!id || !id->skip_copyid)
+    {
+      location_t loc = copyid_location_from_bb (bb);
+      if (loc != UNKNOWN_LOCATION)
+	assign_discriminators_to_bb (new_bb, 0,
+				     allocate_copyid_base (loc, 1));
     }
 
   return new_bb;
@@ -1354,9 +1410,13 @@ lv_add_condition_to_bb (basic_block first, basic_block second,
   cfg_hooks->lv_add_condition_to_bb (first, second, new_block, cond);
 }
 
-/* Checks whether all N blocks in BBS array can be copied.  */
+/* Checks whether all N blocks in BBS array can be copied.
+
+   PREVAILING_EXIT is as in copy_bbs.  If non-NULL, the copy of its source
+   keeps only the prevailing edge, so the abnormal successor edges of that
+   block do not require redirection.  */
 bool
-can_copy_bbs_p (basic_block *bbs, unsigned n)
+can_copy_bbs_p (basic_block *bbs, unsigned n, edge prevailing_exit)
 {
   unsigned i;
   edge e;
@@ -1365,17 +1425,28 @@ can_copy_bbs_p (basic_block *bbs, unsigned n)
   for (i = 0; i < n; i++)
     bbs[i]->flags |= BB_DUPLICATED;
 
+  /* A prevailing edge jumping back into the region is not supported:
+     its copy would have to keep targeting the original block.  */
+  if (prevailing_exit && (prevailing_exit->dest->flags & BB_DUPLICATED))
+    {
+      ret = false;
+      goto end;
+    }
+
   for (i = 0; i < n; i++)
     {
-      /* In case we should redirect abnormal edge during duplication, fail.  */
+      /* In case we should redirect abnormal edge during duplication, fail.
+	 However, the copy of PREVAILING_EXIT->src is exempt as its outgoing
+	 edges are removed or left in place rather than redirected.  */
       edge_iterator ei;
-      FOR_EACH_EDGE (e, ei, bbs[i]->succs)
-	if ((e->flags & EDGE_ABNORMAL)
-	    && (e->dest->flags & BB_DUPLICATED))
-	  {
-	    ret = false;
-	    goto end;
-	  }
+      if (!(prevailing_exit && bbs[i] == prevailing_exit->src))
+	FOR_EACH_EDGE (e, ei, bbs[i]->succs)
+	  if ((e->flags & EDGE_ABNORMAL)
+	      && (e->dest->flags & BB_DUPLICATED))
+	    {
+	      ret = false;
+	      goto end;
+	    }
 
       if (!can_duplicate_block_p (bbs[i]))
 	{
@@ -1412,23 +1483,40 @@ end:
    also in the same order.
 
    Newly created basic blocks are put after the basic block AFTER in the
-   instruction stream, and the order of the blocks in BBS array is preserved.  */
+   instruction stream, and the order of the blocks in BBS array is preserved.
+
+   If PREVAILING_EXIT is non-NULL, its source must be in BBS, and its
+   destination must not be: the copy of that block keeps only its edges to
+   PREVAILING_EXIT->dest, and the rest of its outgoing edges are removed.  None
+   of its edges are redirected, which allows copying a region whose exit block
+   has abnormal successor edges into the region.  It is the caller's
+   responsibility to remove or rewrite the copied block's control
+   statement.  */
 
 void
 copy_bbs (basic_block *bbs, unsigned n, basic_block *new_bbs,
 	  edge *edges, unsigned num_edges, edge *new_edges,
-	  class loop *base, basic_block after, bool update_dominance)
+	  class loop *base, basic_block after, bool update_dominance,
+	  edge prevailing_exit)
 {
   unsigned i, j;
   basic_block bb, new_bb, dom_bb;
   edge e;
   copy_bb_data id;
 
+  /* One copyid for the region (not per BB).  */
+  id.skip_copyid = true;
+
   /* Mark the blocks to be copied.  This is used by edge creation hooks
      to decide whether to reallocate PHI nodes capacity to avoid reallocating
      PHIs in the set of source BBs.  */
   for (i = 0; i < n; i++)
     bbs[i]->flags |= BB_DUPLICATED;
+
+  /* A prevailing edge into the region would be redirected like any
+     other.  We refuse this in can_copy_bbs_p.  */
+  gcc_checking_assert (!prevailing_exit
+		       || !(prevailing_exit->dest->flags & BB_DUPLICATED));
 
   /* Duplicate bbs, update dominators, assign bbs to loops.  */
   for (i = 0; i < n; i++)
@@ -1472,11 +1560,19 @@ copy_bbs (basic_block *bbs, unsigned n, basic_block *new_bbs,
       new_bb = new_bbs[i];
       bb = bbs[i];
 
-      FOR_EACH_EDGE (e, ei, new_bb->succs)
+      for (ei = ei_start (new_bb->succs); (e = ei_safe_edge (ei)); )
 	{
-	  if (!(e->dest->flags & BB_DUPLICATED))
-	    continue;
-	  redirect_edge_and_branch_force (e, get_bb_copy (e->dest));
+	  /* Remove the edges that do not prevail instead of
+	     redirecting them.  */
+	  if (prevailing_exit && bb == prevailing_exit->src
+	      && e->dest != prevailing_exit->dest)
+	    {
+	      remove_edge (e);
+	      continue;
+	    }
+	  if (e->dest->flags & BB_DUPLICATED)
+	    redirect_edge_and_branch_force (e, get_bb_copy (e->dest));
+	  ei_next (&ei);
 	}
     }
   for (j = 0; j < num_edges; j++)
@@ -1498,6 +1594,19 @@ copy_bbs (basic_block *bbs, unsigned n, basic_block *new_bbs,
   /* Clear information about duplicates.  */
   for (i = 0; i < n; i++)
     bbs[i]->flags &= ~BB_DUPLICATED;
+
+  /* One copyid for the whole region, keyed off the first source block that
+     has a location.  */
+  location_t loc = UNKNOWN_LOCATION;
+  for (i = 0; i < n && loc == UNKNOWN_LOCATION; i++)
+    loc = copyid_location_from_bb (bbs[i]);
+
+  if (loc != UNKNOWN_LOCATION)
+    {
+      unsigned int copyid = allocate_copyid_base (loc, 1);
+      for (i = 0; i < n; i++)
+	assign_discriminators_to_bb (new_bbs[i], 0, copyid);
+    }
 }
 
 /* Return true if BB contains only labels or non-executable

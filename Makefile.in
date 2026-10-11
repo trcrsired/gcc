@@ -209,7 +209,6 @@ HOST_EXPORTS = \
 	GOC="$(GOC)"; export GOC; \
 	GDC="$(GDC)"; export GDC; \
 	GM2="$(GM2)"; export GM2; \
-	GNATMAKE_FOR_BUILD="$(GNATMAKE_FOR_BUILD)"; export GNATMAKE_FOR_BUILD; \
 	AR="$(AR)"; export AR; \
 	AS="$(AS)"; export AS; \
 	CC_FOR_BUILD="$(CC_FOR_BUILD)"; export CC_FOR_BUILD; \
@@ -322,7 +321,6 @@ BASE_TARGET_EXPORTS = \
 	GOC="$(GOC_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GOC; \
 	GDC="$(GDC_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GDC; \
 	GM2="$(GM2_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GM2; \
-	GNATMAKE_FOR_BUILD="$(GNATMAKE_FOR_BUILD)"; export GNATMAKE_FOR_BUILD; \
 	DLLTOOL="$(DLLTOOL_FOR_TARGET)"; export DLLTOOL; \
 	DSYMUTIL="$(DSYMUTIL_FOR_TARGET)"; export DSYMUTIL; \
 	LD="$(COMPILER_LD_FOR_TARGET)"; export LD; \
@@ -423,7 +421,7 @@ MAKEINFO = @MAKEINFO@
 EXPECT = @EXPECT@
 RUNTEST = @RUNTEST@
 
-AUTO_PROFILE = gcc-auto-profile --all -c 10000000
+AUTO_PROFILE = gcc-auto-profile --all --perf perf.data -c 10000000 --
 
 # This just becomes part of the MAKEINFO definition passed down to
 # sub-makes.  It lets flags be given on the command line while still
@@ -907,6 +905,7 @@ BASE_FLAGS_TO_PASS = \
 	"CXX_FOR_BUILD=$(CXX_FOR_BUILD)" \
 	"EXPECT=$(EXPECT)" \
 	"FLEX=$(FLEX)" \
+	"GNATMAKE_FOR_BUILD=$(GNATMAKE_FOR_BUILD)" \
 	"INSTALL=$(INSTALL)" \
 	"INSTALL_DATA=$(INSTALL_DATA)" \
 	"INSTALL_PROGRAM=$(INSTALL_PROGRAM)" \
@@ -2937,6 +2936,7 @@ do-check:
 warning.log: build.log
 	$(srcdir)/contrib/warn_summary build.log > $@
 
+.PHONY: mail-report.log
 mail-report.log:
 	if test x'$(BOOT_CFLAGS)' != x''; then \
 	    BOOT_CFLAGS='$(BOOT_CFLAGS)'; export BOOT_CFLAGS; \
@@ -2945,6 +2945,7 @@ mail-report.log:
 	chmod +x $@
 	echo If you really want to send e-mail, run ./$@ now
 
+.PHONY: mail-report-with-warnings.log
 mail-report-with-warnings.log: warning.log
 	if test x'$(BOOT_CFLAGS)' != x''; then \
 	    BOOT_CFLAGS='$(BOOT_CFLAGS)'; export BOOT_CFLAGS; \
@@ -66024,7 +66025,13 @@ do-clean: clean-stage3
 
 # Run the comparisons in parallel through a generated sub-makefile under
 # the jobserver.  Each failing recipe writes a separate result shard that
-# is collected after the sub-make finishes.
+# is collected after the sub-make finishes.  The comparison command is
+# written into that makefile, so double its '$' characters to survive the
+# expansion the sub-make performs when it reads them back, and name the
+# shell there, which a sub-make does not inherit.  The exit trap starts
+# with ':' because older bash does not preserve the exit status across an
+# exit trap that consists of a single command, which would report a
+# comparison failure as a success.
 compare:
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
@@ -66036,22 +66043,24 @@ compare:
 	compare_id=$$$$; \
 	bad_compare=.bad_compare.$$compare_id; export bad_compare; \
 	compare_makefile=compare.$$compare_id.mk; \
-	trap 'st=$$?; rm -f "$$compare_makefile" "$$bad_compare" \
-	  "$$bad_compare".*; trap - 0; exit $$st' 0; \
+	trap ':; rm -f "$$compare_makefile" "$$bad_compare" \
+	  "$$bad_compare".*' 0; \
 	trap 'exit 1' 1 2 3 15; \
+	rm -f .bad_compare "$$bad_compare" "$$bad_compare".*; \
 	echo Comparing stages 2 and 3; \
         sed=`echo stage3 | sed 's,^stage,,;s,.,.,g'`; \
 	files=`find stage3-* -name "*$(objext)" -print | \
 		 sed -n s,^stage$$sed-,,p`; \
-	cmp_raw='$(do-compare)'; \
+	cmp_cmd='$(subst $$,$$$$,$(do-compare))'; \
 	{ \
+	  echo 'SHELL = $(SHELL)'; \
 	  echo 'all:'; \
 	  echo '.PHONY: all FORCE'; \
 	  echo 'FORCE:'; \
 	  printf 'compare/%%: FORCE ; @'; \
 	  printf 'f1=$$$$r/stage2-$$*; '; \
 	  printf 'f2=$$$$r/stage3-$$*; '; \
-	  printf '%s' "$$cmp_raw" | sed 's,\$$,$$$$,g'; \
+	  printf '%s' "$$cmp_cmd"; \
 	  printf ' > /dev/null 2>&1; st=$$$$?; '; \
 	  printf 'if test $$$$st -eq 1; then '; \
 	  printf 'case $$* in '; \
@@ -66484,7 +66493,13 @@ do-clean: clean-stage4
 
 # Run the comparisons in parallel through a generated sub-makefile under
 # the jobserver.  Each failing recipe writes a separate result shard that
-# is collected after the sub-make finishes.
+# is collected after the sub-make finishes.  The comparison command is
+# written into that makefile, so double its '$' characters to survive the
+# expansion the sub-make performs when it reads them back, and name the
+# shell there, which a sub-make does not inherit.  The exit trap starts
+# with ':' because older bash does not preserve the exit status across an
+# exit trap that consists of a single command, which would report a
+# comparison failure as a success.
 compare3:
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
@@ -66496,22 +66511,24 @@ compare3:
 	compare_id=$$$$; \
 	bad_compare=.bad_compare.$$compare_id; export bad_compare; \
 	compare_makefile=compare3.$$compare_id.mk; \
-	trap 'st=$$?; rm -f "$$compare_makefile" "$$bad_compare" \
-	  "$$bad_compare".*; trap - 0; exit $$st' 0; \
+	trap ':; rm -f "$$compare_makefile" "$$bad_compare" \
+	  "$$bad_compare".*' 0; \
 	trap 'exit 1' 1 2 3 15; \
+	rm -f .bad_compare "$$bad_compare" "$$bad_compare".*; \
 	echo Comparing stages 3 and 4; \
         sed=`echo stage4 | sed 's,^stage,,;s,.,.,g'`; \
 	files=`find stage4-* -name "*$(objext)" -print | \
 		 sed -n s,^stage$$sed-,,p`; \
-	cmp_raw='$(do-compare3)'; \
+	cmp_cmd='$(subst $$,$$$$,$(do-compare3))'; \
 	{ \
+	  echo 'SHELL = $(SHELL)'; \
 	  echo 'all:'; \
 	  echo '.PHONY: all FORCE'; \
 	  echo 'FORCE:'; \
 	  printf 'compare3/%%: FORCE ; @'; \
 	  printf 'f1=$$$$r/stage3-$$*; '; \
 	  printf 'f2=$$$$r/stage4-$$*; '; \
-	  printf '%s' "$$cmp_raw" | sed 's,\$$,$$$$,g'; \
+	  printf '%s' "$$cmp_cmd"; \
 	  printf ' > /dev/null 2>&1; st=$$$$?; '; \
 	  printf 'if test $$$$st -eq 1; then '; \
 	  printf 'case $$* in '; \
@@ -69768,16 +69785,6 @@ all-stagetrain-target-libphobos: maybe-all-stagetrain-target-libatomic
 all-stagefeedback-target-libphobos: maybe-all-stagefeedback-target-libatomic
 all-stageautoprofile-target-libphobos: maybe-all-stageautoprofile-target-libatomic
 all-stageautofeedback-target-libphobos: maybe-all-stageautofeedback-target-libatomic
-configure-target-libstdc++-v3: maybe-configure-target-libgomp
-configure-stage1-target-libstdc++-v3: maybe-configure-stage1-target-libgomp
-configure-stage2-target-libstdc++-v3: maybe-configure-stage2-target-libgomp
-configure-stage3-target-libstdc++-v3: maybe-configure-stage3-target-libgomp
-configure-stage4-target-libstdc++-v3: maybe-configure-stage4-target-libgomp
-configure-stageprofile-target-libstdc++-v3: maybe-configure-stageprofile-target-libgomp
-configure-stagetrain-target-libstdc++-v3: maybe-configure-stagetrain-target-libgomp
-configure-stagefeedback-target-libstdc++-v3: maybe-configure-stagefeedback-target-libgomp
-configure-stageautoprofile-target-libstdc++-v3: maybe-configure-stageautoprofile-target-libgomp
-configure-stageautofeedback-target-libstdc++-v3: maybe-configure-stageautofeedback-target-libgomp
 configure-target-libsanitizer: maybe-all-target-libstdc++-v3
 configure-stage1-target-libsanitizer: maybe-all-stage1-target-libstdc++-v3
 configure-stage2-target-libsanitizer: maybe-all-stage2-target-libstdc++-v3

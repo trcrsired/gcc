@@ -1522,7 +1522,7 @@ Warn when __sync_fetch_and_nand and __sync_nand_and_fetch built-in functions are
 
 Wsynth
 C++ ObjC++ Warning Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 Wsystem-headers
 C ObjC C++ ObjC++ Warning
@@ -1743,7 +1743,7 @@ C++ ObjC++ WarnRemoved
 
 fallow-parameterless-variadic-functions
 C ObjC Ignore
-Does nothing. Preserved for backward compatibility.
+Does nothing.  Preserved for backward compatibility.
 
 falt-external-templates
 C++ ObjC++ WarnRemoved
@@ -2152,6 +2152,10 @@ C++ ObjC++ Joined RejectNegative Undocumented
 fmodule-implicit-inline
 C++ ObjC++ Var(flag_module_implicit_inline,0) Integer
 Member functions defined within their class are inline in module purview.
+
+fmodule-include-translate
+C++ ObjC++ Var(flag_module_include_translate) Init(1) Integer
+Implicitly translate #include to import when possible.
 
 fmodule-only
 C++ ObjC RejectNegative Var(flag_module_only) Integer

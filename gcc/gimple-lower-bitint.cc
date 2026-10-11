@@ -1468,7 +1468,7 @@ bitint_large_huge::handle_cast (tree lhs_type, tree rhs1, tree idx)
 						  ? high - 1 - low : low));
 	      m_first = false;
 	      m_data[save_data_cnt + 2]
-		= build_int_cst (NULL_TREE, m_data_cnt);
+		= build_int_cst (integer_type_node, m_data_cnt);
 	      m_data_cnt = save_data_cnt;
 	      t = add_cast (signed_type_for (m_limb_type), t);
 	      tree lpm1 = build_int_cst (unsigned_type_node, limb_prec - 1);
@@ -1518,7 +1518,7 @@ bitint_large_huge::handle_cast (tree lhs_type, tree rhs1, tree idx)
 	      rhs1 = handle_operand (rhs1, idx);
 	      if (m_first)
 		m_data[save_data_cnt + 2]
-		  = build_int_cst (NULL_TREE, m_data_cnt);
+		  = build_int_cst (integer_type_node, m_data_cnt);
 	      m_first = save_first;
 	      return rhs1;
 	    }
@@ -1570,7 +1570,7 @@ bitint_large_huge::handle_cast (tree lhs_type, tree rhs1, tree idx)
 	  t1 = handle_operand (rhs1, t1);
 	  if (m_first)
 	    m_data[save_data_cnt + 2]
-	      = build_int_cst (NULL_TREE, m_data_cnt);
+	      = build_int_cst (integer_type_node, m_data_cnt);
 	  tree ext = NULL_TREE;
 	  tree bitfld = NULL_TREE;
 	  if (!single_comparison)
@@ -1699,7 +1699,7 @@ bitint_large_huge::handle_cast (tree lhs_type, tree rhs1, tree idx)
 					 ? size_int (high - 1 - tidx) : idx));
 	      if (m_first)
 		m_data[save_data_cnt + 2]
-		  = build_int_cst (NULL_TREE, m_data_cnt);
+		  = build_int_cst (integer_type_node, m_data_cnt);
 	    }
 	  else if (tidx < high)
 	    {
@@ -1707,7 +1707,7 @@ bitint_large_huge::handle_cast (tree lhs_type, tree rhs1, tree idx)
 						  ? high - 1 - low : low));
 	      if (m_first)
 		m_data[save_data_cnt + 2]
-		  = build_int_cst (NULL_TREE, m_data_cnt);
+		  = build_int_cst (integer_type_node, m_data_cnt);
 	      if (!useless_type_conversion_p (m_limb_type, TREE_TYPE (t)))
 		t = add_cast (m_limb_type, t);
 	      tree ext = NULL_TREE;
@@ -1731,7 +1731,7 @@ bitint_large_huge::handle_cast (tree lhs_type, tree rhs1, tree idx)
 					 ? size_int (high - 1)
 					 : size_zero_node));
 		  m_data[save_data_cnt + 2]
-		    = build_int_cst (NULL_TREE, m_data_cnt);
+		    = build_int_cst (integer_type_node, m_data_cnt);
 		}
 	      else
 		m_data_cnt = tree_to_uhwi (m_data[save_data_cnt + 2]);
@@ -3271,15 +3271,18 @@ bitint_large_huge::lower_mergeable_stmt (gimple *stmt, tree_code &cmp_code,
 				       bitint_big_endian
 				       ? size_int (-1) : size_one_node);
 	      insert_before (g);
-	      if (bitint_big_endian && rem != 0)
-		g = gimple_build_cond (NE_EXPR, idx,
-				       size_int (bo_idx + 1),
+	      /* For big-endian, if bo_idx + total - 1 - end is all ones, then
+		 compare idx (which is equal to idx_next + 1) against 0
+		 instead.  */
+	      if (bitint_big_endian && bo_idx + total - end == 0)
+		g = gimple_build_cond (NE_EXPR, idx, size_zero_node,
 				       NULL_TREE, NULL_TREE);
 	      else
 		g = gimple_build_cond (NE_EXPR, idx_next,
 				       size_int (bo_idx
 						 + (bitint_big_endian
-						    ? 0 : end)),
+						    ? total - 1 - end
+						    : end)),
 				       NULL_TREE, NULL_TREE);
 	      insert_before (g);
 	      m_gsi = gsi_for_stmt (stmt);
@@ -4594,8 +4597,9 @@ bitint_large_huge::finish_arith_overflow (tree var, tree obj, tree type,
 			     build_fold_addr_expr (unshare_expr (obj)), off);
 	  g = gimple_build_call (fn, 3,
 				 build_fold_addr_expr (unshare_expr (obj)),
-				 src, build_int_cst (size_type_node,
-						     obj_nelts * m_limb_size));
+				 build_fold_addr_expr (src),
+				 build_int_cst (size_type_node,
+						obj_nelts * m_limb_size));
 	  insert_before (g);
 	}
       if (orig_obj == NULL_TREE && obj)
@@ -6168,6 +6172,9 @@ bitint_large_huge::lower_bswap_bitreverse (tree obj, gimple *stmt)
   unsigned prec = TYPE_PRECISION (type);
   tree p = build_int_cst (sizetype,
 			  prec / limb_prec - (prec % limb_prec == 0));
+  /* For .BSWAP/.BITREVERSE, we can use handle_operand with non-INTEGER_CST
+     idx even to access the most significant partial limb.  */
+  m_var_msb = true;
   /* For IFN .BSWAP or .BITREVERSE and
      FN corresponding __builtin_bswapN or __builtin_bitreverseN where N
      is limb_prec, lower

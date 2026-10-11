@@ -2231,6 +2231,10 @@ struct address_info {
   /* True if this is an RTX_AUTOINC address.  */
   bool autoinc_p;
 
+  /* The MEM whose address this is, or null if this describes an address
+     operand with no enclosing MEM (an ADDRESS rather than a MEM address).  */
+  rtx mem;
+
   /* A pointer to the top-level address.  */
   rtx *outer;
 
@@ -3080,6 +3084,7 @@ enum class expand_opcode {
 
 extern rtx expand_rtx (const uint8_t *, rtx *);
 extern rtx_insn *complete_seq (const uint8_t *, rtx *);
+extern void note_split (const char *);
 extern rtx copy_rtx_if_shared (rtx);
 
 /* In rtl.cc */
@@ -3092,7 +3097,7 @@ extern bool rtx_equal_p (const_rtx, const_rtx,
 			 rtx_equal_p_callback_function = NULL);
 
 extern bool rtvec_all_equal_p (const_rtvec);
-extern bool rtvec_series_p (rtvec, int);
+extern bool rtvec_series_p (rtvec, poly_int64);
 
 /* Return true if X is a vector constant with a duplicated element value.  */
 

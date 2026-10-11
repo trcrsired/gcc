@@ -2357,32 +2357,36 @@ may be silently skipped when generating BTF.
 @atindex @code{callback_only}
 @cindex functions with callbacks
 @item callback_only
-The @code{callback_only} attribute specifies that the annotated function may
-call the specified callback function. The first parameter identifies the index
-of the callback function, the rest of the arguments specify the indices of the
-arguments of the indirect call. All indices start from 1. If the function takes
-the implicit @code{this} pointer, it is referred to by the index 1, with the
-rest of the arguments starting at index 2. The index 0 marks an argument not
-present in the arguments of the annotated function, an argument which is
-modified before calling the callback function. The annotated function must pass
-the specified arguments in the specified order to the callback function, which
-must be callable with the number, order and type of the arguments. The
-specified pointer to the callback may not escape the translation unit of the
-annotated function and it may not be captured. The annotated function is
-required to pass the arguments through, it may not change or dereference them.
-The arguments also may not escape. The attribute may be used multiple times per
-function, though only one @code{callback_only} attribute may be used per
-function parameter.
+The @code{callback_only} attribute specifies that the annotated
+function may call the specified callback function.  The first parameter
+identifies the index of the callback function, the rest of the arguments
+specify the indices of the arguments of the indirect call.  All indices
+start from 1.  If the function takes the implicit @code{this} pointer,
+it is referred to by the index 1, with the rest of the arguments
+starting at index 2.  The index 0 marks an argument not present in the
+arguments of the annotated function, an argument which is modified
+before calling the callback function.  The annotated function must
+pass the specified arguments in the specified order to the callback
+function, which must be callable with the number, order and type of
+the arguments.  The specified pointer to the callback may not escape the
+translation unit of the annotated function and it may not be captured.
+The annotated function is required to pass the arguments through, it
+may not change or dereference them.  The arguments also may not escape.
+The attribute may be used multiple times per function, though only one
+@code{callback_only} attribute may be used per function parameter.
+Neither the dispatching function nor the callback function may be
+variadic.
 
 The attribute exposes the potentially hidden callsite in the annotated
-function, enabling interprocedural optimizations which may not be possible
-without the attribute. It is most useful for annotating functions from
-dynamically linked libraries, as their bodies are not available during
-compilation.
+function, enabling interprocedural optimizations which may not be
+possible without the attribute.  It is most useful for annotating
+functions from dynamically linked libraries, as their bodies are not
+available during compilation.
 
-This attribute is similar to the clang @code{callback} attribute but it is not
-compatible with it. The clang implementation allows identifiers as arguments,
-marks an unknown argument with -1 and the @code{this} pointer with the index 0.
+This attribute is similar to the clang @code{callback} attribute
+but it is not compatible with it.  The clang implementation allows
+identifiers as arguments, marks an unknown argument with -1 and the
+@code{this} pointer with the index 0.
 
 An example usage:
 
@@ -2814,6 +2818,19 @@ positional initialization will result in future breakage.
 
 GCC emits warnings based on this attribute by default; use
 @option{-Wno-designated-init} to suppress them.
+
+@cindex @code{suppress_coverage}
+@item suppress_coverage
+This attribute applies to functions.
+
+The @code{suppress_coverage} attribute results in GCC not considering the
+function or its lines, arcs, conditions, or paths towards the total
+count.  This attribute does nothing unless coverage is enabled,
+e.g. with @option{--coverage} or @option{-fpath-coverage}.  This is useful
+to suppress coverage for functions that are uninteresting or impractical to
+cover.  If coverage is suppressed with this attribute then GCC will not
+instrument for MC/DC @option{-fcondition-coverage} or prime path
+coverage @option{-fpath-coverage}.
 
 @atindex @code{error}
 @atindex @code{warning}
@@ -9553,6 +9570,11 @@ Enable/disable the generation of the AMX-MOVRS instructions.
 @itemx no-avx10v2aux
 Enable/disable the generation of the AVX10V2AUX instructions.
 
+@atindex @code{target("acev1")}, x86
+@item acev1
+@itemx no-acev1
+Enable/disable the generation of the ACEV1 instructions.
+
 @atindex @code{target("cld")}, x86
 @item cld
 @itemx no-cld
@@ -9873,7 +9895,7 @@ does not distinguish between types with different attributes.  Support
 for attributes in C++ may be restricted in future to attributes on
 declarations only, but not on nested declarators.
 
-@xref{Attributes}, for details of the semantics of attributes.
+@xref{Attributes}, for details of the semantics of attributes
 applying to functions.
 
 An @dfn{attribute specifier} is of the form
@@ -10138,6 +10160,7 @@ option is specified.  @xref{OpenMP}, and @ref{OpenACC}.
 * Structure-Layout Pragmas::
 * Weak Pragmas::
 * Diagnostic Pragmas::
+* Coverage Pragmas::
 * Visibility Pragmas::
 * Push/Pop Macro Pragmas::
 * Function Specific Option Pragmas::
@@ -10599,6 +10622,90 @@ This is just like @samp{pragma GCC error} except that a warning
 message is issued instead of an error message.  Unless
 @option{-Werror} is in effect, in which case this pragma will generate
 an error as well.
+
+@end table
+
+@node Coverage Pragmas
+@subsection Coverage Pragmas
+
+@table @code
+@cindex pragma, suppress_coverage
+@item #pragma GCC suppress_coverage begin
+@itemx #pragma GCC suppress_coverage end
+The lines of code between the @code{begin} and @code{end} will not be
+considered towards any coverage.  This is independent of the code
+structure, and @code{end} may appear in a different scope than the
+corresponding @code{begin}.
+
+This pragma is useful to suppress coverage for code that is unreachable yet
+counts towards coverage and pollutes the report, which is a common
+problem with defensive code or when asserting invariants and properties.
+This attribute does nothing unless coverage is enabled, e.g. with
+@option{--coverage} or @option{-fpath-coverage}.
+
+A @code{end} without a @code{begin}, or a @code{begin} when another is
+already in effect, will generate a warning.  A @code{begin} without a
+matching @code{end} will suppress the rest of the file.
+
+@smallexample
+  #pragma GCC suppress_coverage begin
+  if (cond)
+    @{
+      /* Coverage is disabled for all statements in this block.  */
+      foo ();
+    @}
+  else
+    @{
+  #pragma GCC suppress_coverage end
+      /* Coverage is restored.  */
+      bar ();
+    @}
+
+  /* Counts towards coverage.  */
+  int a = 42;
+
+#pragma GCC suppress_coverage begin
+  @{
+    /* Does not count towards coverage.  */
+    bar (&a);
+    ...
+  @}
+@end smallexample
+
+Asserts introduce a branch, and the goal of asserting invariants is that
+the assert should not trigger, which would leave the assertion-failure
+branch uncovered.  These branches should not be taken (or cannot, in
+some cases), and would make full coverage impossible, yet clearly
+contribute to correctness.  By suppressing coverage for asserts we can
+fix this problem.
+
+@smallexample
+#define REQUIRE(pred, msg) do @{ \
+  _Pragma ("GCC suppress_coverage begin") \
+     assert (((void)msg, pred)); \
+  _Pragma ("GCC suppress_coverage end") \
+  @} while (0)
+
+double div (double x, double y)
+@{
+  /* gcov reports that this function has no branches.  */
+  REQUIRE (y != 0, "division by zero");
+  return x / y;
+@}
+@end smallexample
+
+@samp{pragma GCC suppress_coverage} can suppress expressions like the
+condition in @code{if} statements:
+
+@smallexample
+#pragma GCC suppress_coverage begin
+if (x < y) // Does not count towards coverage.
+#pragma GCC suppress_coverage end
+  @{
+    /* Counts towards coverage.  */
+    foo ();
+  @}
+@end smallexample
 
 @end table
 
@@ -13526,7 +13633,7 @@ size of the @code{asm} --- or parts of it --- in units of 16-bit words:
 @item nl
 The number of lines in the code template, which is half the default size.
 It suits code templates that only use 1-word instructions with
-no superfuous physical @samp{\n} or logical @samp{$} line breaks.
+no superfluous physical @samp{\n} or logical @samp{$} line breaks.
 
 @item [0-9]+
 The decimal representation of a non-negative integer.
@@ -18499,7 +18606,7 @@ of the function, control never reaches the end of the function
 body.  The @code{__builtin_unreachable} is in fact unreachable and
 communicates this fact to the compiler.
 
-Another use for @code{__builtin_unreachable} is following a call a
+Another use for @code{__builtin_unreachable} is following a call to a
 function that never returns but that is not declared
 @code{__attribute__((noreturn))}, as in this example:
 
@@ -19389,7 +19496,7 @@ void __builtin_arm_set_fpscr (unsigned int);
 GCC implements the ARMv8-M Security Extensions as described in the ARMv8-M
 Security Extensions: Requirements on Development Tools Engineering
 Specification, which can be found at
-@uref{https://developer.arm.com/documentation/ecm0359818/latest/}.
+@uref{https://support.arm.com/documentation/ecm0359818/latest/}.
 
 As part of the Security Extensions GCC implements two new function attributes:
 @code{cmse_nonsecure_entry} and @code{cmse_nonsecure_call}.
@@ -27639,17 +27746,17 @@ temporarily paused or slowed down.
 GCC supports vector intrinsics as specified in the ratified version 1.0 of the
 RISC-V vector intrinsic specification, which is available from the repository's
 release page:
-@uref{https://github.com/riscv-non-isa/rvv-intrinsic-doc/releases/tag/v1.0-ratified}.
+@uref{https://github.com/riscv-non-isa/riscv-rvv-intrinsic-doc/releases/tag/v1.0-ratified}.
 All of these functions are declared in the include file @file{riscv_vector.h}.
 
 @node CORE-V Built-in Functions
 @subsection CORE-V Built-in Functions
 For more information on all CORE-V built-ins, please see
-@uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md}
+@uref{https://github.com/openhwfoundation/core-v-sw/blob/master/specifications/corev-builtin-spec.md}
 
 These built-in functions are available for the CORE-V MAC machine
 architecture. For more information on CORE-V built-ins, please see
-@uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-multiply-accumulate-builtins-xcvmac}.
+@uref{https://github.com/openhwfoundation/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-multiply-accumulate-builtins-xcvmac}.
 
 @deftypefn {Built-in Function} {int32_t} __builtin_riscv_cv_mac_mac (int32_t, int32_t, int32_t)
 Generated assembler @code{cv.mac}
@@ -27725,7 +27832,7 @@ Generates the @code{cv.machhsRN} machine instruction.
 
 These built-in functions are available for the CORE-V ALU machine
 architecture. For more information on CORE-V built-ins, please see
-@uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-miscellaneous-alu-builtins-xcvalu}
+@uref{https://github.com/openhwfoundation/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-miscellaneous-alu-builtins-xcvalu}
 
 @deftypefn {Built-in Function} {int} __builtin_riscv_cv_alu_slet (int32_t, int32_t)
 Generated assembler @code{cv.slet}
@@ -27819,7 +27926,7 @@ Generated assembler @code{cv.subuRNr} if  the it is a register.
 
 These built-in functions are available for the CORE-V Event Load machine
 architecture. For more information on CORE-V ELW builtins, please see
-@uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-event-load-word-builtins-xcvelw}
+@uref{https://github.com/openhwfoundation/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-event-load-word-builtins-xcvelw}
 
 @deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_elw_elw (uint32_t *)
 Generated assembler @code{cv.elw}
@@ -27827,7 +27934,7 @@ Generated assembler @code{cv.elw}
 
 These built-in functions are available for the CORE-V SIMD machine
 architecture. For more information on CORE-V SIMD built-ins, please see
-@uref{https://github.com/openhwgroup/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-pulp-816-bit-simd-builtins-xcvsimd}
+@uref{https://github.com/openhwfoundation/core-v-sw/blob/master/specifications/corev-builtin-spec.md#listing-of-pulp-816-bit-simd-builtins-xcvsimd}
 
 @deftypefn {Built-in Function} {uint32_t} __builtin_riscv_cv_simd_add_h (uint32_t, uint32_t, uint4_t)
 Generated assembler @code{cv.add.h}

@@ -515,10 +515,9 @@ DEFTREECODE (SIMPLE_REQ, "simple_req", tcc_expression, 1)
 DEFTREECODE (TYPE_REQ, "type_req", tcc_expression, 1)
 
 /* A requirement for an expression and its properties. The
-   first operand is the expression, and the 2nd is its type.
-   The accessor COMPOUND_REQ_NOEXCEPT determines whether
-   the noexcept keyword was present. */
-DEFTREECODE (COMPOUND_REQ, "compound_req", tcc_expression, 2)
+   first operand is the expression, the 2nd is its type,
+   the third one is noexcept expression.   */
+DEFTREECODE (COMPOUND_REQ, "compound_req", tcc_expression, 3)
 
 /* A requires clause within a requires expression. */
 DEFTREECODE (NESTED_REQ, "nested_req", tcc_expression, 1)
@@ -588,9 +587,6 @@ DEFTREECODE (TU_LOCAL_ENTITY, "tu_local_entity", tcc_exceptional, 0)
 
 /* C++26 reflection expression.  */
 DEFTREECODE (REFLECT_EXPR, "reflect_expr", tcc_expression, 1)
-
-/* Represents the std::meta::info type.  */
-DEFTREECODE (META_TYPE, "meta_type", tcc_type, 0)
 
 /* Represents a dependent splice expression.  If SPLICE_EXPR_EXPRESSION_P
    is set, this tree represents a splice-expression (as opposed to

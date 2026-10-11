@@ -287,16 +287,23 @@
 ; Disable alternatives that only apply to specific ISA variants.
 
 (define_attr "cdna" "any,cdna2" (const_string "any"))
-(define_attr "rdna" "any,no,yes" (const_string "any"))
+(define_attr "rdna" "any,no,yes,n3,3p" (const_string "any"))
 
 (define_attr "xnack" "na,off,on" (const_string "na"))
 
 (define_attr "enabled" ""
-  (cond [(and (eq_attr "rdna" "no")
+  (cond [
+	 (and (eq_attr "rdna" "no")
 	      (ne (symbol_ref "TARGET_RDNA2_PLUS") (const_int 0)))
 	   (const_int 0)
 	 (and (eq_attr "rdna" "yes")
 	      (eq (symbol_ref "TARGET_RDNA2_PLUS") (const_int 0)))
+	   (const_int 0)
+	 (and (eq_attr "rdna" "n3")
+	      (ne (symbol_ref "TARGET_RDNA3_PLUS") (const_int 0)))
+	   (const_int 0)
+	 (and (eq_attr "rdna" "3p")
+	      (eq (symbol_ref "TARGET_RDNA3_PLUS") (const_int 0)))
 	   (const_int 0)
 	 (and (eq_attr "cdna" "cdna2")
 	      (eq (symbol_ref "TARGET_CDNA2_PLUS") (const_int 0)))
@@ -371,7 +378,13 @@
    (umin "min%u")
    (umax "max%u")
    (not "not%B")
-   (popcount "bcnt_u32%b")])
+   (popcount "bcnt_u32%b")
+   (clz "ffbh%u")
+   (ctz "ffbl%b")])
+
+(define_code_attr rdna_mnemonic
+  [(clz "clz_i32%u")
+   (ctz "ctz_i32%b")])
 
 (define_code_attr bare_mnemonic
   [(plus "add")
@@ -1596,7 +1609,7 @@
   [(set_attr "type" "vop_sdwa")
    (set_attr "length" "8")])
 
-(define_insn "<u>mulqihi3_scalar"
+(define_insn "<u>mulqihi3"
   [(set (match_operand:HI 0 "register_operand"			"=v")
 	(mult:HI
 	  (any_extend:HI (match_operand:QI 1 "register_operand" "%v"))
@@ -1731,12 +1744,16 @@
 ;; {{{ ALU: generic 64-bit
 
 (define_insn_and_split "one_cmpldi2"
-  [(set (match_operand:DI 0 "register_operand"        "=Sg,   ?v")
-	(not:DI (match_operand:DI 1 "gcn_alu_operand" "SgA,vSvDB")))
-   (clobber (match_scratch:BI 2			      "=cs,    X"))]
+  [(set (match_operand:DI 0 "register_operand")
+	(not:DI (match_operand:DI 1 "gcn_alu_operand")))
+   (clobber (match_scratch:BI 2))]
   ""
-  "#"
-  "reload_completed"
+  {@ [cons: =0,1,=2; attrs: type,length]
+   [Sg,SgA  ,cs;sop1,4] s_not_b64\t%0, %1
+   [Sg,C    ,cs;sop1,8] ^
+   [?v,vSvDB,X ;mult,*] #
+  }
+  "reload_completed && gcn_vgpr_register_operand (operands[0], DImode)"
   [(parallel [(set (match_dup 3) (not:SI (match_dup 4)))
 	      (clobber (match_dup 2))])
    (parallel [(set (match_dup 5) (not:SI (match_dup 6)))
@@ -1747,7 +1764,6 @@
     operands[5] = gcn_operand_part (DImode, operands[0], 1);
     operands[6] = gcn_operand_part (DImode, operands[1], 1);
   }
-  [(set_attr "type" "mult")]
 )
 
 (define_code_iterator vec_and_scalar64_com [and ior xor])

@@ -553,6 +553,7 @@ static tree fold_pointer_plus_expression (const constexpr_ctx *ctx, tree t,
 					  bool *non_constant_p,
 					  bool *overflow_p, tree *jump_target);
 static tree maybe_fold_addr_pointer_plus (tree t);
+static tree maybe_fold_reference_address_to_pointer (tree t);
 
 /* Variables and functions to manage constexpr call expansion context.
    These do not need to be marked for PCH or GC.  */
@@ -1917,6 +1918,9 @@ eval_constant_expression (const constexpr_ctx *ctx, tree t, bool lval,
 			  bool *non_constant_p, bool *overflow_p,
 			  tree *jump_target)
 {
+  if (t == NULL_TREE)
+    return NULL_TREE;
+
   if (jump_target && *jump_target)
     {
       /* If we are jumping, ignore all statements/expressions except those
@@ -1949,9 +1953,6 @@ eval_constant_expression (const constexpr_ctx *ctx, tree t, bool lval,
     }
 
   location_t loc = EXPR_LOCATION (t);
-
-  if (t == NULL_TREE)
-    return NULL_TREE;
 
   if (CONSTANT_CLASS_P (t))
     {
@@ -2389,6 +2390,29 @@ eval_constant_expression (const constexpr_ctx *ctx, tree t, bool lval,
 				 jump_target);
       break;
 
+    case GOTO_EXPR:
+      {
+	tree target = TREE_OPERAND (t, 0);
+	if (breaks (&target) || continues (&target) || returns (&target)
+	    || (TREE_CODE (target) == LABEL_DECL && DECL_ARTIFICIAL (target)))
+	  {
+	    if (jump_target)
+	      *jump_target = target;
+	    else
+	      {
+		gcc_assert (ctx->quiet);
+		*non_constant_p = true;
+	      }
+	  }
+	else
+	  {
+	    if (!ctx->quiet)
+	      error_at (loc, "%<goto%> is not a constant expression");
+	    *non_constant_p = true;
+	  }
+      }
+      break;
+
     case LOOP_EXPR:
     case WHILE_STMT:
     case FOR_STMT:
@@ -2739,7 +2763,14 @@ eval_store_expression (const constexpr_ctx *ctx, tree t, bool lval,
       /* Evaluate the value to be stored without knowing what object it will be
 	 stored in, so that any side-effects happen first.  */
       if (!SCALAR_TYPE_P (type))
-	new_ctx.ctor = new_ctx.object = NULL_TREE;
+	{
+	  new_ctx.ctor = new_ctx.object = NULL_TREE;
+	  if (TREE_CODE (init) == CONSTRUCTOR)
+	    {
+	      new_ctx.ctor = build_constructor (TREE_TYPE (init), NULL);
+	      CONSTRUCTOR_NO_CLEARING (new_ctx.ctor) = true;
+	    }
+	}
       init = eval_constant_expression (&new_ctx, init, false, non_constant_p,
 				       overflow_p, jump_target);
       if (*non_constant_p)
@@ -3157,6 +3188,9 @@ eval_binary_expression (const constexpr_ctx *ctx, tree t, bool lval,
   if (r == NULL_TREE && TREE_CODE_CLASS (code) == tcc_comparison
       && POINTER_TYPE_P (TREE_TYPE (lhs)))
     {
+      lhs = maybe_fold_reference_address_to_pointer (lhs);
+      rhs = maybe_fold_reference_address_to_pointer (rhs);
+
       if (tree lhso = maybe_fold_addr_pointer_plus (lhs))
 	lhs = fold_convert (TREE_TYPE (lhs), lhso);
       if (tree rhso = maybe_fold_addr_pointer_plus (rhs))
@@ -3180,7 +3214,10 @@ eval_binary_expression (const constexpr_ctx *ctx, tree t, bool lval,
 
   if (r == NULL_TREE)
     {
-      r = fold_binary_loc (loc, code, type, lhs, rhs);
+      if (ctx->manifestly_const_eval && TREE_CODE (type) != REAL_TYPE)
+	r = fold_binary_initializer_loc (loc, code, type, lhs, rhs);
+      else
+	r = fold_binary_loc (loc, code, type, lhs, rhs);
     }
 
   if (r == NULL_TREE && (code == LSHIFT_EXPR || code == RSHIFT_EXPR)
@@ -6648,6 +6685,21 @@ potential_constant_expression_1 (tree t, bool want_rval, bool strict, bool now,
       /* We can see these in statement-expressions.  */
       return true;
 
+    case GOTO_EXPR:
+      {
+	tree *target = &TREE_OPERAND (t, 0);
+	if (breaks (target) || continues (target) || returns (target))
+	  {
+	    *jump_target = *target;
+	    return true;
+	  }
+	if (TREE_CODE (*target) == LABEL_DECL && DECL_ARTIFICIAL (*target))
+	  return true;
+	if (flags & tf_error)
+	  error_at (loc, "%<goto%> is not a constant expression");
+	return false;
+      }
+
     case LABEL_EXPR:
       t = LABEL_EXPR_LABEL (t);
       if (DECL_ARTIFICIAL (t))
@@ -6868,6 +6920,21 @@ maybe_fold_addr_pointer_plus (tree t)
   op1 = fold_convert (ptr_type_node, op1);
   tree r = fold_build2 (MEM_REF, TREE_TYPE (TREE_TYPE (op0)), op0, op1);
   return build1_loc (EXPR_LOCATION (t), ADDR_EXPR, TREE_TYPE (op0), r);
+}
+
+static tree
+maybe_fold_reference_address_to_pointer (tree t)
+{
+  if (!CONVERT_EXPR_P (t) || !POINTER_TYPE_P (TREE_TYPE (t)))
+    return t;
+
+  tree op = TREE_OPERAND (t, 0);
+  if (TREE_CODE (op) != ADDR_EXPR || !TYPE_REF_P (TREE_TYPE (op)))
+    return t;
+
+  return build_fold_addr_expr_with_type_loc (EXPR_LOCATION (t),
+					     TREE_OPERAND (op, 0),
+					     TREE_TYPE (t));
 }
 
 } // namespace Compile

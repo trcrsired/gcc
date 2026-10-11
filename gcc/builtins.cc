@@ -30,6 +30,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree.h"
 #include "memmodel.h"
 #include "gimple.h"
+#include "tree-eh.h"
 #include "predict.h"
 #include "tm_p.h"
 #include "stringpool.h"
@@ -62,7 +63,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "value-prof.h"
 #include "builtins.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "asan.h"
 #include "internal-fn.h"
@@ -863,7 +863,7 @@ expand_builtin_return_addr (enum built_in_function fndecl_code, int count)
   /* For __builtin_frame_address, return what we've got.  But, on
      the SPARC for example, we may have to add a bias.  */
   if (fndecl_code == BUILT_IN_FRAME_ADDRESS)
-    return FRAME_ADDR_RTX (tem);
+    return FRAME_ADDR_RTX (count, tem);
 
   /* For __builtin_return_address, get the return address from that frame.  */
 #ifdef RETURN_ADDR_RTX
@@ -1364,10 +1364,10 @@ expand_builtin_prefetch (tree exp)
 /* Get a MEM rtx for expression EXP which is the address of an operand
    to be used in a string instruction (cmpstrsi, cpymemsi, ..).  LEN is
    the maximum length of the block of memory that might be accessed or
-   NULL if unknown.  */
+   NULL if unknown.  STORE_P is true when EXP is the destination.  */
 
 rtx
-get_memory_rtx (tree exp, tree len)
+get_memory_rtx (tree exp, tree len, bool store_p)
 {
   tree orig_exp = exp, base;
   rtx addr, mem;
@@ -1401,7 +1401,7 @@ get_memory_rtx (tree exp, tree len)
      from the original address we got, and build an all-aliasing
      unknown-sized access to that one.  */
   if (is_gimple_mem_ref_addr (TREE_OPERAND (exp, 0)))
-    set_mem_attributes (mem, exp, 0);
+    set_mem_attributes (mem, exp, 0, store_p);
   else if (TREE_CODE (TREE_OPERAND (exp, 0)) == ADDR_EXPR
 	   && (base = get_base_address (TREE_OPERAND (TREE_OPERAND (exp, 0),
 						      0))))
@@ -1414,7 +1414,7 @@ get_memory_rtx (tree exp, tree len)
 							     size_zero_node,
 							     NULL)),
 			 exp, build_int_cst (ptr_type_node, 0));
-      set_mem_attributes (mem, exp, 0);
+      set_mem_attributes (mem, exp, 0, store_p);
       /* Since we stripped parts make sure the offset is unknown and the
 	 alignment is computed from the original address.  */
       clear_mem_offset (mem);
@@ -3770,7 +3770,7 @@ expand_builtin_memory_copy_args (tree dest, tree src, tree len,
 
   if (expected_align < dest_align)
     expected_align = dest_align;
-  dest_mem = get_memory_rtx (dest, len);
+  dest_mem = get_memory_rtx (dest, len, true);
   set_mem_align (dest_mem, dest_align);
   len_rtx = expand_normal (len);
   determine_block_size (len, len_rtx, &min_size, &max_size,
@@ -3804,7 +3804,7 @@ expand_builtin_memory_copy_args (tree dest, tree src, tree len,
       return dest_mem;
     }
 
-  src_mem = get_memory_rtx (src, len);
+  src_mem = get_memory_rtx (src, len, false);
   set_mem_align (src_mem, src_align);
 
   /* Copy word part most expediently.  */
@@ -3873,8 +3873,8 @@ expand_movstr (tree dest, tree src, rtx target, memop_ret retmode)
   if (!targetm.have_movstr ())
     return NULL_RTX;
 
-  dest_mem = get_memory_rtx (dest, NULL);
-  src_mem = get_memory_rtx (src, NULL);
+  dest_mem = get_memory_rtx (dest, NULL, true);
+  src_mem = get_memory_rtx (src, NULL, false);
   if (retmode == RETURN_BEGIN)
     {
       target = force_reg (Pmode, XEXP (dest_mem, 0));
@@ -4150,7 +4150,7 @@ expand_builtin_strncpy (tree exp, rtx target)
 				   dest_align, false))
 	return NULL_RTX;
 
-      dest_mem = get_memory_rtx (dest, len);
+      dest_mem = get_memory_rtx (dest, len, true);
       store_by_pieces (dest_mem, tree_to_uhwi (len),
 		       builtin_strncpy_read_str,
 		       const_cast<char *> (p), dest_align, false,
@@ -4709,7 +4709,7 @@ expand_builtin_memset_args (tree dest, tree val, tree len,
   len_rtx = expand_normal (len);
   determine_block_size (len, len_rtx, &min_size, &max_size,
 			&probable_max_size);
-  dest_mem = get_memory_rtx (dest, len);
+  dest_mem = get_memory_rtx (dest, len, true);
   val_mode = TYPE_MODE (unsigned_char_type_node);
 
   if (TREE_CODE (val) != INTEGER_CST
@@ -4893,8 +4893,8 @@ expand_builtin_memcmp (tree exp, rtx target, bool result_eq)
   if (arg1_align == 0 || arg2_align == 0)
     return NULL_RTX;
 
-  rtx arg1_rtx = get_memory_rtx (arg1, len);
-  rtx arg2_rtx = get_memory_rtx (arg2, len);
+  rtx arg1_rtx = get_memory_rtx (arg1, len, false);
+  rtx arg2_rtx = get_memory_rtx (arg2, len, false);
   rtx len_rtx = expand_normal (fold_convert_loc (loc, sizetype, len));
 
   /* Set MEM_SIZE as appropriate.  */
@@ -4987,8 +4987,8 @@ expand_builtin_strcmp (tree exp, ATTRIBUTE_UNUSED rtx target)
   arg1 = builtin_save_expr (arg1);
   arg2 = builtin_save_expr (arg2);
 
-  rtx arg1_rtx = get_memory_rtx (arg1, NULL);
-  rtx arg2_rtx = get_memory_rtx (arg2, NULL);
+  rtx arg1_rtx = get_memory_rtx (arg1, NULL, false);
+  rtx arg2_rtx = get_memory_rtx (arg2, NULL, false);
 
   /* Try to call cmpstrsi.  */
   if (cmpstr_icode != CODE_FOR_nothing)
@@ -5144,8 +5144,8 @@ expand_builtin_strncmp (tree exp, ATTRIBUTE_UNUSED rtx target,
       len = fold_convert_loc (loc, sizetype, len);
       len = fold_build2_loc (loc, MIN_EXPR, TREE_TYPE (len), len, len3);
     }
-  rtx arg1_rtx = get_memory_rtx (arg1, len);
-  rtx arg2_rtx = get_memory_rtx (arg2, len);
+  rtx arg1_rtx = get_memory_rtx (arg1, len, false);
+  rtx arg2_rtx = get_memory_rtx (arg2, len, false);
   rtx arg3_rtx = expand_normal (len);
   result = expand_cmpstrn_or_cmpmem (cmpstrn_icode, target, arg1_rtx,
 				     arg2_rtx, TREE_TYPE (len), arg3_rtx,
@@ -5617,7 +5617,9 @@ expand_builtin_strub_update (tree exp)
 			     build_int_cst (TREE_TYPE (wmptr), 0));
   rtx wmark = expand_expr (wmtree, NULL_RTX, ptr_mode, EXPAND_MEMORY);
 
-  rtx wmarkr = force_reg (ptr_mode, wmark);
+  rtx wmark_load = shallow_copy_rtx (wmark);
+  MEM_NOTRAP_P (wmark_load) = !tree_could_trap_p (wmtree);
+  rtx wmarkr = force_reg (ptr_mode, wmark_load);
 
   rtx_code_label *lab = gen_label_rtx ();
   do_compare_rtx_and_jump (stktop, wmarkr, STACK_TOPS, STACK_UNSIGNED,
@@ -5642,7 +5644,9 @@ expand_builtin_strub_update (tree exp)
       wmtree = fold_build2 (MEM_REF, wmtype, wmptr,
 			    build_int_cst (TREE_TYPE (wmptr), 0));
       wmark = expand_expr (wmtree, NULL_RTX, ptr_mode, EXPAND_MEMORY);
-      wmarkr = force_reg (ptr_mode, wmark);
+      wmark_load = shallow_copy_rtx (wmark);
+      MEM_NOTRAP_P (wmark_load) = !tree_could_trap_p (wmtree);
+      wmarkr = force_reg (ptr_mode, wmark_load);
 
       do_compare_rtx_and_jump (stktop, wmarkr, STACK_TOPS, STACK_UNSIGNED,
 			       ptr_mode, NULL_RTX, lab, NULL,
@@ -5677,6 +5681,7 @@ expand_builtin_strub_leave (tree exp)
       tree wmtree = fold_build2 (MEM_REF, wmtype, wmptr,
 				 build_int_cst (TREE_TYPE (wmptr), 0));
       rtx wmark = expand_expr (wmtree, NULL_RTX, ptr_mode, EXPAND_MEMORY);
+      MEM_NOTRAP_P (wmark) = !tree_could_trap_p (wmtree);
       stktop = force_reg (ptr_mode, wmark);
     }
 
@@ -5688,6 +5693,7 @@ expand_builtin_strub_leave (tree exp)
   tree wmtree = fold_build2 (MEM_REF, wmtype, wmptr,
 			     build_int_cst (TREE_TYPE (wmptr), 0));
   rtx wmark = expand_expr (wmtree, NULL_RTX, ptr_mode, EXPAND_MEMORY);
+  MEM_NOTRAP_P (wmark) = !tree_could_trap_p (wmtree);
 
   rtx wmarkr = force_reg (ptr_mode, wmark);
 
@@ -6943,8 +6949,7 @@ expand_builtin_atomic_fetch_op (machine_mode mode, tree exp, rtx target,
 {
   rtx val, mem, ret;
   enum memmodel model;
-  tree fndecl;
-  tree addr;
+  tree fndecl, addr, oldval;
 
   model = get_memmodel (CALL_EXPR_ARG (exp, 2));
 
@@ -6971,6 +6976,13 @@ expand_builtin_atomic_fetch_op (machine_mode mode, tree exp, rtx target,
 
   gcc_assert (TREE_OPERAND (addr, 0) == fndecl);
   TREE_OPERAND (addr, 0) = builtin_decl_explicit (ext_call);
+  oldval = CALL_EXPR_ARG (exp, 1);
+
+  if (!ignore && reg_overlap_mentioned_p (mem, val))
+    {
+      val = force_reg (mode, val);
+      CALL_EXPR_ARG (exp, 1) = make_tree (TREE_TYPE (oldval), val);
+    }
 
   /* If we will emit code after the call, the call cannot be a tail call.
      If it is emitted as a tail call, a barrier is emitted after it, and
@@ -6987,6 +6999,7 @@ expand_builtin_atomic_fetch_op (machine_mode mode, tree exp, rtx target,
   /* Then issue the arithmetic correction to return the right result.  */
   if (!ignore)
     {
+      CALL_EXPR_ARG (exp, 1) = oldval;
       if (code == NOT)
 	{
 	  ret = expand_simple_binop (mode, AND, ret, val, NULL_RTX, true,
@@ -7065,6 +7078,9 @@ expand_ifn_atomic_bit_test_and (gcall *call)
   create_integer_operand (&ops[4], integer_onep (flag));
   if (maybe_expand_insn (icode, 5, ops))
     return;
+
+  if (reg_overlap_mentioned_p (mem, val))
+    val = force_reg (mode, val);
 
   rtx bitval = val;
   val = expand_simple_binop (mode, ASHIFT, const1_rtx,
@@ -7602,7 +7618,8 @@ inline_string_cmp (rtx target, tree var_str, const char *const_str,
 {
   HOST_WIDE_INT offset = 0;
   rtx var_rtx_array
-    = get_memory_rtx (var_str, build_int_cst (unsigned_type_node,length));
+    = get_memory_rtx (var_str, build_int_cst (unsigned_type_node, length),
+		      false);
   rtx var_rtx = NULL_RTX;
   rtx const_rtx = NULL_RTX;
   rtx result = target ? target : gen_reg_rtx (mode);
@@ -10012,6 +10029,79 @@ fold_builtin_fpclassify (location_t loc, tree *args, int nargs)
   arg = args[5];
   type = TREE_TYPE (arg);
   mode = TYPE_MODE (type);
+
+  /* A target defines the classification optabs when FP comparisons are
+     unsuitable for classification, for instance because they raise
+     FE_INVALID for a signaling NaN (PR middle-end/66462).  Build on the
+     built-ins in that case rather than on comparisons.  */
+  if (optab_handler (isnan_optab, mode) != CODE_FOR_nothing
+      && optab_handler (isinf_optab, mode) != CODE_FOR_nothing
+      && optab_handler (isnormal_optab, mode) != CODE_FOR_nothing)
+    {
+      tree isnan_fn = builtin_decl_explicit (BUILT_IN_ISNAN);
+      tree isinf_fn = builtin_decl_explicit (BUILT_IN_ISINF);
+      tree isnormal_fn = builtin_decl_explicit (BUILT_IN_ISNORMAL);
+      const struct real_format *fmt = REAL_MODE_FORMAT (mode);
+      tree itype = NULL_TREE;
+      scalar_int_mode imode;
+
+      /* The remaining zero versus subnormal test must not use a comparison
+	 either.  Testing the magnitude of the encoding for zero works
+	 whenever the format is binary, has a matching integer mode and
+	 stores its sign in the high bit of it; that excludes e.g. XFmode,
+	 whose encoding is narrower than its integer mode, and the composite
+	 formats, whose sign is not a single bit that can be shifted out.  */
+      if (fmt->b == 2
+	  && int_mode_for_mode (mode).exists (&imode)
+	  && fmt->signbit_rw == fmt->signbit_ro
+	  && fmt->signbit_rw == (int) GET_MODE_PRECISION (imode) - 1)
+	{
+	  itype = lang_hooks.types.type_for_mode (imode, 1);
+	  if (itype && TYPE_PRECISION (itype) != GET_MODE_PRECISION (imode))
+	    itype = NULL_TREE;
+	}
+
+      if (isnan_fn && isinf_fn && isnormal_fn && itype)
+	{
+	  arg = builtin_save_expr (arg);
+
+	  /* Shifting the sign bit out leaves zero iff ARG is +-0.  */
+	  tmp = fold_build1_loc (loc, VIEW_CONVERT_EXPR, itype, arg);
+	  tmp = fold_build2_loc (loc, LSHIFT_EXPR, itype, tmp,
+				 build_int_cst (integer_type_node, 1));
+	  tmp = fold_build2_loc (loc, EQ_EXPR, integer_type_node, tmp,
+				 build_int_cst (itype, 0));
+	  res = fold_build3_loc (loc, COND_EXPR, integer_type_node,
+				 tmp, fp_zero, fp_subnormal);
+
+	  tmp = build_call_expr_loc (loc, isnormal_fn, 1, arg);
+	  tmp = fold_build2_loc (loc, NE_EXPR, integer_type_node, tmp,
+				 integer_zero_node);
+	  res = fold_build3_loc (loc, COND_EXPR, integer_type_node, tmp,
+				 fp_normal, res);
+
+	  if (tree_expr_maybe_infinite_p (arg))
+	    {
+	      tmp = build_call_expr_loc (loc, isinf_fn, 1, arg);
+	      tmp = fold_build2_loc (loc, NE_EXPR, integer_type_node, tmp,
+				     integer_zero_node);
+	      res = fold_build3_loc (loc, COND_EXPR, integer_type_node, tmp,
+				     fp_infinite, res);
+	    }
+
+	  if (tree_expr_maybe_nan_p (arg))
+	    {
+	      tmp = build_call_expr_loc (loc, isnan_fn, 1, arg);
+	      tmp = fold_build2_loc (loc, NE_EXPR, integer_type_node, tmp,
+				     integer_zero_node);
+	      res = fold_build3_loc (loc, COND_EXPR, integer_type_node, tmp,
+				     fp_nan, res);
+	    }
+
+	  return res;
+	}
+    }
+
   arg = builtin_save_expr (fold_build1_loc (loc, ABS_EXPR, type, arg));
 
   /* fpclassify(x) ->

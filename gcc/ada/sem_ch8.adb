@@ -776,10 +776,6 @@ package body Sem_Ch8 is
       --  has already established its actual subtype. This is only relevant
       --  if the renamed object is an explicit dereference.
 
-      function Get_Object_Name (Nod : Node_Id) return Node_Id;
-      --  Obtain the name of the object from node Nod which is being renamed by
-      --  the object renaming declaration N.
-
       function Find_Raise_Node (N : Node_Id) return Traverse_Result;
       --  Process one node in search for N_Raise_xxx_Error nodes.
       --  Return Abandon if found, OK otherwise.
@@ -907,38 +903,6 @@ package body Sem_Ch8 is
             end if;
          end if;
       end Check_Constrained_Object;
-
-      ---------------------
-      -- Get_Object_Name --
-      ---------------------
-
-      function Get_Object_Name (Nod : Node_Id) return Node_Id is
-         Obj_Nam : Node_Id;
-
-      begin
-         Obj_Nam := Nod;
-         while Present (Obj_Nam) loop
-            case Nkind (Obj_Nam) is
-               when N_Attribute_Reference
-                  | N_Explicit_Dereference
-                  | N_Indexed_Component
-                  | N_Slice
-               =>
-                  Obj_Nam := Prefix (Obj_Nam);
-
-               when N_Selected_Component =>
-                  Obj_Nam := Selector_Name (Obj_Nam);
-
-               when N_Qualified_Expression | N_Type_Conversion =>
-                  Obj_Nam := Expression (Obj_Nam);
-
-               when others =>
-                  exit;
-            end case;
-         end loop;
-
-         return Obj_Nam;
-      end Get_Object_Name;
 
    --  Start of processing for Analyze_Object_Renaming
 
@@ -1387,9 +1351,9 @@ package body Sem_Ch8 is
          return;
       end if;
 
-      if Ada_Version >= Ada_2005 and then Nkind (Nam) in N_Has_Entity then
+      if Ada_Version >= Ada_2005 and then Is_Entity_Name (Nam) then
          declare
-            Nam_Ent  : constant Entity_Id := Entity (Get_Object_Name (Nam));
+            Nam_Ent  : constant Entity_Id := Entity (Nam);
             Nam_Decl : constant Node_Id   := Declaration_Node (Nam_Ent);
 
          begin
@@ -3355,7 +3319,7 @@ package body Sem_Ch8 is
                --  Box present
 
                if Box_Present (Inst_Node) then
-                  Old_S := Find_Renamed_Entity (N, Name (N), New_S, Is_Actual);
+                  Old_S := Find_Renamed_Entity (N, Nam, New_S, Is_Actual);
 
                --  If there is an immediately visible homonym of the operator
                --  and the declaration has a default, this is worth a warning
@@ -3715,7 +3679,7 @@ package body Sem_Ch8 is
       Ada_Version_Explicit := Ada_Version;
 
       if No (Old_S) then
-         Old_S := Find_Renamed_Entity (N, Name (N), New_S, Is_Actual);
+         Old_S := Find_Renamed_Entity (N, Nam, New_S, Is_Actual);
 
          --  The visible operation may be an inherited abstract operation that
          --  was overridden in the private part, in which case a call will
@@ -3730,14 +3694,6 @@ package body Sem_Ch8 is
            and then Present (Overridden_Operation (Alias (Old_S)))
          then
             Old_S := Alias (Old_S);
-         end if;
-
-         --  When the renamed subprogram is overloaded and used as an actual
-         --  of a generic, its entity is set to the first available homonym.
-         --  We must first disambiguate the name, then set the proper entity.
-
-         if Is_Actual and then Is_Overloaded (Nam) then
-            Set_Entity (Nam, Old_S);
          end if;
       end if;
 
@@ -6521,6 +6477,7 @@ package body Sem_Ch8 is
 
          Level := Scope_Stack.Last;
          loop
+            exit when Level < 0;
             Scop := Scope_Stack.Table (Level).Entity;
             exit when Scop = Scope (E);
             Level := Level - 1;
@@ -8144,8 +8101,12 @@ package body Sem_Ch8 is
 
          Set_Entity (Nam, Old_S);
 
+         --  If overload resolution has succeeded, reset the flag and mark
+         --  relevant use clauses like Find_{Direct,Expanded}_Name above.
+
          if Old_S /= Any_Id then
             Set_Is_Overloaded (Nam, False);
+            Mark_Use_Clauses (Old_S);
          end if;
 
       --  Non-overloaded case

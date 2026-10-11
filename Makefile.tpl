@@ -212,7 +212,6 @@ HOST_EXPORTS = \
 	GOC="$(GOC)"; export GOC; \
 	GDC="$(GDC)"; export GDC; \
 	GM2="$(GM2)"; export GM2; \
-	GNATMAKE_FOR_BUILD="$(GNATMAKE_FOR_BUILD)"; export GNATMAKE_FOR_BUILD; \
 	AR="$(AR)"; export AR; \
 	AS="$(AS)"; export AS; \
 	CC_FOR_BUILD="$(CC_FOR_BUILD)"; export CC_FOR_BUILD; \
@@ -325,7 +324,6 @@ BASE_TARGET_EXPORTS = \
 	GOC="$(GOC_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GOC; \
 	GDC="$(GDC_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GDC; \
 	GM2="$(GM2_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GM2; \
-	GNATMAKE_FOR_BUILD="$(GNATMAKE_FOR_BUILD)"; export GNATMAKE_FOR_BUILD; \
 	DLLTOOL="$(DLLTOOL_FOR_TARGET)"; export DLLTOOL; \
 	DSYMUTIL="$(DSYMUTIL_FOR_TARGET)"; export DSYMUTIL; \
 	LD="$(COMPILER_LD_FOR_TARGET)"; export LD; \
@@ -426,7 +424,7 @@ MAKEINFO = @MAKEINFO@
 EXPECT = @EXPECT@
 RUNTEST = @RUNTEST@
 
-AUTO_PROFILE = gcc-auto-profile --all -c 10000000
+AUTO_PROFILE = gcc-auto-profile --all --perf perf.data -c 10000000 --
 
 # This just becomes part of the MAKEINFO definition passed down to
 # sub-makes.  It lets flags be given on the command line while still
@@ -1054,6 +1052,7 @@ do-check:
 warning.log: build.log
 	$(srcdir)/contrib/warn_summary build.log > $@
 
+.PHONY: mail-report.log
 mail-report.log:
 	if test x'$(BOOT_CFLAGS)' != x''; then \
 	    BOOT_CFLAGS='$(BOOT_CFLAGS)'; export BOOT_CFLAGS; \
@@ -1062,6 +1061,7 @@ mail-report.log:
 	chmod +x $@
 	echo If you really want to send e-mail, run ./$@ now
 
+.PHONY: mail-report-with-warnings.log
 mail-report-with-warnings.log: warning.log
 	if test x'$(BOOT_CFLAGS)' != x''; then \
 	    BOOT_CFLAGS='$(BOOT_CFLAGS)'; export BOOT_CFLAGS; \
@@ -1823,7 +1823,13 @@ do-clean: clean-stage[+id+]
 [+ IF compare-target +]
 # Run the comparisons in parallel through a generated sub-makefile under
 # the jobserver.  Each failing recipe writes a separate result shard that
-# is collected after the sub-make finishes.
+# is collected after the sub-make finishes.  The comparison command is
+# written into that makefile, so double its '$' characters to survive the
+# expansion the sub-make performs when it reads them back, and name the
+# shell there, which a sub-make does not inherit.  The exit trap starts
+# with ':' because older bash does not preserve the exit status across an
+# exit trap that consists of a single command, which would report a
+# comparison failure as a success.
 [+compare-target+]:
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
@@ -1835,22 +1841,24 @@ do-clean: clean-stage[+id+]
 	compare_id=$$$$; \
 	bad_compare=.bad_compare.$$compare_id; export bad_compare; \
 	compare_makefile=[+compare-target+].$$compare_id.mk; \
-	trap 'st=$$?; rm -f "$$compare_makefile" "$$bad_compare" \
-	  "$$bad_compare".*; trap - 0; exit $$st' 0; \
+	trap ':; rm -f "$$compare_makefile" "$$bad_compare" \
+	  "$$bad_compare".*' 0; \
 	trap 'exit 1' 1 2 3 15; \
+	rm -f .bad_compare "$$bad_compare" "$$bad_compare".*; \
 	echo Comparing stages [+prev+] and [+id+]; \
         sed=`echo stage[+id+] | sed 's,^stage,,;s,.,.,g'`; \
 	files=`find stage[+id+]-* -name "*$(objext)" -print | \
 		 sed -n s,^stage$$sed-,,p`; \
-	cmp_raw='$(do-[+compare-target+])'; \
+	cmp_cmd='$(subst $$,$$$$,$(do-[+compare-target+]))'; \
 	{ \
+	  echo 'SHELL = $(SHELL)'; \
 	  echo 'all:'; \
 	  echo '.PHONY: all FORCE'; \
 	  echo 'FORCE:'; \
 	  printf '[+compare-target+]/%%: FORCE ; @'; \
 	  printf 'f1=$$$$r/stage[+prev+]-$$*; '; \
 	  printf 'f2=$$$$r/stage[+id+]-$$*; '; \
-	  printf '%s' "$$cmp_raw" | sed 's,\$$,$$$$,g'; \
+	  printf '%s' "$$cmp_cmd"; \
 	  printf ' > /dev/null 2>&1; st=$$$$?; '; \
 	  printf 'if test $$$$st -eq 1; then '; \
 	  printf 'case $$* in '; \

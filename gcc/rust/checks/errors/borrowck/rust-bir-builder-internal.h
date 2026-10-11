@@ -167,7 +167,29 @@ protected:
     return place_id;
   }
 
+  PlaceId declare_argument (const Analysis::NodeMapping &node,
+			    TyTy::BaseType *ty)
+  {
+    const NodeId nodeid = node.get_nodeid ();
+
+    // In debug mode, check that the argument is not already declared.
+    rust_assert (ctx.place_db.lookup_variable (nodeid) == INVALID_PLACE);
+
+    return ctx.place_db.add_variable (nodeid, ty);
+  }
+
   void push_new_scope () { ctx.place_db.push_new_scope (); }
+
+  void push_drop (PlaceId place)
+  {
+    ctx.get_current_bb ().statements.push_back (Statement::make_drop (place));
+  }
+
+  void push_function_argument_drops ()
+  {
+    std::for_each (ctx.arguments.rbegin (), ctx.arguments.rend (),
+		   [&] (PlaceId argument) { push_drop (argument); });
+  }
 
   void pop_scope ()
   {
@@ -175,7 +197,10 @@ protected:
     if (ctx.place_db.get_current_scope_id () != INVALID_SCOPE)
       {
 	std::for_each (scope.locals.rbegin (), scope.locals.rend (),
-		       [&] (PlaceId place) { push_storage_dead (place); });
+		       [&] (PlaceId place) {
+			 push_drop (place);
+			 push_storage_dead (place);
+		       });
       }
     ctx.place_db.pop_scope ();
   }
@@ -200,7 +225,10 @@ protected:
 	// TODO: Perform stable toposort based on `borrowed_by`.
 
 	std::for_each (scope.locals.rbegin (), scope.locals.rend (),
-		       [&] (PlaceId place) { push_storage_dead (place); });
+		       [&] (PlaceId place) {
+			 push_drop (place);
+			 push_storage_dead (place);
+		       });
 	current_scope_id = scope.parent;
       }
   }
@@ -237,30 +265,34 @@ protected:
   }
 
 protected: // Helpers to add BIR statements
-  void push_assignment (PlaceId lhs, AbstractExpr *rhs, location_t location)
+  void push_assignment (PlaceId lhs, AbstractExpr *rhs, location_t location,
+			tl::optional<HirId> move_site = tl::nullopt)
   {
     ctx.get_current_bb ().statements.push_back (
-      Statement::make_assignment (lhs, rhs, location));
+      Statement::make_assignment (lhs, rhs, location, move_site));
     translated = lhs;
   }
 
-  void push_assignment (PlaceId lhs, PlaceId rhs, location_t location)
+  void push_assignment (PlaceId lhs, PlaceId rhs, location_t location,
+			tl::optional<HirId> move_site = tl::nullopt)
   {
-    push_assignment (lhs, new Assignment (rhs), location);
+    push_assignment (lhs, new Assignment (rhs), location, move_site);
   }
 
   void push_tmp_assignment (AbstractExpr *rhs, TyTy::BaseType *tyty,
-			    location_t location)
+			    location_t location,
+			    tl::optional<HirId> move_site = tl::nullopt)
   {
     PlaceId tmp = ctx.place_db.add_temporary (tyty);
     push_storage_live (tmp);
-    push_assignment (tmp, rhs, location);
+    push_assignment (tmp, rhs, location, move_site);
   }
 
-  void push_tmp_assignment (PlaceId rhs, location_t location)
+  void push_tmp_assignment (PlaceId rhs, location_t location,
+			    tl::optional<HirId> move_site = tl::nullopt)
   {
-    push_tmp_assignment (new Assignment (rhs), ctx.place_db[rhs].tyty,
-			 location);
+    push_tmp_assignment (new Assignment (rhs), ctx.place_db[rhs].tyty, location,
+			 move_site);
   }
 
   void push_switch (PlaceId switch_val, location_t location,
@@ -305,6 +337,8 @@ protected: // Helpers to add BIR statements
 
   void push_return (location_t location)
   {
+    push_function_argument_drops ();
+
     ctx.get_current_bb ().statements.push_back (
       Statement::make_return (location));
   }
@@ -321,7 +355,8 @@ protected: // Helpers to add BIR statements
     return translated;
   }
 
-  PlaceId move_place (PlaceId arg, location_t location)
+  PlaceId move_place (PlaceId arg, location_t location,
+		      tl::optional<HirId> move_site = tl::nullopt)
   {
     auto &place = ctx.place_db[arg];
 
@@ -334,7 +369,7 @@ protected: // Helpers to add BIR statements
     if (place.is_rvalue ())
       return arg;
 
-    push_tmp_assignment (arg, location);
+    push_tmp_assignment (arg, location, move_site);
     return translated;
   }
 
@@ -347,12 +382,14 @@ protected: // Helpers to add BIR statements
   }
 
   template <typename T>
-  void move_all (T &args, std::vector<location_t> locations)
+  void move_all (T &args, std::vector<location_t> locations,
+		 tl::optional<HirId> move_site = tl::nullopt)
   {
     rust_assert (args.size () == locations.size ());
     std::transform (args.begin (), args.end (), locations.begin (),
-		    args.begin (), [this] (PlaceId arg, location_t location) {
-		      return move_place (arg, location);
+		    args.begin (),
+		    [this, move_site] (PlaceId arg, location_t location) {
+		      return move_place (arg, location, move_site);
 		    });
   }
 
@@ -570,12 +607,13 @@ protected:
   }
 
   /** Mark place to be a result of processed subexpression. */
-  void return_place (PlaceId place, location_t location, bool can_panic = false)
+  void return_place (PlaceId place, location_t location, bool can_panic = false,
+		     tl::optional<HirId> move_site = tl::nullopt)
   {
     if (expr_return_place != INVALID_PLACE)
       {
 	// Return place is already allocated, no need to defer assignment.
-	push_assignment (expr_return_place, place, location);
+	push_assignment (expr_return_place, place, location, move_site);
       }
     else
       {

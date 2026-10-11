@@ -330,7 +330,7 @@ static void next_runtime_01_initialize (void)
   TREE_NOTHROW (umsg_fast_decl) = 0;
   DECL_ATTRIBUTES (umsg_fast_decl)
 	= tree_cons (get_identifier ("hard_coded_address"),
-		     build_int_cst (NULL_TREE, OFFS_MSGSEND_FAST),
+		     build_int_cst (integer_type_node, OFFS_MSGSEND_FAST),
 		     NULL_TREE);
 #else
   /* No direct dispatch available.  */
@@ -1028,7 +1028,7 @@ next_runtime_abi_01_build_const_string_constructor (location_t loc, tree string,
 
   /* ??? check if this should be long.  */
   fields = next_type_field (fields);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, length));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, length));
   tree constructor = objc_build_constructor (internal_const_str_type, v);
 
   tree var = objc_build_decl (loc, CONST_DECL, NULL, TREE_TYPE (constructor));
@@ -1171,7 +1171,7 @@ generate_v1_meth_descriptor_table (tree chain, tree protocol,
   vec<constructor_elt, va_gc> *v = NULL;
 
   tree fields = first_type_field (method_list_template);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, size));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, size));
   tree initlist
     = build_descriptor_table_initializer (objc_method_prototype_template,
 					  chain);
@@ -1786,7 +1786,7 @@ build_v1_category_initializer (tree type, tree cat_name, tree class_name,
   if (flag_objc_abi >= 1)
     {
       int val = TREE_INT_CST_LOW (TYPE_SIZE_UNIT (objc_category_template));
-      expr = build_int_cst (NULL_TREE, val);
+      expr = build_int_cst (integer_type_node, val);
       fields = next_type_field (fields);
       CONSTRUCTOR_APPEND_ELT (v, fields, expr);
       ltyp = objc_prop_list_ptr;
@@ -2578,7 +2578,7 @@ build_next_objc_exception_stuff (void)
 			    NOT_BUILT_IN, NULL, NULL_TREE);
   DECL_ATTRIBUTES (objc_assign_ivar_fast_decl)
     = tree_cons (get_identifier ("hard_coded_address"),
-		 build_int_cst (NULL_TREE, OFFS_ASSIGNIVAR_FAST),
+		 build_int_cst (integer_type_node, OFFS_ASSIGNIVAR_FAST),
 		 NULL_TREE);
 #else
   /* Default to slower ivar method.  */

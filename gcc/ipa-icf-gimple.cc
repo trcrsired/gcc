@@ -439,7 +439,8 @@ func_checker::compare_operand (tree t1, tree t2, operand_access_type access)
     }
   else
     {
-      if (operand_equal_p (t1, t2, OEP_MATCH_SIDE_EFFECTS))
+      if (operand_equal_p (t1, t2, OEP_MATCH_SIDE_EFFECTS
+				       | OEP_ADDRESS_OF_SAME_FIELD))
 	return true;
       return return_false_with_msg
 		 ("operand_equal_p failed");

@@ -207,7 +207,7 @@ public:
   std::string raw_bounds_as_name () const;
 
 protected:
-  void add_bound (TypeBoundPredicate predicate);
+  void add_bound (const TypeBoundPredicate &predicate);
 
   std::vector<TypeBoundPredicate> specified_bounds;
 };
@@ -237,11 +237,15 @@ public:
   //     2. (For functions) have the same signature
   virtual bool is_equal (const BaseType &other) const;
 
+  bool unsize_to (const BaseType *target) const;
+
   bool satisfies_bound (const TypeBoundPredicate &predicate, bool emit_error);
 
   bool bounds_compatible (BaseType &other, location_t locus, bool emit_error);
 
   void inherit_bounds (const BaseType &other);
+
+  void inherit_bound (const TypeBoundPredicate &bound);
 
   void inherit_bounds (
     const std::vector<TyTy::TypeBoundPredicate> &specified_bounds);
@@ -357,6 +361,11 @@ public:
   virtual const BaseConstType *as_const_type () const { return nullptr; }
 
   virtual bool contains_unsafe_cell () const { return false; }
+
+  // is_unsized returns true if the type is a DST
+  virtual bool is_unsized () const { return false; }
+
+  virtual bool is_box () const { return false; }
 
 protected:
   BaseType (HirId ref, HirId ty_ref, TypeKind kind, RustIdent ident,
@@ -493,7 +502,7 @@ protected:
   BaseGeneric (HirId ref, HirId ty_ref, TypeKind kind, RustIdent ident,
 	       std::vector<TypeBoundPredicate> specified_bounds,
 	       std::set<HirId> refs = std::set<HirId> ())
-    : BaseType (ref, ty_ref, kind, ident, specified_bounds, refs)
+    : BaseType (ref, ty_ref, kind, ident, std::move (specified_bounds), refs)
   {}
 };
 
@@ -910,7 +919,8 @@ public:
     STRUCT_STRUCT,
     TUPLE_STRUCT,
     UNION,
-    ENUM
+    ENUM,
+    EXTERN
   };
 
   enum ReprKind
@@ -921,7 +931,7 @@ public:
     ALIGN,
     PACKED,
     TRANSPARENT,
-    // SIMD,
+    SIMD,
     // ...
   };
 
@@ -1040,6 +1050,8 @@ public:
   handle_substitions (SubstitutionArgumentMappings &mappings) override final;
 
   bool contains_unsafe_cell () const override;
+  virtual bool is_unsized () const override;
+  virtual bool is_box () const override;
 
 private:
   DefId id;
@@ -1090,7 +1102,7 @@ public:
   static const uint8_t FNTYPE_DEFAULT_FLAGS = 0x00;
   static const uint8_t FNTYPE_IS_METHOD_FLAG = 0x01;
   static const uint8_t FNTYPE_IS_EXTERN_FLAG = 0x02;
-  static const uint8_t FNTYPE_IS_VARADIC_FLAG = 0X04;
+  static const uint8_t FNTYPE_IS_VARIADIC_FLAG = 0X04;
   static const uint8_t FNTYPE_IS_SYN_CONST_FLAG = 0X08;
 
   FnType (HirId ref, DefId id, std::string identifier, RustIdent ident,
@@ -1151,7 +1163,7 @@ public:
 
   bool is_extern () const { return (flags & FNTYPE_IS_EXTERN_FLAG) != 0; }
 
-  bool is_variadic () const { return (flags & FNTYPE_IS_VARADIC_FLAG) != 0; }
+  bool is_variadic () const { return (flags & FNTYPE_IS_VARIADIC_FLAG) != 0; }
 
   bool is_syn_constant () const
   {
@@ -1444,6 +1456,7 @@ public:
   SliceType *handle_substitions (SubstitutionArgumentMappings &mappings);
 
   bool contains_unsafe_cell () const override;
+  virtual bool is_unsized () const override { return true; }
 
 private:
   TyVar element_type;
@@ -1641,6 +1654,8 @@ public:
   bool is_equal (const BaseType &other) const override;
 
   BaseType *clone () const final override;
+
+  virtual bool is_unsized () const override { return true; }
 };
 
 class DynamicObjectType : public BaseType
@@ -1671,6 +1686,8 @@ public:
   const std::vector<
     std::pair<const Resolver::TraitItemReference *, const TypeBoundPredicate *>>
   get_object_items () const;
+
+  virtual bool is_unsized () const override { return true; }
 };
 
 class ReferenceType : public BaseType
@@ -1711,6 +1728,7 @@ public:
   bool is_dyn_slice_type (const TyTy::SliceType **slice = nullptr) const;
   bool is_dyn_str_type (const TyTy::StrType **str = nullptr) const;
   bool is_dyn_obj_type (const TyTy::DynamicObjectType **dyn = nullptr) const;
+  bool is_dyn_adt_type (const TyTy::ADTType **adt = nullptr) const;
   bool is_dyn_cstr_type (const TyTy::ADTType **adt = nullptr) const;
 
 private:
@@ -1751,6 +1769,7 @@ public:
   bool is_dyn_slice_type (const TyTy::SliceType **slice = nullptr) const;
   bool is_dyn_str_type (const TyTy::StrType **str = nullptr) const;
   bool is_dyn_obj_type (const TyTy::DynamicObjectType **dyn = nullptr) const;
+  bool is_dyn_adt_type (const TyTy::ADTType **adt = nullptr) const;
 
 private:
   TyVar base;

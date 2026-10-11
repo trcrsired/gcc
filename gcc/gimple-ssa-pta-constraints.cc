@@ -29,7 +29,6 @@
 #include "tree-pass.h"
 #include "ssa.h"
 #include "cgraph.h"
-#include "tree-pretty-print.h"
 #include "diagnostic-core.h"
 #include "fold-const.h"
 #include "stor-layout.h"
@@ -2124,6 +2123,10 @@ find_func_aliases_for_call (struct function *fn, gcall *t)
     }
 
   if (gimple_call_internal_p (t, IFN_DEFERRED_INIT))
+    return;
+
+  /* .ASSUME produces a flag and has no observable side-effects.  */
+  if (gimple_call_internal_p (t, IFN_ASSUME))
     return;
 
   fi = get_fi_for_callee (t);

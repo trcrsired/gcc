@@ -37,10 +37,10 @@ along with GCC; see the file COPYING3.  If not see
 #include "cfghooks.h"
 #include "tree-ssa-loop-manip.h"
 #include "tree-vectorizer.h"
-#include "tree-pretty-print.h"
 #include "gimple-range.h"
 #include "dbgcnt.h"
 #include "cfganal.h"
+#include "tree-cfgcleanup.h"
 
 /* This file implements the loop unswitching, i.e. transformation of loops like
 
@@ -116,7 +116,13 @@ struct unswitch_predicate
     false_range = true_range;
     if (!false_range.varying_p ()
 	&& !false_range.undefined_p ())
-      false_range.invert ();
+      {
+	if (!false_range.invert ())
+	  {
+	    true_range.set_varying (TREE_TYPE (lhs));
+	    false_range.set_varying (TREE_TYPE (lhs));
+	  }
+      }
     count = e->count ();
     num = predicates->length ();
     predicates->safe_push (this);
@@ -446,7 +452,10 @@ tree_ssa_unswitch_loops (function *fun)
     clean_up_after_unswitching (ignored_edge_flag);
 
   if (changed_unswitch || changed_hoist)
-    return TODO_cleanup_cfg;
+    cleanup_tree_cfg ();
+
+  if (changed_unswitch)
+    return loop_invariant_motion_in_fun (cfun, false);
 
   return 0;
 }

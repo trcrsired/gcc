@@ -847,8 +847,10 @@ lambda_expr_this_capture (tree lambda, int add_capture_p)
 	this_capture = spec;
       }
 
-  /* In unevaluated context this isn't an odr-use, so don't capture.  */
-  if (cp_unevaluated_operand)
+  /* In unevaluated context this isn't an odr-use, so don't capture.
+     A typeid operand's own probe is capture-transparent
+     ([expr.prim.lambda.capture]/7).  */
+  if (cp_unevaluated_operand > cp_unevaluated_typeid_cutoff)
     add_capture_p = false;
 
   /* If we captured 'this' but don't have a capture proxy yet, look up the

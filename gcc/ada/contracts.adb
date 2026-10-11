@@ -755,7 +755,7 @@ package body Contracts is
                   if Freeze_Types
                     and then Present (Corresponding_Aspect (Prag))
                   then
-                     Freeze_Expr_Types_Before
+                     Freeze_Full_Expression_Before
                        (N      => Bod,
                         Expr   =>
                           Expression
@@ -1530,9 +1530,10 @@ package body Contracts is
       Body_Decl : constant Entity_Id  := Unit_Declaration_Node (Body_Id);
       Loc       : constant Source_Ptr := Sloc (Body_Decl);
       Spec_Id   : constant Entity_Id  := Corresponding_Spec (Body_Decl);
-      Subp_Id   : Entity_Id;
-      Ret_Type  : Entity_Id;
 
+      Extra_Decl   : Node_Id;
+      Ret_Type     : Entity_Id;
+      Subp_Id      : Entity_Id;
       Wrapper_Id   : Entity_Id;
       Wrapper_Body : Node_Id;
       Wrapper_Spec : Node_Id;
@@ -1617,6 +1618,16 @@ package body Contracts is
            Make_Function_Specification (Loc,
              Defining_Unit_Name => Wrapper_Id,
              Result_Definition  => New_Occurrence_Of (Ret_Type, Loc));
+      end if;
+
+      --  Do not move the declaration of the Extra_Accessibility_Of_Subprogram
+      --  constant, if any, since it really belongs in the original subprogram.
+
+      if Present (Extra_Accessibility_Of_Subprogram (Subp_Id)) then
+         Extra_Decl :=
+           Declaration_Node (Extra_Accessibility_Of_Subprogram (Subp_Id));
+         Remove (Extra_Decl);
+         Prepend_To (Decls, Extra_Decl);
       end if;
 
       --  Create the wrapper body using Body_Id's statements and declarations
@@ -3108,7 +3119,7 @@ package body Contracts is
                      if Freeze_T
                        and then Present (Corresponding_Aspect (Prag))
                      then
-                        Freeze_Expr_Types_Before
+                        Freeze_Full_Expression_Before
                           (N      => Body_Decl,
                            Expr   =>
                              Expression

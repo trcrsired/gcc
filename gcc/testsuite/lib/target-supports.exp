@@ -2064,6 +2064,20 @@ proc check_effective_target_rv_float_abi_soft { } {
     }]
 }
 
+# Return 1 if the compiler under test can work out the ISA of the machine
+# it is running on, 0 otherwise.  This is only true of a native RISC-V
+# Linux compiler; a cross compiler rejects -march=native outright.
+# Cache the result.
+
+proc check_effective_target_riscv_native_cpu_detect { } {
+    if { ![istarget riscv*-*-linux*] } {
+	return 0
+    }
+    return [check_no_compiler_messages riscv_native_cpu_detect object {
+	int dummy;
+    } "-march=native"]
+}
+
 # Return 1 if the target arch supports the atomic extension, 0 otherwise.
 # Cache the result.
 
@@ -2177,7 +2191,7 @@ proc check_effective_target_riscv_v { } {
 proc check_effective_target_rvv_zvl128b_ok { } {
     # Check if the target has a VLENB of 16.
     set gcc_march [riscv_get_arch]
-    return [check_runtime ${gcc_march}_exec {
+    return [check_runtime ${gcc_march}_zvl128b_exec {
        int main()
        {
          int vlenb = 0;
@@ -2195,7 +2209,7 @@ proc check_effective_target_rvv_zvl128b_ok { } {
 proc check_effective_target_rvv_zvl256b_ok { } {
     # Check if the target has a VLENB of 32.
     set gcc_march [riscv_get_arch]
-    return [check_runtime ${gcc_march}_exec {
+    return [check_runtime ${gcc_march}_zvl256b_exec {
 	int main()
 	{
 	  int vlenb = 0;
@@ -2213,7 +2227,7 @@ proc check_effective_target_rvv_zvl256b_ok { } {
 proc check_effective_target_rvv_zvl_ge_256b_ok { } {
     # Check if the target has at least a VLENB of 32.
     set gcc_march [riscv_get_arch]
-    return [check_runtime ${gcc_march}_exec {
+    return [check_runtime ${gcc_march}_zvl_ge_256b_exec {
 	int main()
 	{
 	  int vlenb = 0;
@@ -2231,7 +2245,7 @@ proc check_effective_target_rvv_zvl_ge_256b_ok { } {
 proc check_effective_target_rvv_zvl512b_ok { } {
     # Check if the target has a VLENB of 64.
     set gcc_march [riscv_get_arch]
-    return [check_runtime ${gcc_march}_exec {
+    return [check_runtime ${gcc_march}_zvl512b_exec {
 	int main()
 	{
 	  int vlenb = 0;
@@ -2882,6 +2896,20 @@ proc check_avx512_os_support_available { } {
 	} else {
 	    # Check that OS has AVX512, AVX and SSE saving enabled.
 	    check_runtime_nocache avx512_os_support_available {
+		#ifdef __APPLE__
+		#include <sys/sysctl.h>
+		int main ()
+		{
+		  int val = 0;
+		  size_t len = sizeof (val);
+		  /* Darwin enables the avx512 XSAVE state lazily; reading XCR0
+		     is not reliable - query the kernel instead.  */
+		  if (sysctlbyname ("hw.optional.avx512f", &val, &len, 0, 0)
+		      != 0 || val == 0)
+		    return 1;
+		  return 0;
+		}
+		#else
 		int main ()
 		{
 		  unsigned int eax, edx;
@@ -2889,6 +2917,7 @@ proc check_avx512_os_support_available { } {
 		  asm ("xgetbv" : "=a" (eax), "=d" (edx) : "c" (0));
 		  return (eax & 0xe6) != 0xe6;
 		}
+		#endif
 	    } ""
 	}
     }]
@@ -4983,6 +5012,26 @@ proc check_effective_target_int128 { } {
     }]
 }
 
+# Return 1 if the target's mode table includes OImode (a 256-bit
+# scalar_int_mode).  Enumerated from `INT_MODE (OI, 32)' declarations
+# in gcc/config/*/*-modes.def.
+
+proc check_effective_target_oi_mode { } {
+    return [check_cached_effective_target oi_mode {
+	expr { [istarget aarch64*-*-*]
+	       || [istarget i?86-*-*]
+	       || [istarget x86_64-*-*]
+	       || [istarget riscv*-*-*]
+	       || [istarget sparc*-*-*]
+	       || [istarget s390*-*-*]
+	       || [istarget loongarch*-*-*]
+	       || [istarget arm*-*-*]
+	       || [istarget alpha*-*-*]
+	       || [istarget ia64-*-*]
+	       || [istarget hppa*-*-*] }
+    }]
+}
+
 # Return 1 if the target supports unsigned int->float conversion
 #
 
@@ -6371,6 +6420,7 @@ foreach { armfunc armflag armdefs } {
 		__ARM_ARCH_8M_BASE__
 	v8m_main "-march=armv8-m.main+fp -mthumb" __ARM_ARCH_8M_MAIN__
 	v8_1m_main "-march=armv8.1-m.main+fp -mthumb" __ARM_ARCH_8M_MAIN__
+	v8_1m_main_mve "-march=armv8.1-m.main+mve -mthumb" __ARM_ARCH_8M_MAIN__
 	v8_1m_main_pacbti "-march=armv8.1-m.main+pacbti+fp -mthumb"
 		"__ARM_ARCH_8M_MAIN__ && __ARM_FEATURE_BTI && __ARM_FEATURE_PAUTH"
 	v8_1m_main_fp_hard "-march=armv8.1-m.main+pacbti+fp -mthumb -mfpu=auto -mfloat-abi=hard" "__ARM_ARCH_8M_MAIN__ && (__ARM_FP & 2)"
@@ -6772,6 +6822,7 @@ proc check_effective_target_aarch64_sve2_hw { } {
 	return 0
     }
     return [check_runtime aarch64_sve2_hw_available {
+	#pragma GCC target "+sve2"
 	int
 	main (void)
 	{
@@ -8513,6 +8564,15 @@ proc check_effective_target_ultrasparc_vis3_hw { } {
     } "-mcpu=niagara3"]
 }
 
+# Return 1 if the test environment supports executing SPARC compare-and-branch
+# instructions.  We check this by attempting: "cwbe %g0, %g0, .+4"
+
+proc check_effective_target_cbcond_hw { } {
+    return [check_runtime cbcond_hw {
+	int main() { __asm__(".word 0x12c00020"); return 0; }
+    } "-mcpu=niagara4"]
+}
+
 # Return 1 if this is a SPARC-V9 target.
 
 proc check_effective_target_sparc_v9 { } {
@@ -9466,8 +9526,7 @@ proc check_effective_target_natural_alignment_32 { } {
     # FIXME: 32bit powerpc: guaranteed only if MASK_ALIGN_NATURAL/POWER.
     # FIXME: m68k has -malign-int
     return [check_cached_effective_target natural_alignment_32 {
-      if { ([istarget *-*-darwin*] && [is-effective-target lp64])
-	   || [istarget avr-*-*]
+      if { [istarget avr-*-*]
 	   || [istarget m68k-*-linux*]
 	   || [istarget pru-*-*]
 	   || [istarget stormy16-*-*]
@@ -9490,7 +9549,7 @@ proc check_effective_target_natural_alignment_32 { } {
 proc check_effective_target_natural_alignment_64 { } {
     return [check_cached_effective_target natural_alignment_64 {
       expr { [is-effective-target natural_alignment_32]
-	     && [is-effective-target lp64] && ![istarget *-*-darwin*] }
+	     && [is-effective-target lp64] }
     }]
 }
 
@@ -11701,6 +11760,9 @@ proc check_effective_target_avx10v2aux { } {
 	foo ()
 	{
 	  __asm__ volatile ("vcvtps2bf8\t{%%xmm1, %%xmm0|%%xmm0, %%xmm1}");
+	  __asm__ volatile ("vcvtbf82ps\t{%%xmm1, %%xmm0|%%xmm0, %%xmm1}");
+	  __asm__ volatile ("vunpackb\t$1, %%ymm1, %%ymm0");
+	  __asm__ volatile ("vpmovssdb\t{%%zmm1, %%xmm0|%%xmm0, %%zmm1}");
 	}
     } "-mavx10v2aux" ]
 }
@@ -11736,6 +11798,19 @@ proc check_effective_target_amx_movrs { } {
 	  __asm__ volatile ("tileloaddrs\t(%%r9), %%tmm3" ::);
 	}
     } "-mamx-movrs" ]
+}
+
+
+# Return 1 if acev1 instructions can be compiled.
+proc check_effective_target_acev1 { } {
+    return [check_no_compiler_messages acev1 object {
+	void
+	_bsr0_init ()
+	{
+	  __builtin_ia32_bsr0init ();
+	}
+
+    } "-macev1" ]
 }
 
 # Return 1 if sse instructions can be compiled.
@@ -13038,6 +13113,23 @@ proc check_effective_target_aarch64_tiny { } {
     }
 }
 
+# True if the compiler will emit tiny code model when provided with the
+# -mcmodel=tiny compiler switch.
+
+proc check_effective_target_aarch64_mcmodel_tiny { } {
+    if { [istarget aarch64*-*-*] } {
+	return [check_no_compiler_messages aarch64_mcmodel_tiny object {
+	    #ifdef __AARCH64_CMODEL_TINY__
+	    int dummy;
+	    #else
+	    #error target not AArch64 tiny code model
+	    #endif
+	} "-mcmodel=tiny"]
+    } else {
+	return 0
+    }
+}
+
 # Return 1 if Gas supports AEABI build attributes on AArch64 target
 proc check_effective_target_aarch64_gas_has_build_attributes { } {
     if { ![istarget aarch64*-*-*] } {
@@ -13075,8 +13167,9 @@ set exts {
     "sme-f8f16" "sme-f8f32"
     "sme-b16b16" "sme-f16f16" "sme-i16i64" "sme" "sme2" "sme2p1" "sme2p2"
     "sme2p3"
+	"sme-tmop"
     "ssve-fp8dot2" "ssve-fp8dot4" "ssve-fp8fma" "sve-bfscale" "sme-lutv2"
-    "ssve-fexpa" "ssve-bitperm" "ssve-aes"
+    "ssve-fexpa" "ssve-bitperm" "ssve-aes" "sme-mop4"
 }
 
 foreach { aarch64_ext } $exts {
@@ -13156,6 +13249,23 @@ proc check_effective_target_aarch64_large { } {
 	    #error target not AArch64 large code model
 	    #endif
 	}]
+    } else {
+	return 0
+    }
+}
+
+# True if the compiler will emit large code model when provided with the
+# -mcmodel=large compiler switch.
+
+proc check_effective_target_aarch64_mcmodel_large { } {
+    if { [istarget aarch64*-*-*] } {
+	return [check_no_compiler_messages aarch64_mcmodel_large object {
+	    #ifdef __AARCH64_CMODEL_LARGE__
+	    int dummy;
+	    #else
+	    #error target not AArch64 large code model
+	    #endif
+	} "-mcmodel=large"]
     } else {
 	return 0
     }
@@ -14136,6 +14246,16 @@ proc check_effective_target_arm_thumb2_ok_no_arm_v8_1m_lob { } {
     return 0
 }
 
+# Return 1 if this is an AArch64 target where -mabi=ilp32 can be used.
+# The option is deprecated, but we have active tests.
+
+proc check_effective_target_aarch64_mabi_ilp32 { } {
+  return [check_no_compiler_messages_nocache aarch64_mabi_ilp32 assembly {
+     int main() { return 0; }
+  } "-mabi=ilp32 -Wno-deprecated"]
+}
+
+
 # Returns 1 if the target is using glibc, 0 otherwise.
 
 proc check_effective_target_glibc { } {
@@ -14392,11 +14512,18 @@ proc check_effective_target_python3_module { module } {
     }]
 }
 
+# Helper to return the common pytest arguments
+proc pytest_invoke { } {
+    return [list python3 -m pytest --color=no -rap -s --tb=no \
+	    --rootdir . --basetemp pytest-tmp \
+	    -p no:cacheprovider]
+}
+
 # Return 1 if pytest module is available for python3.
 
 proc check_effective_target_pytest3 { } {
     return [check_cached_effective_target pytest3 {
-	set result [remote_exec host "python3 -m pytest --color=no -rap -s --tb=no --version"]
+	set result [remote_exec host "[pytest_invoke] --version"]
 	set status [lindex $result 0]
 	if { $status == 0 } then {
 	    return 1;

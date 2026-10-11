@@ -586,7 +586,7 @@ extern const enum reg_class regclass_map[FIRST_PSEUDO_REGISTER];
    somewhere into the middle of the local variables since the packed
    stack layout generally does not need all the bytes in the register
    save area.  */
-#define FRAME_ADDR_RTX(FRAME)			\
+#define FRAME_ADDR_RTX(COUNT, FRAME)		\
   DYNAMIC_CHAIN_ADDRESS ((FRAME))
 
 #define RETURN_ADDR_RTX(COUNT, FRAME)					      \
@@ -917,10 +917,12 @@ do {									\
 #define FUNCTION_MODE QImode
 
 /* Specify the value which is used when clz operand is zero.  */
-#define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) ((VALUE) = GET_MODE_PRECISION (MODE), 2)
+#define CLZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
+  ((VALUE) = GET_MODE_UNIT_PRECISION (MODE), 2)
 
 /* Specify the value which is used when ctz operand is zero.  */
-#define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) ((VALUE) = 64, 2)
+#define CTZ_DEFINED_VALUE_AT_ZERO(MODE, VALUE) \
+  ((VALUE) = GET_MODE_UNIT_PRECISION (MODE), 2)
 
 /* Machine-specific symbol_ref flags.  */
 #define SYMBOL_FLAG_ALIGN_SHIFT	  SYMBOL_FLAG_MACH_DEP_SHIFT

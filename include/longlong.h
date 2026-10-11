@@ -422,7 +422,7 @@ extern UDItype __umulsidi3 (USItype, USItype);
     union {DItype __ll;							\
 	   struct {USItype __h, __l;} __i;				\
 	  } __x;							\
-    __x.__i.__h = n1; __x.__i.__l = n0;					\
+    __x.__i.__h = (n1); __x.__i.__l = (n0);				\
     __asm__ ("dr %0,%2"							\
 	     : "=r" (__x.__ll)						\
 	     : "0" (__x.__ll), "r" (d));				\
@@ -1518,7 +1518,7 @@ extern UDItype __umulsidi3 (USItype, USItype);
     union {DItype __ll;							\
 	   struct {SItype __l, __h;} __i;				\
 	  } __xx;							\
-    __xx.__i.__h = n1; __xx.__i.__l = n0;				\
+    __xx.__i.__h = (n1); __xx.__i.__l = (n0);				\
     __asm__ ("ediv %3,%2,%0,%1"						\
 	     : "=g" (q), "=g" (r)					\
 	     : "g" (__xx.__ll), "g" (d));				\

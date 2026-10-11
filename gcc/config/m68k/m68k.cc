@@ -6594,8 +6594,7 @@ m68k_sched_issue_rate (void)
       return 2;
 
     default:
-      gcc_unreachable ();
-      return 0;
+      return 1;
     }
 }
 

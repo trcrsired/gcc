@@ -1763,7 +1763,8 @@ simplify_operand_subreg (int nop, machine_mode reg_mode)
 				  [ira_class_hard_regs
 				   [base_reg_class (GET_MODE (subst),
 						    MEM_ADDR_SPACE (subst),
-						    ADDRESS, SCRATCH)][0]],
+						    ADDRESS, SCRATCH,
+						    subst, curr_insn)][0]],
 				  MEM_ADDR_SPACE (subst))))
 	{
 	  /* If we change the address for a paradoxical subreg of memory, the
@@ -2775,9 +2776,11 @@ process_alt_operands (int only_alternative)
 				  break;
 			      }
 			  }
-			/* Both operands must allow a reload register,
-			   otherwise we cannot make them match.  */
-			if (curr_alt[m] == NO_REGS)
+			/* Both operands must allow a reload register or the
+			   matched operand accepts memory (e.g. 'g' with a mode
+			   that fits no hard reg), in which case the operands
+			   can be matched in memory.  */
+			if (curr_alt[m] == NO_REGS && !curr_alt_offmemok[m])
 			  break;
 			/* Retroactively mark the operand we had to
 			   match as a loser, if it wasn't already and
@@ -2857,6 +2860,11 @@ process_alt_operands (int only_alternative)
 		    this_alternative_set = curr_alt_set[m];
 		    this_alternative_exclude_start_hard_regs
 			= curr_alt_exclude_start_hard_regs[m];
+		    /* If the matched operand permits memory (e.g. 'g'),
+		       so does this one -- they share the same location.
+		       This lets a matching reload go to memory when no
+		       hard reg of the class can hold the operand mode.  */
+		    offmemok = curr_alt_offmemok[m];
 		    winreg = this_alternative != NO_REGS;
 		    break;
 		  }
@@ -2945,7 +2953,8 @@ process_alt_operands (int only_alternative)
 		      if (satisfies_address_constraint_p (op, cn))
 			win = true;
 		      cl = base_reg_class (VOIDmode, ADDR_SPACE_GENERIC,
-					   ADDRESS, SCRATCH);
+					   ADDRESS, SCRATCH, NULL_RTX,
+					   curr_insn);
 		      cl_filter = nullptr;
 		      cl_dep_filter = nullptr;
 		      badop = false;
@@ -3051,6 +3060,24 @@ process_alt_operands (int only_alternative)
 		       [all_this_alternative][this_alternative]);
 		}
 	      this_alternative_win = true;
+	      /* If reg and memory is acceptable here (e.g. 'g') but no hard
+		 reg of the operand class can hold the operand mode, resolve
+		 the operand to memory.  Mark it so that an operand matching
+		 this one can also fall back to memory, otherwise the matched
+		 operand would try to reload into an impossible hard reg and
+		 LRA would cycle (e.g. TDmode "+g" asm on 32-bit x86).
+		 An operand which is already memory and won implies the
+		 constraint accepts memory too, even if nothing set
+		 OFFMEMOK for it.  */
+	      if ((offmemok || MEM_P (op)) && this_alternative != NO_REGS
+		  && hard_reg_set_subset_p (reg_class_contents[this_alternative],
+					    ira_prohibited_class_mode_regs
+					    [this_alternative][mode]
+					    | lra_no_alloc_regs))
+		{
+		  this_alternative = NO_REGS;
+		  this_alternative_offmemok = true;
+		}
 	      if (class_change_p)
 		{
 		  curr_alt_class_change_p = true;
@@ -3202,6 +3229,19 @@ process_alt_operands (int only_alternative)
 				     " a bad mode: reject+=2\n",
 				     nop);
 			  reject += 2;
+			}
+		      else if (!prefer_memory_p)
+			{
+			  /* No hard reg of the operand class can hold the
+			     operand mode, but the constraint may still permit
+			     memory (e.g. 'g').  Prefer memory for the operands
+			     before refusing.  */
+			  prefer_memory_p = true;
+			  if (lra_dump_file != NULL)
+			    fprintf (lra_dump_file,
+				     "            Trying now memory for"
+				     " operands\n");
+			  goto repeat;
 			}
 		      else
 			{
@@ -3862,7 +3902,7 @@ base_to_reg (struct address_info *ad)
 
   lra_assert (ad->disp == ad->disp_term);
   cl = base_reg_class (ad->mode, ad->as, ad->base_outer_code,
-                       get_index_code (ad));
+                       get_index_code (ad), ad->mem, curr_insn);
   new_reg = lra_create_new_reg (GET_MODE (*ad->base), NULL_RTX, cl, NULL,
 				"base");
   new_inner = simplify_gen_binary (PLUS, GET_MODE (new_reg), new_reg,
@@ -3891,7 +3931,7 @@ base_plus_disp_to_reg (struct address_info *ad, rtx disp)
 
   lra_assert (ad->base == ad->base_term);
   cl = base_reg_class (ad->mode, ad->as, ad->base_outer_code,
-		       get_index_code (ad));
+		       get_index_code (ad), ad->mem, curr_insn);
   new_reg = lra_create_new_reg (GET_MODE (*ad->base_term), NULL_RTX, cl, NULL,
 				"base + disp");
   lra_emit_add (new_reg, *ad->base_term, disp);
@@ -4184,7 +4224,7 @@ process_address_1 (int nop, bool check_only_p,
 				     REGNO (*ad.base_term)) != NULL_RTX)
 	    ? after : NULL),
 	   base_reg_class (ad.mode, ad.as, ad.base_outer_code,
-			   get_index_code (&ad), curr_insn))))
+			   get_index_code (&ad), ad.mem, curr_insn))))
     {
       change_p = true;
       if (ad.base_term2 != NULL)
@@ -4235,7 +4275,7 @@ process_address_1 (int nop, bool check_only_p,
 	  int code = -1;
 	  enum reg_class cl = base_reg_class (ad.mode, ad.as,
 					      SCRATCH, SCRATCH,
-					      curr_insn);
+					      ad.mem, curr_insn);
 	  rtx addr = *ad.inner;
 
 	  new_reg = lra_create_new_reg (Pmode, NULL_RTX, cl, NULL, "addr");
@@ -4299,7 +4339,7 @@ process_address_1 (int nop, bool check_only_p,
 	     case (1) above.  */
 	  enum reg_class cl = base_reg_class (ad.mode, ad.as, PLUS,
 					      GET_CODE (*ad.index),
-					      curr_insn);
+					      ad.mem, curr_insn);
 
 	  lra_assert (index_cl != NO_REGS);
 	  new_reg = lra_create_new_reg (Pmode, NULL_RTX, cl, NULL, "disp");
@@ -4316,7 +4356,7 @@ process_address_1 (int nop, bool check_only_p,
       rtx_insn *insns, *last_insn;
 
       cl = base_reg_class (ad.mode, ad.as, ad.base_outer_code,
-			   get_index_code (&ad), curr_insn);
+			   get_index_code (&ad), ad.mem, curr_insn);
 
       if (REG_P (*ad.base_term)
 	  && ira_class_subset_p[get_reg_class (REGNO (*ad.base_term))][cl])
@@ -4414,11 +4454,12 @@ process_address_1 (int nop, bool check_only_p,
       enum reg_class cl;
       rtx addr;
     reload_inner_addr:
-      cl = base_reg_class (ad.mode, ad.as, SCRATCH, SCRATCH, curr_insn);
+      cl = base_reg_class (ad.mode, ad.as, SCRATCH, SCRATCH, ad.mem,
+			   curr_insn);
       addr = *ad.inner;
       new_reg = lra_create_new_reg (Pmode, NULL_RTX, cl, NULL, "addr");
       /* addr => new_base.  */
-      lra_emit_move (new_reg, addr);
+      lra_emit_move (new_reg, canonicalize_reload_addr (addr));
       *ad.inner = new_reg;
     }
   *before = end_sequence ();
@@ -5186,7 +5227,7 @@ curr_insn_transform (bool check_only_p)
 
 	  push_to_sequence (before);
 	  rclass = base_reg_class (GET_MODE (op), MEM_ADDR_SPACE (op),
-				   MEM, SCRATCH, curr_insn);
+				   MEM, SCRATCH, op, curr_insn);
 	  if (GET_RTX_CLASS (code) == RTX_AUTOINC)
 	    new_reg = emit_inc (rclass, *loc,
 				/* This value does not matter for MODIFY.  */
@@ -8259,6 +8300,14 @@ remove_inheritance_pseudos (bitmap remove_pseudos)
   return change_p;
 }
 
+/* Return true if REGNO is an inheritance pseudo.  */
+static bool
+inheritance_pseudo_p (int regno)
+{
+  return (regno >= new_regno_start
+	  && bitmap_bit_p (&lra_inheritance_pseudos, regno));
+}
+
 /* If optional reload pseudos failed to get a hard register or was not
    inherited, it is better to remove optional reloads.  We do this
    transformation after undoing inheritance to figure out necessity to
@@ -8291,19 +8340,22 @@ undo_optional_reloads (void)
 	    insn = lra_insn_recog_data[uid]->insn;
 	    if ((set = single_set (insn)) == NULL_RTX)
 	      continue;
-	    src = SET_SRC (set);
-	    dest = SET_DEST (set);
-	    if ((! REG_P (src) && ! SUBREG_P (src))
-		|| (! REG_P (dest) && ! SUBREG_P (dest)))
+	    int src_regno = get_regno (SET_SRC (set));
+	    int dest_regno = get_regno (SET_DEST (set));
+	    if (src_regno < 0 || dest_regno < 0)
 	      continue;
-	    if (get_regno (dest) == (int) regno
-		/* Ignore insn for optional reloads itself.  */
-		&& (get_regno (lra_reg_info[regno].restore_rtx)
-		    != get_regno (src))
-		/* Check only inheritance on last inheritance pass.  */
-		&& get_regno (src) >= new_regno_start
-		/* Check that the optional reload was inherited.  */
-		&& bitmap_bit_p (&lra_inheritance_pseudos, get_regno (src)))
+	    int restore_regno = get_regno (lra_reg_info[regno].restore_rtx);
+	    if (restore_regno < 0)
+	      continue;
+	    if (((dest_regno == (int) regno
+		  /* Ignore insn for optional reloads itself.  */
+		  && restore_regno != src_regno
+		  /* Check that the optional reload was inherited.  */
+		  && inheritance_pseudo_p (src_regno))
+		 || (src_regno == (int) regno
+		     && restore_regno != dest_regno
+		     /* The optional reload is an inheritance source.  */
+		     && inheritance_pseudo_p (dest_regno))))
 	      {
 		keep_p = true;
 		break;

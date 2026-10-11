@@ -709,14 +709,11 @@ gfc_finish_var_decl (tree decl, gfc_symbol * sym)
 	 into common space, then C cannot initialize global Fortran
 	 variables that it interoperates with and the draft says that
 	 either Fortran or C should be able to initialize it (but not
-	 both, of course.) (J3/04-007, section 15.3).  */
+	 both, of course.) (J3/04-007, section 15.3).  A binding label has
+	 external linkage, so PRIVATE hides only the Fortran name and must
+	 not restrict the symbol's visibility.  */
       TREE_PUBLIC(decl) = 1;
       DECL_COMMON(decl) = 1;
-      if (sym->attr.access == ACCESS_PRIVATE && !sym->attr.public_used)
-	{
-	  DECL_VISIBILITY (decl) = VISIBILITY_HIDDEN;
-	  DECL_VISIBILITY_SPECIFIED (decl) = true;
-	}
     }
 
   /* If a variable is USE associated, it's always external.  */
@@ -742,7 +739,8 @@ gfc_finish_var_decl (tree decl, gfc_symbol * sym)
 
       TREE_PUBLIC (decl) = 1;
       TREE_STATIC (decl) = 1;
-      if (sym->attr.access == ACCESS_PRIVATE && !sym->attr.public_used)
+      if (sym->attr.access == ACCESS_PRIVATE && !sym->attr.public_used
+	  && !sym->binding_label)
 	{
 	  DECL_VISIBILITY (decl) = VISIBILITY_HIDDEN;
 	  DECL_VISIBILITY_SPECIFIED (decl) = true;
@@ -1408,11 +1406,29 @@ gfc_build_dummy_array_decl (gfc_symbol * sym, tree dummy)
 
   GFC_DECL_SAVED_DESCRIPTOR (decl) = dummy;
 
-  if (sym->ns->proc_name->backend_decl == current_function_decl
-      || sym->attr.contained)
-    gfc_add_decl_to_function (decl);
-  else
+  bool in_parent_function
+    = sym->ns->proc_name->backend_decl != current_function_decl
+      && !sym->attr.contained;
+
+  /* The elements of the actual argument can be spaced by more than the
+     element size, in which case they are addressed by the span of the
+     descriptor.  Create the variable holding it here, since the body is
+     translated before gfc_trans_dummy_array_bias loads it.  */
+  if (packed == PACKED_NO)
+    {
+      if (gfc_span_folds_into_stride (sym))
+	GFC_DECL_SPAN_NORMALIZED (decl) = 1;
+      else if (gfc_is_span_addressed_dummy (sym))
+	{
+	  GFC_DECL_PTR_ARRAY_P (decl) = 1;
+	  GFC_DECL_SPAN (decl) = create_index_var ("span", in_parent_function);
+	}
+    }
+
+  if (in_parent_function)
     gfc_add_decl_to_parent_function (decl);
+  else
+    gfc_add_decl_to_function (decl);
 
   return decl;
 }
@@ -1569,53 +1585,73 @@ add_attributes_to_decl (tree *decl_p, const gfc_symbol *sym)
       clauses = c;
     }
 
-  /* FIXME: 'declare_target_link' permits both any and host, but
-     will fail if one sets OMP_CLAUSE_DEVICE_TYPE_KIND.  */
+  if (sym_attr.omp_groupprivate)
+    list = tree_cons (get_identifier ("omp groupprivate"), NULL_TREE, list);
+
+  tree arg_list = NULL_TREE;
   if (sym_attr.omp_device_type != OMP_DEVICE_TYPE_UNSET
       && !sym_attr.omp_declare_target_link
-      && !sym_attr.omp_declare_target_indirect /* implies 'any' */)
+      && !sym_attr.omp_declare_target_indirect)
     {
-      tree c = build_omp_clause (UNKNOWN_LOCATION, OMP_CLAUSE_DEVICE_TYPE);
+      const char *arg_str = NULL;
       switch (sym_attr.omp_device_type)
 	{
 	case OMP_DEVICE_TYPE_HOST:
-	  OMP_CLAUSE_DEVICE_TYPE_KIND (c) = OMP_CLAUSE_DEVICE_TYPE_HOST;
+	  arg_str = "device_type(host)";
 	  break;
 	case OMP_DEVICE_TYPE_NOHOST:
-	  OMP_CLAUSE_DEVICE_TYPE_KIND (c) = OMP_CLAUSE_DEVICE_TYPE_NOHOST;
+	  arg_str = "device_type(nohost)";
 	  break;
 	case OMP_DEVICE_TYPE_ANY:
-	  OMP_CLAUSE_DEVICE_TYPE_KIND (c) = OMP_CLAUSE_DEVICE_TYPE_ANY;
+	  arg_str = "device_type(any)";
 	  break;
 	default:
 	  gcc_unreachable ();
 	}
-      OMP_CLAUSE_CHAIN (c) = clauses;
-      clauses = c;
+      arg_list = tree_cons (NULL_TREE, get_identifier (arg_str), arg_list);
     }
 
-  /* Also check trans-common.cc when updating/removing the following;
-     also update f95.c's gfc_gnu_attributes.  */
-  if (sym_attr.omp_groupprivate)
-    gfc_error ("Sorry, OMP GROUPPRIVATE not implemented, "
-	       "used by %qs declared at %L", sym->name, &sym->declared_at);
-  else if (sym_attr.omp_declare_target_local)
-    /* Use 'else if' as groupprivate implies 'local'.  */
-    gfc_error ("Sorry, OMP DECLARE TARGET with LOCAL clause not implemented, "
-	       "used by %qs declared at %L", sym->name, &sym->declared_at);
-
   bool has_declare = true;
-  if (sym_attr.omp_declare_target_link
-      || sym_attr.oacc_declare_link)
-    list = tree_cons (get_identifier ("omp declare target link"),
-		      clauses, list);
-  else if (sym_attr.omp_declare_target
-	   || sym_attr.oacc_declare_create
-	   || sym_attr.oacc_declare_copyin
-	   || sym_attr.oacc_declare_deviceptr
-	   || sym_attr.oacc_declare_device_resident)
-    list = tree_cons (get_identifier ("omp declare target"),
-		      clauses, list);
+
+  if (flag_openmp)
+    {
+      if (sym_attr.omp_declare_target_link)
+	list = tree_cons (get_identifier ("omp declare target link"),
+			  arg_list, list);
+      else if (sym_attr.omp_declare_target)
+	list = tree_cons (get_identifier ("omp declare target"),
+			  arg_list, list);
+      else if (sym_attr.omp_declare_target_local)
+	{
+	  /* The OpenMP local clause is encoded as an identifier in the
+	     TREE_VALUE of the attribute, itself as a TREE_LIST. This is because
+	     local has very similar handling to normal "enter", just not added
+	     to offload_vars.  */
+	  arg_list = tree_cons (NULL_TREE, get_identifier ("local"), arg_list);
+	  list = tree_cons (get_identifier ("omp declare target"),
+			    arg_list, list);
+	}
+      else
+	has_declare = false;
+    }
+  else if (flag_openacc)
+    {
+      /* OpenACC has the routine clause list saved in TREE_VALUE of attribute.
+	 This appears consistent with C/C++. Whether OpenMP/OpenACC handling
+	 should be further unified is TBD.  */
+      if (sym_attr.oacc_declare_link)
+	list = tree_cons (get_identifier ("omp declare target link"),
+			  clauses, list);
+      else if (sym_attr.omp_declare_target
+	       || sym_attr.oacc_declare_create
+	       || sym_attr.oacc_declare_copyin
+	       || sym_attr.oacc_declare_deviceptr
+	       || sym_attr.oacc_declare_device_resident)
+	list = tree_cons (get_identifier ("omp declare target"),
+			  clauses, list);
+      else
+	has_declare = false;
+    }
   else
     has_declare = false;
 
@@ -1786,7 +1822,8 @@ gfc_get_symbol_decl (gfc_symbol * sym)
 	  && sym->attr.allocatable)
 	gfc_defer_symbol_init (sym);
 
-      if (sym->attr.pointer && sym->attr.dimension && sym->ts.type != BT_CLASS)
+      if ((sym->attr.pointer && sym->attr.dimension && sym->ts.type != BT_CLASS)
+	  || gfc_is_span_addressed_dummy (sym))
 	GFC_DECL_PTR_ARRAY_P (sym->backend_decl) = 1;
 
       /* Create a character length variable.  */
@@ -1848,8 +1885,11 @@ gfc_get_symbol_decl (gfc_symbol * sym)
 		    gfc_add_decl_to_parent_function (length);
 		}
 
-	      gcc_assert (sym->backend_decl == current_function_decl
-			  ? DECL_CONTEXT (length) == current_function_decl
+	      /* When the symbol's own backend_decl is a FUNCTION_DECL, its
+		 DECL_CONTEXT is where that function itself is declared, not
+		 where its locals live.  */
+	      gcc_assert (TREE_CODE (sym->backend_decl) == FUNCTION_DECL
+			  ? DECL_CONTEXT (length) == sym->backend_decl
 			  : (DECL_CONTEXT (sym->backend_decl)
 			     == DECL_CONTEXT (length)));
 
@@ -2078,6 +2118,20 @@ gfc_get_symbol_decl (gfc_symbol * sym)
 	   && !sym->attr.subref_array_pointer))
     GFC_DECL_PTR_ARRAY_P (decl) = 1;
 
+  /* A SELECT RANK temporary uses a copy of the selector's descriptor.
+     Its elements may be spaced by more than the element size,
+     so use copied span as well.  */
+  if (sym->attr.select_rank_temporary && sym->attr.dimension
+      && GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (decl))
+      && sym->assoc && sym->assoc->target
+      && sym->assoc->target->expr_type == EXPR_VARIABLE)
+    {
+      gfc_symbol *sel = sym->assoc->target->symtree->n.sym;
+      if (!sel->attr.contiguous
+	  && (sel->attr.target || sel->attr.pointer || sel->ts.type == BT_CLASS))
+	GFC_DECL_PTR_ARRAY_P (decl) = 1;
+    }
+
   if (sym->ts.type == BT_CLASS)
     GFC_DECL_CLASS(decl) = 1;
 
@@ -2096,7 +2150,8 @@ gfc_get_symbol_decl (gfc_symbol * sym)
       && !(sym->attr.use_assoc && !intrinsic_array_parameter)
       && (sym->attr.save || sym->ns->proc_name->attr.is_main_program
 	  || !gfc_can_put_var_on_stack (DECL_SIZE_UNIT (decl))
-	  || sym->attr.data || sym->ns->proc_name->attr.flavor == FL_MODULE)
+	  || sym->attr.data || sym->ns->proc_name->attr.flavor == FL_MODULE
+	  || intrinsic_array_parameter)
       && (flag_coarray != GFC_FCOARRAY_LIB
 	  || !sym->attr.codimension || sym->attr.allocatable)
       && !(IS_PDT (sym) || IS_CLASS_PDT (sym)))
@@ -2600,9 +2655,10 @@ build_function_decl (gfc_symbol * sym, bool global)
       /* Mirror the variable treatment (see gfc_finish_var_decl): PRIVATE
 	 module procedures get global linkage but hidden visibility so the
 	 symbol is reachable from submodules in the same link without being
-	 exported to external DSOs.  */
+	 exported to external DSOs.  A binding label has external linkage,
+	 so PRIVATE hides only the Fortran name.  */
       if (in_module_contains && sym->attr.access == ACCESS_PRIVATE
-	  && !sym->attr.public_used)
+	  && !sym->attr.public_used && !sym->binding_label)
 	{
 	  DECL_VISIBILITY (fndecl) = VISIBILITY_HIDDEN;
 	  DECL_VISIBILITY_SPECIFIED (fndecl) = true;
@@ -4999,14 +5055,12 @@ gfc_trans_deferred_vars (gfc_symbol * proc_sym, gfc_wrapped_block * block)
   else if (proc_sym == proc_sym->result && IS_CLASS_ARRAY (proc_sym))
     {
       /* Nullify explicit return class arrays on entry.  */
-      tree type;
       tmp = get_proc_result (proc_sym);
       if (tmp && GFC_CLASS_TYPE_P (TREE_TYPE (tmp)))
 	{
 	  gfc_start_block (&init);
 	  tmp = gfc_class_data_get (tmp);
-	  type = TREE_TYPE (gfc_conv_descriptor_data_get (tmp));
-	  gfc_conv_descriptor_data_set (&init, tmp, build_int_cst (type, 0));
+	  gfc_init_result_descriptor (&init, tmp);
 	  gfc_add_init_cleanup (block, gfc_finish_block (&init), NULL_TREE);
 	}
     }

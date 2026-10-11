@@ -1820,12 +1820,50 @@ conv_caf_sendget (gfc_code *code)
 }
 
 
+/* F2018:5.4.7(5): a subobject of a coarray is a coarray with the codimensions
+   of that coarray.  Return a copy of E cut back to the reference carrying the
+   codimensions, so that the descriptor built for it holds the cobounds.  */
+
+static gfc_expr *
+strip_subobject_of_coarray (gfc_expr *e)
+{
+  gfc_expr *coarray;
+  gfc_ref *ref;
+  gfc_typespec ts;
+
+  ts = e->symtree->n.sym->ts;
+  for (ref = e->ref; ref; ref = ref->next)
+    {
+      if (ref->type == REF_ARRAY && ref->u.ar.codimen > 0)
+	break;
+      if (ref->type == REF_COMPONENT)
+	ts = ref->u.c.component->ts;
+    }
+
+  coarray = gfc_copy_expr (e);
+  if (!ref || !ref->next)
+    return coarray;
+
+  for (ref = coarray->ref; ref; ref = ref->next)
+    if (ref->type == REF_ARRAY && ref->u.ar.codimen > 0)
+      break;
+
+  gfc_free_ref_list (ref->next);
+  ref->next = NULL;
+  coarray->ts = ts;
+  gfc_expression_rank (coarray);
+
+  return coarray;
+}
+
+
 static void
 trans_this_image (gfc_se * se, gfc_expr *expr)
 {
   stmtblock_t loop;
   tree type, desc, dim_arg, cond, tmp, m, loop_var, exit_label, min_var, lbound,
     ubound, extent, ml, team;
+  gfc_expr *coarray;
   gfc_se argse;
   int rank, corank;
 
@@ -1857,16 +1895,19 @@ trans_this_image (gfc_se * se, gfc_expr *expr)
   /* Coarray-argument version: THIS_IMAGE(coarray [, dim]).  */
 
   type = gfc_get_int_type (gfc_default_integer_kind);
-  corank = expr->value.function.actual->expr->corank;
-  rank = expr->value.function.actual->expr->rank;
+
+  coarray = strip_subobject_of_coarray (expr->value.function.actual->expr);
+  corank = coarray->corank;
+  rank = coarray->rank;
 
   /* Obtain the descriptor of the COARRAY.  */
   gfc_init_se (&argse, NULL);
   argse.want_coarray = 1;
-  gfc_conv_expr_descriptor (&argse, expr->value.function.actual->expr);
+  gfc_conv_expr_descriptor (&argse, coarray);
   gfc_add_block_to_block (&se->pre, &argse.pre);
   gfc_add_block_to_block (&se->post, &argse.post);
   desc = argse.expr;
+  gfc_free_expr (coarray);
 
   if (se->ss)
     {
@@ -2099,20 +2140,13 @@ conv_intrinsic_team_number (gfc_se *se, gfc_expr *expr)
   args = XALLOCAVEC (tree, num_args);
   gfc_conv_intrinsic_function_args (se, expr, args, num_args);
 
-  if (flag_coarray ==
-      GFC_FCOARRAY_SINGLE && expr->value.function.actual->expr)
-    tmp = gfc_evaluate_now (args[0], &se->pre);
-  else if (flag_coarray == GFC_FCOARRAY_SINGLE)
-    {
-      // the value -1 represents that no team has been created yet
-      tmp = build_int_cst (integer_type_node, -1);
-    }
-  else if (flag_coarray == GFC_FCOARRAY_LIB && expr->value.function.actual->expr)
-    tmp = build_call_expr_loc (input_location, gfor_fndecl_caf_team_number, 1,
-			       args[0]);
+  if (flag_coarray == GFC_FCOARRAY_SINGLE)
+    /* Only the initial team exists, and its team number is -1.  */
+    tmp = build_int_cst (integer_type_node, -1);
   else if (flag_coarray == GFC_FCOARRAY_LIB)
     tmp = build_call_expr_loc (input_location, gfor_fndecl_caf_team_number, 1,
-			       null_pointer_node);
+			       expr->value.function.actual->expr
+			       ? args[0] : null_pointer_node);
   else
     gcc_unreachable ();
 
@@ -2125,20 +2159,24 @@ trans_image_index (gfc_se * se, gfc_expr *expr)
 {
   tree num_images, cond, coindex, type, lbound, ubound, desc, subdesc, tmp,
     invalid_bound, team = null_pointer_node, team_number = null_pointer_node;
+  gfc_expr *coarray;
   gfc_se argse, subse;
   int rank, corank, codim;
 
   type = gfc_get_int_type (gfc_default_integer_kind);
-  corank = expr->value.function.actual->expr->corank;
-  rank = expr->value.function.actual->expr->rank;
+
+  coarray = strip_subobject_of_coarray (expr->value.function.actual->expr);
+  corank = coarray->corank;
+  rank = coarray->rank;
 
   /* Obtain the descriptor of the COARRAY.  */
   gfc_init_se (&argse, NULL);
   argse.want_coarray = 1;
-  gfc_conv_expr_descriptor (&argse, expr->value.function.actual->expr);
+  gfc_conv_expr_descriptor (&argse, coarray);
   gfc_add_block_to_block (&se->pre, &argse.pre);
   gfc_add_block_to_block (&se->post, &argse.post);
   desc = argse.expr;
+  gfc_free_expr (coarray);
 
   /* Obtain a handle to the SUB argument.  */
   gfc_init_se (&subse, NULL);
@@ -2151,15 +2189,20 @@ trans_image_index (gfc_se * se, gfc_expr *expr)
   if (expr->value.function.actual->next->next->expr)
     {
       gfc_init_se (&argse, NULL);
-      gfc_conv_expr_descriptor (&argse,
-				expr->value.function.actual->next->next->expr);
-      if (expr->value.function.actual->next->next->expr->ts.type == BT_DERIVED)
-	team = argse.expr;
-      else
-	team_number = gfc_build_addr_expr (
-	  NULL_TREE,
-	  gfc_trans_force_lval (&argse.pre,
-				fold_convert (integer_type_node, argse.expr)));
+      gfc_conv_expr_val (&argse, expr->value.function.actual->next->next->expr);
+      team = argse.expr;
+      gfc_add_block_to_block (&se->pre, &argse.pre);
+      gfc_add_block_to_block (&se->post, &argse.post);
+    }
+  else if (expr->value.function.actual->next->next->next->expr)
+    {
+      gfc_init_se (&argse, NULL);
+      gfc_conv_expr_val (&argse,
+			 expr->value.function.actual->next->next->next->expr);
+      team_number = gfc_build_addr_expr (
+	NULL_TREE,
+	gfc_trans_force_lval (&argse.pre,
+			      fold_convert (integer_type_node, argse.expr)));
       gfc_add_block_to_block (&se->pre, &argse.pre);
       gfc_add_block_to_block (&se->post, &argse.post);
     }
@@ -2265,13 +2308,18 @@ trans_num_images (gfc_se * se, gfc_expr *expr)
     {
       gfc_init_se (&argse, NULL);
       gfc_conv_expr_val (&argse, expr->value.function.actual->expr);
-      if (expr->value.function.actual->expr->ts.type == BT_DERIVED)
-	team = argse.expr;
-      else
-	team_number = gfc_build_addr_expr (
-	  NULL_TREE,
-	  gfc_trans_force_lval (&se->pre,
-				fold_convert (integer_type_node, argse.expr)));
+      team = argse.expr;
+      gfc_add_block_to_block (&se->pre, &argse.pre);
+      gfc_add_block_to_block (&se->post, &argse.post);
+    }
+  else if (expr->value.function.actual->next->expr)
+    {
+      gfc_init_se (&argse, NULL);
+      gfc_conv_expr_val (&argse, expr->value.function.actual->next->expr);
+      team_number = gfc_build_addr_expr (
+	NULL_TREE,
+	gfc_trans_force_lval (&argse.pre,
+			      fold_convert (integer_type_node, argse.expr)));
       gfc_add_block_to_block (&se->pre, &argse.pre);
       gfc_add_block_to_block (&se->post, &argse.post);
     }
@@ -2348,9 +2396,10 @@ gfc_conv_is_contiguous_expr (gfc_se *se, gfc_expr *arg)
       gfc_conv_expr_descriptor (&argse, arg);
       gfc_add_block_to_block (&se->pre, &argse.pre);
       gfc_add_block_to_block (&se->post, &argse.post);
-      desc = gfc_evaluate_now (argse.expr, &se->pre);
+      tree ptr = gfc_evaluate_now (argse.expr, &se->pre);
       fncall0 = build_call_expr_loc (input_location,
-				     gfor_fndecl_is_contiguous0, 1, desc);
+				     gfor_fndecl_is_contiguous0, 1, ptr);
+      desc = build_fold_indirect_ref_loc (input_location, ptr);
       se->expr = fncall0;
       se->expr = convert (boolean_type_node, se->expr);
     }
@@ -2385,9 +2434,10 @@ gfc_conv_is_contiguous_expr (gfc_se *se, gfc_expr *arg)
       se->expr = cond;
     }
 
-  /* A pointer that does not have the CONTIGUOUS attribute needs to be checked
-     if it points to an array whose span differs from the element size.  */
-  if (as && sym && IS_POINTER(sym) && !sym->attr.contiguous)
+  /* An array that is addressed by the span of its descriptor needs to be
+     checked if that span differs from the element size.  */
+  if (as && sym && !sym->attr.contiguous
+      && (IS_POINTER (sym) || gfc_is_span_addressed_dummy (sym)))
     {
       tree span = gfc_conv_descriptor_span_get (desc);
       tmp = fold_convert (TREE_TYPE (span),
@@ -2397,6 +2447,15 @@ gfc_conv_is_contiguous_expr (gfc_se *se, gfc_expr *arg)
       se->expr = fold_build2_loc (input_location, TRUTH_ANDIF_EXPR,
 				  boolean_type_node, cond,
 				  convert (boolean_type_node, se->expr));
+    }
+
+  if (as && as->type == AS_ASSUMED_RANK)
+    {
+      tree rank = gfc_conv_descriptor_rank_get (desc);
+      tree scalar = fold_build2_loc (input_location, EQ_EXPR, boolean_type_node,
+				     rank, gfc_rank_cst[0]);
+      se->expr = fold_build2_loc (input_location, TRUTH_ORIF_EXPR,
+				  TREE_TYPE (se->expr), scalar, se->expr);
     }
 
   gfc_free_ss_chain (ss);
@@ -2625,6 +2684,7 @@ conv_intrinsic_cobound (gfc_se * se, gfc_expr * expr)
 {
   gfc_actual_arglist *arg;
   gfc_actual_arglist *arg2;
+  gfc_expr *coarray;
   gfc_se argse;
   tree bound, lbound, resbound, resbound2, desc, cond, tmp;
   tree type;
@@ -2639,12 +2699,14 @@ conv_intrinsic_cobound (gfc_se * se, gfc_expr * expr)
   arg2 = arg->next;
 
   gcc_assert (arg->expr->expr_type == EXPR_VARIABLE);
-  corank = arg->expr->corank;
+
+  coarray = strip_subobject_of_coarray (arg->expr);
+  corank = coarray->corank;
 
   gfc_init_se (&argse, NULL);
   argse.want_coarray = 1;
 
-  gfc_conv_expr_descriptor (&argse, arg->expr);
+  gfc_conv_expr_descriptor (&argse, coarray);
   gfc_add_block_to_block (&se->pre, &argse.pre);
   gfc_add_block_to_block (&se->post, &argse.post);
   desc = argse.expr;
@@ -2660,7 +2722,7 @@ conv_intrinsic_cobound (gfc_se * se, gfc_expr * expr)
 
       bound = fold_convert_loc (input_location, gfc_array_dim_rank_type,
 				se->loop->loopvar[0]);
-      tree rank = gfc_rank_cst[arg->expr->rank];
+      tree rank = gfc_rank_cst[coarray->rank];
       bound = fold_build2_loc (input_location, PLUS_EXPR,
 			       gfc_array_dim_rank_type, bound, rank);
       gfc_advance_se_ss_chain (se);
@@ -2700,7 +2762,7 @@ conv_intrinsic_cobound (gfc_se * se, gfc_expr * expr)
 
 
       /* Subtract 1 to get to zero based and add dimensions.  */
-      switch (arg->expr->rank)
+      switch (coarray->rank)
 	{
 	case 0:
 	  bound = fold_build2_loc (input_location, MINUS_EXPR,
@@ -2710,7 +2772,7 @@ conv_intrinsic_cobound (gfc_se * se, gfc_expr * expr)
 	  break;
 	default:
 	  {
-	    tree rank = gfc_rank_cst[arg->expr->rank - 1];
+	    tree rank = gfc_rank_cst[coarray->rank - 1];
 	    bound = fold_build2_loc (input_location, PLUS_EXPR,
 				     gfc_array_dim_rank_type, bound, rank);
 	  }
@@ -2741,7 +2803,7 @@ conv_intrinsic_cobound (gfc_se * se, gfc_expr * expr)
 	{
           tree cosize;
 
-	  cosize = gfc_conv_descriptor_cosize (desc, arg->expr->rank, corank);
+	  cosize = gfc_conv_descriptor_cosize (desc, coarray->rank, corank);
 	  tmp = build_call_expr_loc (input_location, gfor_fndecl_caf_num_images,
 				     2, null_pointer_node, null_pointer_node);
 	  tmp = fold_build2_loc (input_location, MINUS_EXPR,
@@ -2772,7 +2834,7 @@ conv_intrinsic_cobound (gfc_se * se, gfc_expr * expr)
 	  cond = fold_build2_loc (input_location, EQ_EXPR, logical_type_node,
 				  bound,
 				  build_int_cst (TREE_TYPE (bound),
-						 arg->expr->rank + corank - 1));
+						 coarray->rank + corank - 1));
 
 	  resbound2 = gfc_conv_descriptor_ubound_get (desc, bound);
 	  se->expr = fold_build3_loc (input_location, COND_EXPR,
@@ -2799,6 +2861,8 @@ conv_intrinsic_cobound (gfc_se * se, gfc_expr * expr)
 
   type = gfc_typenode_for_spec (&expr->ts);
   se->expr = convert (type, se->expr);
+
+  gfc_free_expr (coarray);
 }
 
 
@@ -12838,13 +12902,13 @@ conv_intrinsic_atomic_op (gfc_code *code)
     case GFC_ISYM_ATOMIC_XOR:
       tmp = build_call_expr_loc (input_location, tmp, 3, atom,
 				 fold_convert (itype, value),
-				 build_int_cst (NULL, MEMMODEL_RELAXED));
+				 build_int_cst (integer_type_node, MEMMODEL_RELAXED));
       gfc_add_expr_to_block (&block, tmp);
       break;
     default:
       tmp = build_call_expr_loc (input_location, tmp, 3, atom,
 				 fold_convert (itype, value),
-				 build_int_cst (NULL, MEMMODEL_RELAXED));
+				 build_int_cst (integer_type_node, MEMMODEL_RELAXED));
       gfc_add_modify (&block, old, fold_convert (TREE_TYPE (old), tmp));
       break;
     }
@@ -13075,8 +13139,8 @@ conv_intrinsic_atomic_cas (gfc_code *code)
 			     gfc_build_addr_expr (NULL, old),
 			     fold_convert (TREE_TYPE (old), new_val),
 			     boolean_false_node,
-			     build_int_cst (NULL, MEMMODEL_RELAXED),
-			     build_int_cst (NULL, MEMMODEL_RELAXED));
+			     build_int_cst (integer_type_node, MEMMODEL_RELAXED),
+			     build_int_cst (integer_type_node, MEMMODEL_RELAXED));
   gfc_add_expr_to_block (&block, tmp);
 
   if (stat != NULL_TREE)

@@ -310,24 +310,24 @@ test_2p55p1(const std::mt19937& rng)
   case 24: // ieee32
   case 53: // ieee64
     VERIFY(skips == 0);
-    VERIFY(deviation == 7682);
-    VERIFY(max == 295);
-    VERIFY(rms == 971);
+    VERIFY(deviation == 7636);
+    VERIFY(max == 292);
+    VERIFY(rms == 965);
     VERIFY(zeros == 0);
     break;
   case 64: // ieee80
   case 106: // ibm128
     VERIFY(skips == 0);
-    VERIFY(deviation == 6788);
-    VERIFY(max == 248);
-    VERIFY(rms == 854);
+    VERIFY(deviation == 7830);
+    VERIFY(max == 246);
+    VERIFY(rms == 963);
     VERIFY(zeros == 0);
     break;
   case 113: // ieee128
     VERIFY(skips == 0);
-    VERIFY(deviation == 8222);
-    VERIFY(max == 257);
-    VERIFY(rms == 999);
+    VERIFY(deviation == 7930);
+    VERIFY(max == 271);
+    VERIFY(rms == 981);
     VERIFY(zeros == 0);
     break;
   default:

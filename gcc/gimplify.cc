@@ -2113,7 +2113,7 @@ gimplify_decl_expr (tree *stmt_p, gimple_seq *seq_p)
 	     since __builtin_clear_padding will take the address of the
 	     variable.  As a result, if a long double/_Complex long double
 	     variable will spilled into stack later, its padding is 0XFE.  */
-	  if (flag_auto_var_init == AUTO_INIT_PATTERN
+	  if ((flag_auto_var_init & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN
 	      && !is_gimple_reg (decl)
 	      && clear_padding_type_may_have_padding_p (TREE_TYPE (decl)))
 	    gimple_add_padding_init_for_auto_var (decl, is_vla, seq_p);
@@ -8478,7 +8478,7 @@ gimplify_target_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
       if (var_needs_auto_init_p (temp) && VOID_TYPE_P (TREE_TYPE (init)))
 	{
 	  gimple_add_init_for_auto_var (temp, flag_auto_var_init, &init_pre_p);
-	  if (flag_auto_var_init == AUTO_INIT_PATTERN
+	  if ((flag_auto_var_init & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN
 	      && !is_gimple_reg (temp)
 	      && clear_padding_type_may_have_padding_p (TREE_TYPE (temp)))
 	    gimple_add_padding_init_for_auto_var (temp, is_vla, &init_pre_p);
@@ -10154,6 +10154,8 @@ build_omp_iterators_loops (tree *list_p, gimple_seq *loops_seq_p)
 	{
 	  /* Handle dynamic sizes.  */
 	  sorry ("dynamic iterator sizes not implemented yet");
+	  OMP_CLAUSE_ITERATORS (c) = NULL_TREE;
+	  continue;
 	}
 
       /* BEFORE LOOP:  */
@@ -14903,7 +14905,6 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	case OMP_CLAUSE_MESSAGE:
 	case OMP_CLAUSE_PROC_BIND:
 	case OMP_CLAUSE_SAFELEN:
-	case OMP_CLAUSE_SIMDLEN:
 	case OMP_CLAUSE_NOGROUP:
 	case OMP_CLAUSE_THREADS:
 	case OMP_CLAUSE_SIMD:
@@ -14915,6 +14916,15 @@ gimplify_scan_omp_clauses (tree *list_p, gimple_seq *pre_p,
 	case OMP_CLAUSE_USE:
 	case OMP_CLAUSE_DESTROY:
 	case OMP_CLAUSE_DEVICE_TYPE:
+	  break;
+
+	case OMP_CLAUSE_SIMDLEN:
+	  if (OMP_CLAUSE_SIMDLEN_TYPE (c))
+	    {
+	      remove = true;
+	      sorry_at (OMP_CLAUSE_LOCATION (c),
+			"%<simdlen%> clause with %<scaled%> modifier");
+	    }
 	  break;
 
 	case OMP_CLAUSE_DYN_GROUPPRIVATE:

@@ -25,17 +25,12 @@ import os
 import pwd
 import re
 import sys
-import unidecode
 import yaml
 
 from optparse import OptionParser
 
 import maintainer_utils as maintutils
 
-def unilower(txt):
-    """return a lower-case version of txt, mapping accented characters
-    onto their ASCII near equivalents."""
-    return unidecode.unidecode(txt).lower()
 
 def get_surname(name):
     parts = name.split()
@@ -82,6 +77,8 @@ def getuserdata():
     newuser['sn'] = ask("Your surname (only used for sorting entries)",
                         get_surname(newuser['cn']))
     account = ask("Your sourceware account", user.pw_name)
+    forgeid = ask("Your sourceware forge ID (if you have one)", None,
+                  required=False)
     while True:
         e = ask("Primary email address", None)
         if email_valid(e):
@@ -101,13 +98,25 @@ def getuserdata():
     newuser['roles'] = list()
     newuser['roles'].append('WriteAfter')
     newuser['account'] = account
+    if forgeid:
+        newuser['forgeid'] = forgeid
     print("If you are using a Developer Certificate of Origin (DCO)")
     print("you can add appropriate email addresses here")
+    dco = []
+    inactive_emails = []
     while (e := ask("DCO email (return to stop)", None, required=False)):
         if email_valid(e):
-            newuser['roles'].append({'DCO': e})
+            dco.append(e)
+            if e not in newuser['email']:
+                print(f"<{e}> not mentioned in the above list of emails.")
+                print("Adding it to inactive_emails list.")
+                inactive_emails.append(e)
         else:
             print ("That address does not look valid.  Ignored.")
+    if len(inactive_emails) > 0:
+        newuser['inactive_email'] = inactive_emails
+    if len(dco) > 0:
+        newuser['DCO'] = dco
     return newuser
 
 def main():
@@ -134,16 +143,13 @@ def main():
         print("Note, this script can only be used to add new accounts.")
         return 1
     data['users'].append (newuser)
-    data['users'] = sorted(data['users'],
-                           key = lambda k: (unilower(k['sn']),
-                                            unilower(k['cn'])))
-    if opts.outfilename and opts.outfilename != '-':
-        outfd = open (opts.outfilename, "w", encoding="utf-8")
-    elif opts.outfilename and opts.outfilename == '-':
-        outfd = sys.stdout
+
+    if opts.outfilename and opts.outfilename == '-':
+        maintutils.store(data)
     else:
-        outfd = open (args[0], "w", encoding="utf-8")
-    yaml.dump (data, outfd, allow_unicode = True, sort_keys = False)
+        maintutils.store(
+            data,
+            file=opts.outfilename if opts.outfilename else args[0])
     return 0
 
 if __name__ == "__main__":

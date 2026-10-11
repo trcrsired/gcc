@@ -67,6 +67,27 @@ unknown_fn(char (*)(float*, double*), float*, double*, int*); /* { dg-warning "c
 void
 not_a_fn(int, int); /* { dg-warning "refers to" } */
 
+[[gnu::callback_only(1, 2)]]
+void
+vararg_1(void (*)(int*), int*, ...); /* { dg-warning "cannot be used on variadic functions" } */
+
+[[gnu::callback_only(1, 2)]]
+void
+vararg_2(void (*)(int*, ...), int*); /* { dg-warning "callback function cannot be variadic" } */
+
+void
+not_used_on_fn_1 ()
+{
+  __attribute__ ((callback_only (1))) int a = 1; /* { dg-warning "attribute can only be used on functions" } */
+}
+
+/* This warning is not issued by the attribute handler, rather by
+   decl_attributes in attribs.cc.  Test it anyway.  */
+struct __attribute__ ((callback_only (1))) not_used_on_fn_2
+{
+  int x;
+}; /* { dg-warning "attribute does not apply to types" } */
+
 struct S
 {
   int x;

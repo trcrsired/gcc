@@ -381,6 +381,17 @@ block_range_cache::~block_range_cache ()
   bitmap_obstack_release (&m_bitmaps);
 }
 
+// Clear block info for NAME.
+
+void
+block_range_cache::clear (tree name)
+{
+  unsigned v = SSA_NAME_VERSION (name);
+  if (v >= m_ssa_ranges.length ())
+    return;
+  m_ssa_ranges[v] = NULL;
+}
+
 // Set the range for NAME on entry to block BB to R.
 // If it has not been accessed yet, allocate it first.
 
@@ -1795,10 +1806,6 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
   basic_block bb;
   basic_block prev_bb = start_bb;
 
-  // Track any inferred ranges seen.
-  value_range infer (TREE_TYPE (name));
-  infer.set_varying (TREE_TYPE (name));
-
   // Range on entry to the DEF block should not be queried.
   gcc_checking_assert (start_bb != def_bb);
   unsigned start_limit = m_workback.length ();
@@ -1816,11 +1823,9 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
   // Search until a value is found, pushing blocks which may need calculating.
   for ( ; bb; prev_bb = bb, bb = get_immediate_dominator (CDI_DOMINATORS, bb))
     {
-      // Accumulate any block exit inferred ranges.
-      infer_oracle ().maybe_adjust_range (infer, name, bb);
-
       // This block has an outgoing range.
-      if (gori ().has_edge_range_p (name, bb))
+      if (gori ().has_edge_range_p (name, bb)
+	  || infer_oracle ().has_range_p (bb, name))
 	m_workback.safe_push (prev_bb);
       else
 	{
@@ -1868,7 +1873,7 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
 	fprintf (dump_file, " at function top\n");
     }
 
-  // Now process any blocks wit incoming edges that nay have adjustments.
+  // Now process any blocks with incoming edges that may have adjustments.
   while (m_workback.length () > start_limit)
     {
       value_range er (TREE_TYPE (name));
@@ -1888,25 +1893,18 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
       edge e = single_pred_edge (prev_bb);
       bb = e->src;
       if (gori ().edge_range_p (er, e, name, *this))
+	r.intersect (er);
+      // If this is a normal edge, apply any inferred ranges.
+      if ((e->flags & (EDGE_EH | EDGE_ABNORMAL)) == 0)
+	infer_oracle ().maybe_adjust_range (r, name, bb);
+      if (DEBUG_RANGE_CACHE)
 	{
-	  r.intersect (er);
-	  // If this is a normal edge, apply any inferred ranges.
-	  if ((e->flags & (EDGE_EH | EDGE_ABNORMAL)) == 0)
-	    infer_oracle ().maybe_adjust_range (r, name, bb);
-
-	  if (DEBUG_RANGE_CACHE)
-	    {
-	      fprintf (dump_file, "CACHE: Adjusted edge range for %d->%d : ",
-		       bb->index, prev_bb->index);
-	      r.dump (dump_file);
-	      fprintf (dump_file, "\n");
-	    }
+	  fprintf (dump_file, "CACHE: Final Adjusted edge range for %d->%d : ",
+		   bb->index, prev_bb->index);
+	  r.dump (dump_file);
+	  fprintf (dump_file, "\n");
 	}
     }
-
-  // Apply non-null if appropriate.
-  if (!has_abnormal_call_or_eh_pred_edge_p (start_bb))
-    r.intersect (infer);
 
   if (DEBUG_RANGE_CACHE)
     {
@@ -1949,20 +1947,33 @@ ranger_cache::apply_inferred_ranges (gimple *s)
   if (infer.num () == 0)
     return;
 
-  // Do not update the on-entry cache for block ending stmts.
+  // Do not update the on-entry cache for block ending stmts if there is
+  // an outgoing abnormal edge.  Any outgoing abnormal edge makes the
+  // value unsafe to use.
   if (stmt_ends_bb_p (s))
     {
       edge_iterator ei;
       edge e;
       FOR_EACH_EDGE (e, ei, gimple_bb (s)->succs)
-	if (!(e->flags & (EDGE_ABNORMAL|EDGE_EH)))
-	  break;
-      if (e == NULL)
-	update = false;
+	if (e->flags & (EDGE_ABNORMAL|EDGE_EH))
+	  {
+	    update = false;
+	    break;
+	  }
     }
 
   infer_oracle ().add_ranges (s, infer);
   if (update)
     for (unsigned x = 0; x < infer.num (); x++)
       register_inferred_value (infer.range (x), infer.name (x), bb);
+}
+
+// Reset range info for NAME.
+
+void
+ranger_cache::reset_range_info (tree name)
+{
+  m_on_entry.clear (name);
+  m_globals.clear_range (name);
+  range_query::reset_range_info (name);
 }

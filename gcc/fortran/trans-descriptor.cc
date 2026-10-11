@@ -27,6 +27,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "trans-const.h"
 #include "trans-types.h"
 #include "trans-array.h"
+#include "trans-descriptor.h"
 
 
 /* Array descriptor low level access routines.
@@ -60,6 +61,12 @@ along with GCC; see the file COPYING3.  If not see
 #define STRIDE_SUBFIELD 0
 #define LBOUND_SUBFIELD 1
 #define UBOUND_SUBFIELD 2
+
+#define GFC_DTYPE_ELEM_LEN 0
+#define GFC_DTYPE_VERSION 1
+#define GFC_DTYPE_RANK 2
+#define GFC_DTYPE_TYPE 3
+#define GFC_DTYPE_ATTRIBUTE 4
 
 
 /* Get FIELD_IDX'th field in struct TYPE.  */
@@ -593,7 +600,7 @@ gfc_conv_descriptor_ubound_set (stmtblock_t *block, tree desc,
 
 void
 gfc_get_descriptor_offsets_for_info (const_tree desc_type, tree *data_off,
-				     tree *dtype_off, tree *span_off,
+				     tree *rank_off, tree *span_off,
 				     tree *dim_off, tree *dim_size,
 				     tree *stride_suboff, tree *lower_suboff,
 				     tree *upper_suboff)
@@ -602,13 +609,19 @@ gfc_get_descriptor_offsets_for_info (const_tree desc_type, tree *data_off,
   tree type;
 
   type = TYPE_MAIN_VARIANT (desc_type);
-  field = gfc_advance_chain (TYPE_FIELDS (type), DATA_FIELD);
+  tree fields = TYPE_FIELDS (type);
+  field = gfc_advance_chain (fields, DATA_FIELD);
   *data_off = byte_position (field);
-  field = gfc_advance_chain (TYPE_FIELDS (type), DTYPE_FIELD);
-  *dtype_off = byte_position (field);
-  field = gfc_advance_chain (TYPE_FIELDS (type), SPAN_FIELD);
+  field = gfc_advance_chain (fields, DTYPE_FIELD);
+  tree dtype_off = byte_position (field);
+  type = TREE_TYPE (field);
+  field = gfc_advance_chain (TYPE_FIELDS (type), GFC_DTYPE_RANK);
+  tree rank_suboff = byte_position (field);
+  *rank_off = fold_build2 (PLUS_EXPR, TREE_TYPE (dtype_off), dtype_off,
+			   rank_suboff);
+  field = gfc_advance_chain (fields, SPAN_FIELD);
   *span_off = byte_position (field);
-  field = gfc_advance_chain (TYPE_FIELDS (type), DIMENSION_FIELD);
+  field = gfc_advance_chain (fields, DIMENSION_FIELD);
   *dim_off = byte_position (field);
   type = TREE_TYPE (TREE_TYPE (field));
   *dim_size = TYPE_SIZE_UNIT (type);
@@ -623,6 +636,44 @@ gfc_get_descriptor_offsets_for_info (const_tree desc_type, tree *data_off,
 
 /* Array descriptor higher level routines.
  ******************************************************************************/
+
+/* Return a constructor for a descriptor dtype with the caracteristics given by
+   the arguments.  */
+
+tree
+gfc_build_dtype_constructor (tree size, int type, int rank)
+{
+  tree field;
+  vec<constructor_elt, va_gc> *v = NULL;
+
+  gcc_assert (size);
+
+  STRIP_NOPS (size);
+  size = fold_convert (size_type_node, size);
+  tree dtype_type_node = get_dtype_type_node ();
+  field = gfc_advance_chain (TYPE_FIELDS (dtype_type_node),
+			     GFC_DTYPE_ELEM_LEN);
+  CONSTRUCTOR_APPEND_ELT (v, field,
+			  fold_convert (TREE_TYPE (field), size));
+  field = gfc_advance_chain (TYPE_FIELDS (dtype_type_node),
+			     GFC_DTYPE_VERSION);
+  CONSTRUCTOR_APPEND_ELT (v, field,
+			  build_zero_cst (TREE_TYPE (field)));
+
+  field = gfc_advance_chain (TYPE_FIELDS (dtype_type_node),
+			     GFC_DTYPE_RANK);
+  if (rank >= 0)
+    CONSTRUCTOR_APPEND_ELT (v, field,
+			    build_int_cst (TREE_TYPE (field), rank));
+
+  field = gfc_advance_chain (TYPE_FIELDS (dtype_type_node),
+			     GFC_DTYPE_TYPE);
+  CONSTRUCTOR_APPEND_ELT (v, field,
+			  build_int_cst (TREE_TYPE (field), type));
+
+  return build_constructor (dtype_type_node, v);
+}
+
 
 /* Build a null array descriptor constructor.  */
 
@@ -653,9 +704,218 @@ gfc_build_null_descriptor (tree type)
 #undef SPAN_FIELD
 #undef DIMENSION_FIELD
 #undef CAF_TOKEN_FIELD
+
 #undef STRIDE_SUBFIELD
 #undef LBOUND_SUBFIELD
 #undef UBOUND_SUBFIELD
+
+#undef GFC_DTYPE_ELEM_LEN
+#undef GFC_DTYPE_VERSION
+#undef GFC_DTYPE_RANK
+#undef GFC_DTYPE_TYPE
+#undef GFC_DTYPE_ATTRIBUTE
+
+
+/* Add code to BLOCK implementing the pointer assigment from NULL() to the
+   pointer represented by the array descriptor DESCR.  */
+
+void
+gfc_nullify_descriptor (stmtblock_t *block, tree descr)
+{
+  gfc_conv_descriptor_data_set (block, descr, null_pointer_node);
+}
+
+
+/* Add code to BLOCK default-initializing array function result descriptor
+   DESCR.  This is used for the initialization of polymorphic allocatable
+   function results.  */
+
+void
+gfc_init_result_descriptor (stmtblock_t *block, tree descr)
+{
+  gfc_conv_descriptor_data_set (block, descr, null_pointer_node);
+}
+
+
+/* Add code to BLOCK initializing array descriptor DESCR so that it represents
+   an absent actual argument associated with an optional dummy.  */
+
+void
+gfc_init_absent_descriptor (stmtblock_t *block, tree descr)
+{
+  gfc_conv_descriptor_data_set (block, descr, null_pointer_node);
+}
+
+
+/* Add code to BLOCK initializing the array descriptor DESCR corresponding to
+   the array variable SYM.  This is only used for variables needing a default
+   initialization of their descriptor.  Typically allocatable (array) variables,
+   that have an initial status of unallocated, are among them; they need their
+   data pointer set to nullptr.  */
+
+void
+gfc_init_descriptor_variable (stmtblock_t *block, gfc_symbol *sym, tree descr)
+{
+  /* NULLIFY the data pointer for non-saved allocatables, or for non-saved
+     pointers when -fcheck=pointer is specified.  */
+  if (!sym->attr.save
+      && (sym->attr.allocatable
+	  || (sym->attr.pointer && (gfc_option.rtcheck & GFC_RTCHECK_POINTER))))
+    {
+      gfc_conv_descriptor_data_set (block, descr, null_pointer_node);
+      if (flag_coarray == GFC_FCOARRAY_LIB && sym->attr.codimension)
+	gfc_conv_descriptor_token_set (block, descr, null_pointer_node);
+    }
+
+  gcc_assert (sym->as && sym->as->rank>=0);
+  tree etype = gfc_get_element_type (TREE_TYPE (descr));
+  gfc_conv_descriptor_dtype_set (block, descr,
+				 gfc_get_dtype_rank_type (sym->as->rank,
+							  etype));
+}
+
+
+/* Create a fresh array descriptor copied from SOURCE_DESCR, with a cleared data
+   pointer and a possibly different dtype value.  Set the dtype field to DTYPE
+   if different from NULL_TREE; otherwise set it with a default value built
+   using SOURCE_DESCR's type.  Add the copying code and any other initialization
+   to BLOCK and return the descriptor declaration.
+
+   The descriptor created by this function is used to pass to intrinsic
+   functions from the library, when the result is assigned to a reallocatable
+   variable.  The left hand side variable descriptor is not passed directly to
+   the library, and the unallocated descriptor this function creates is passed
+   instead.  Allocation happens in the library; deallocation of the left hand
+   side variable data, if any, and correct bounds mapping happen outside the
+   library, after the function returns.  */
+
+tree
+gfc_create_unallocated_library_result_descriptor (stmtblock_t *block,
+						  tree source_descr, tree dtype)
+{
+  /* Unallocated, the descriptor does not have a dtype.  */
+  if (dtype == NULL_TREE)
+    dtype = gfc_get_dtype (TREE_TYPE (source_descr));
+
+  gfc_conv_descriptor_dtype_set (block, source_descr, dtype);
+
+  tree res_desc = gfc_evaluate_now (source_descr, block);
+  gfc_conv_descriptor_data_set (block, res_desc, null_pointer_node);
+
+  return res_desc;
+}
+
+
+/* Create a new descriptor to represent a null actual argument of type TS and
+   rank RANK passed to a dummy argument having attributes ATTR.  Add
+   initialization code to BLOCK and return the descriptor declaration.  */
+
+tree
+gfc_create_null_actual_descriptor (stmtblock_t *block, gfc_typespec *ts,
+				   symbol_attribute attr, int rank)
+{
+  tree etype = gfc_typenode_for_spec (ts);
+
+  enum gfc_array_kind akind;
+
+  if (attr.pointer)
+    akind = GFC_ARRAY_POINTER_CONT;
+  else if (attr.allocatable)
+    akind = GFC_ARRAY_ALLOCATABLE;
+  else
+    akind = GFC_ARRAY_ASSUMED_SHAPE_CONT;
+
+  tree lower[GFC_MAX_DIMENSIONS];
+  tree upper[GFC_MAX_DIMENSIONS];
+  memset (&lower, 0, rank * sizeof (lower[0]));
+  memset (&upper, 0, rank * sizeof (upper[0]));
+
+  tree type = gfc_get_array_type_bounds (etype, rank, 0, lower, upper, 1,
+					 akind, !(attr.pointer || attr.target));
+  tree desc = gfc_create_var (type, "desc");
+  DECL_ARTIFICIAL (desc) = 1;
+
+  gfc_conv_descriptor_dtype_set (block, desc,
+				 gfc_get_dtype_rank_type (rank, etype));
+  gfc_conv_descriptor_data_set (block, desc, null_pointer_node);
+  gfc_conv_descriptor_span_set (block, desc,
+				gfc_conv_descriptor_elem_len_get (desc));
+
+  return desc;
+}
+
+
+/* Add code to BLOCK initializing the zero-rank array descriptor DESCR, so that
+   it represents the same data as the pointer-typed middle-end expression SCALAR
+   corresponding to the scalar front-end expression SCALAR_EXPR.  If
+   COND_PRESENCE is set, make the value assigned to the data field either SCALAR
+   or nullptr depending on COND_PRESENCE; otherwise SCALAR unconditionally.
+   This is used to implement the argument association between the actual
+   argument SCALAR_EXPR and an assumed-rank dummy argument.  */
+
+void
+gfc_set_descriptor_from_scalar (stmtblock_t *block, tree descr,
+				tree scalar, gfc_expr *scalar_expr,
+				tree cond_presence)
+{
+  tree type = gfc_get_scalar_to_descriptor_type (TREE_TYPE (scalar),
+						 gfc_expr_attr (scalar_expr));
+  gfc_conv_descriptor_dtype_set (block, descr,
+				 gfc_get_dtype (type));
+  gfc_copy_coarray_desc_part (block, descr, scalar);
+  if (cond_presence)
+    scalar = build3_loc (input_location, COND_EXPR,
+			 TREE_TYPE (scalar),
+			 cond_presence, scalar,
+			 fold_convert (TREE_TYPE (scalar),
+				       null_pointer_node));
+  gfc_conv_descriptor_data_set (block, descr, scalar);
+}
+
+
+/* Add code to BLOCK initializing the zero-rank array descriptor DESCR, so that
+   it represents the same data as the scalar reference SCALAR.  This is used to
+   implement the argument association between the actual argument SCALAR and an
+   assumed-rank dummy argument.  */
+
+void
+gfc_set_descriptor_from_scalar (stmtblock_t *block, tree descr, tree scalar)
+{
+  tree etype = TREE_TYPE (scalar);
+  if (!POINTER_TYPE_P (TREE_TYPE (scalar)))
+    scalar = gfc_build_addr_expr (NULL_TREE, scalar);
+  else if (TREE_TYPE (etype) && TREE_CODE (TREE_TYPE (etype)) == ARRAY_TYPE)
+    etype = TREE_TYPE (etype);
+
+  gfc_conv_descriptor_dtype_set (block, descr,
+				 gfc_get_dtype_rank_type (0, etype));
+  gfc_conv_descriptor_data_set (block, descr, scalar);
+  gfc_conv_descriptor_span_set (block, descr,
+				gfc_conv_descriptor_elem_len_get (descr));
+}
+
+
+/* Add code to BLOCK initializing the zero-rank array descriptor DESCR, so that
+   it represents the same data as the class descriptor reference SCALAR
+   corresponding to the scalar polymorphic expression SCALAR_EXPR.  This is used
+   to implement the argument association between the actual argument SCALAR_EXPR
+   and an assumed-rank dummy argument.  */
+
+void
+gfc_set_descriptor_from_scalar_class (stmtblock_t *block, tree descr,
+				      tree scalar, gfc_expr *scalar_expr)
+{
+  tree type = gfc_get_scalar_to_descriptor_type (TREE_TYPE (scalar),
+						 gfc_expr_attr (scalar_expr));
+  gfc_conv_descriptor_dtype_set (block, descr,
+				 gfc_get_dtype (type));
+
+  tree tmp = gfc_class_data_get (scalar);
+  if (!POINTER_TYPE_P (TREE_TYPE (tmp)))
+    tmp = gfc_build_addr_expr (NULL_TREE, tmp);
+
+  gfc_conv_descriptor_data_set (block, descr, tmp);
+}
 
 
 /* For an array descriptor, get the total number of elements.  This is just
@@ -739,6 +999,46 @@ gfc_conv_shift_descriptor_lbound (stmtblock_t* block, tree desc,
 
   /* Finally set lbound to value we want.  */
   gfc_conv_descriptor_lbound_set (block, desc, gfc_rank_cst[dim], new_lbound);
+}
+
+
+/* Add code to BLOCK copying the cobounds from array descriptor SRC to array
+   descriptor DEST.  The values are picked from SRC's type if they are
+   set there.  Otherwise the runtime values are used with references to SRC's
+   fields.  The type of DEST is not enriched with the cobounds; only
+   assignments setting DEST's fields at runtime are generated.  If SRC is not a
+   coarray, no code is generated.  */
+
+void
+gfc_copy_coarray_desc_part (stmtblock_t *block, tree dest, tree src)
+{
+  tree src_type = TREE_TYPE (src);
+  if (TYPE_LANG_SPECIFIC (src_type) && TYPE_LANG_SPECIFIC (src_type)->corank)
+    {
+      struct lang_type *lang_specific = TYPE_LANG_SPECIFIC (src_type);
+      for (int c = 0; c < lang_specific->corank; ++c)
+	{
+	  int dim = lang_specific->rank + c;
+	  tree codim = gfc_rank_cst[dim];
+
+	  if (lang_specific->lbound[dim])
+	    gfc_conv_descriptor_lbound_set (block, dest, codim,
+					    lang_specific->lbound[dim]);
+	  else
+	    gfc_conv_descriptor_lbound_set (
+	      block, dest, codim, gfc_conv_descriptor_lbound_get (src, codim));
+	  if (dim + 1 < lang_specific->corank)
+	    {
+	      if (lang_specific->ubound[dim])
+		gfc_conv_descriptor_ubound_set (block, dest, codim,
+						lang_specific->ubound[dim]);
+	      else
+		gfc_conv_descriptor_ubound_set (
+		  block, dest, codim,
+		  gfc_conv_descriptor_ubound_get (src, codim));
+	    }
+	}
+    }
 }
 
 

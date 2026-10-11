@@ -506,7 +506,7 @@ s390_expand_overloaded_builtin (location_t loc,
 		    "vec_step");
 	  return error_mark_node;
 	}
-      return build_int_cst (NULL_TREE,
+      return build_int_cst (integer_type_node,
 			    TYPE_VECTOR_SUBPARTS (TREE_TYPE ((*arglist)[0])));
     case S390_OVERLOADED_BUILTIN_s390_vec_xl:
     case S390_OVERLOADED_BUILTIN_s390_vec_xld2:
@@ -1108,7 +1108,7 @@ s390_resolve_overloaded_builtin (location_t loc, tree ob_fndecl,
 	  gcc_assert (type == integer_type_node);
 	  (*arglist)[i] = build2 (BIT_AND_EXPR, integer_type_node,
 				  fold_convert (integer_type_node, arg),
-				  build_int_cst (NULL_TREE, n_elem - 1));
+				  build_int_cst (integer_type_node, n_elem - 1));
 	}
 
       if (TREE_CODE (arg) != INTEGER_CST || !O_IMM_P (op_flags))

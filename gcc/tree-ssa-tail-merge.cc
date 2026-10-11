@@ -207,6 +207,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-eh.h"
 #include "tree-cfgcleanup.h"
 #include "tree-ssa.h"
+#include "gimple-match.h"
 
 const int ignore_edge_flags = EDGE_DFS_BACK | EDGE_EXECUTABLE;
 
@@ -271,9 +272,6 @@ struct aux_bb_info
   same_succ *bb_same_succ;
   /* The cluster that this bb is a member of.  */
   bb_cluster *cluster;
-  /* The vop state at the exit of a bb.  This is shortlived data, used to
-     communicate data between update_block_by and update_vuses.  */
-  tree vop_at_exit;
   /* The bb that either contains or is dominated by the dependencies of the
      bb.  */
   basic_block dep_bb;
@@ -284,7 +282,6 @@ struct aux_bb_info
 #define BB_SIZE(bb) (((struct aux_bb_info *)bb->aux)->size)
 #define BB_SAME_SUCC(bb) (((struct aux_bb_info *)bb->aux)->bb_same_succ)
 #define BB_CLUSTER(bb) (((struct aux_bb_info *)bb->aux)->cluster)
-#define BB_VOP_AT_EXIT(bb) (((struct aux_bb_info *)bb->aux)->vop_at_exit)
 #define BB_DEP_BB(bb) (((struct aux_bb_info *)bb->aux)->dep_bb)
 
 /* Valueization helper querying the VN lattice.  */
@@ -1324,25 +1321,15 @@ merge_stmts_p (gimple *stmt1, gimple *stmt2)
 
   if (is_gimple_call (stmt1)
       && gimple_call_internal_p (stmt1))
-    switch (gimple_call_internal_fn (stmt1))
-      {
-      case IFN_UBSAN_NULL:
-      case IFN_UBSAN_BOUNDS:
-      case IFN_UBSAN_VPTR:
-      case IFN_UBSAN_CHECK_ADD:
-      case IFN_UBSAN_CHECK_SUB:
-      case IFN_UBSAN_CHECK_MUL:
-      case IFN_UBSAN_OBJECT_SIZE:
-      case IFN_UBSAN_PTR:
-      case IFN_ASAN_CHECK:
-	/* For these internal functions, gimple_location is an implicit
-	   parameter, which will be used explicitly after expansion.
-	   Merging these statements may cause confusing line numbers in
-	   sanitizer messages.  */
-	return gimple_location (stmt1) == gimple_location (stmt2);
-      default:
-	break;
-      }
+    {
+      location_t locs[2];
+      locs[0] = gimple_location (stmt1);
+      locs[1] = gimple_location (stmt2);
+
+      if (!factor_operation_ok (gimple_call_internal_fn (stmt1),
+				-2, nullptr, locs, 2, true, true))
+	return false;
+    }
 
   return true;
 }

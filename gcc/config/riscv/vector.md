@@ -4172,23 +4172,23 @@
    (set_attr "mode" "<V_DOUBLE_TRUNC>")])
 
 (define_insn "@pred_dual_widen_<any_widen_binop:optab><any_extend:su><mode>_scalar"
-  [(set (match_operand:VWEXTI 0 "register_operand"                  "=&vr,&vr")
+  [(set (match_operand:VWEXTI 0 "register_operand"                 "=vr, vr, vd, vd")
 	(if_then_else:VWEXTI
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"           "vmWc1,vmWc1")
-	     (match_operand 5 "vector_length_operand"              "  rvl,  rvl")
-	     (match_operand 6 "const_int_operand"                  "    i,    i")
-	     (match_operand 7 "const_int_operand"                  "    i,    i")
-	     (match_operand 8 "const_int_operand"                  "    i,    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"           "Wc1,Wc1, vm, vm")
+	     (match_operand 5 "vector_length_operand"              "rvl,rvl,rvl,rvl")
+	     (match_operand 6 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 7 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 8 "const_int_operand"                  "  i,  i,  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
 	  (any_widen_binop:VWEXTI
 	    (any_extend:VWEXTI
-	      (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "   vr,   vr"))
+	      (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "Wvr,Wvr,Wvr,Wvr"))
 	    (any_extend:VWEXTI
 	      (vec_duplicate:<V_DOUBLE_TRUNC>
-		(match_operand:<VSUBEL> 4 "reg_or_0_operand"       "   rJ,   rJ"))))
-	  (match_operand:VWEXTI 2 "vector_merge_operand"           "   vu,    0")))]
+		(match_operand:<VSUBEL> 4 "reg_or_0_operand"       " rJ, rJ, rJ, rJ"))))
+	  (match_operand:VWEXTI 2 "vector_merge_operand"           " vu,  0, vu,  0")))]
   "TARGET_VECTOR"
   "vw<any_widen_binop:insn><any_extend:u>.vx\t%0,%3,%z4%p1"
   [(set_attr "type" "vi<widen_binop_insn_type>")
@@ -4325,23 +4325,23 @@
    (set_attr "mode" "<V_DOUBLE_TRUNC>")])
 
 (define_insn "@pred_widen_mulsu<mode>_scalar"
-  [(set (match_operand:VWEXTI 0 "register_operand"                  "=&vr,&vr")
+  [(set (match_operand:VWEXTI 0 "register_operand"                 "=vr, vr, vd, vd")
 	(if_then_else:VWEXTI
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"           "vmWc1,vmWc1")
-	     (match_operand 5 "vector_length_operand"              "  rvl,  rvl")
-	     (match_operand 6 "const_int_operand"                  "    i,    i")
-	     (match_operand 7 "const_int_operand"                  "    i,    i")
-	     (match_operand 8 "const_int_operand"                  "    i,    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"           "Wc1,Wc1, vm, vm")
+	     (match_operand 5 "vector_length_operand"              "rvl,rvl,rvl,rvl")
+	     (match_operand 6 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 7 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 8 "const_int_operand"                  "  i,  i,  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
 	  (mult:VWEXTI
 	    (sign_extend:VWEXTI
-	      (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "   vr,   vr"))
+	      (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "Wvr,Wvr,Wvr,Wvr"))
 	    (zero_extend:VWEXTI
 	      (vec_duplicate:<V_DOUBLE_TRUNC>
-		(match_operand:<VSUBEL> 4 "reg_or_0_operand"       "   rJ,   rJ"))))
-	  (match_operand:VWEXTI 2 "vector_merge_operand"           "   vu,    0")))]
+		(match_operand:<VSUBEL> 4 "reg_or_0_operand"       " rJ, rJ, rJ, rJ"))))
+	  (match_operand:VWEXTI 2 "vector_merge_operand"           " vu,  0, vu,  0")))]
   "TARGET_VECTOR"
   "vwmulsu.vx\t%0,%3,%z4%p1"
   [(set_attr "type" "viwmul")
@@ -6071,23 +6071,23 @@
 ;; -------------------------------------------------------------------------------
 
 (define_insn "@pred_widen_mul_plus<su><mode>"
-  [(set (match_operand:VWEXTI 0 "register_operand"                    "=&vr")
+  [(set (match_operand:VWEXTI 0 "register_operand"                   "=vr, vd")
 	(if_then_else:VWEXTI
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"             "vmWc1")
-	     (match_operand 5 "vector_length_operand"                "  rvl")
-	     (match_operand 6 "const_int_operand"                    "    i")
-	     (match_operand 7 "const_int_operand"                    "    i")
-	     (match_operand 8 "const_int_operand"                    "    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"             "Wc1, vm")
+	     (match_operand 5 "vector_length_operand"                "rvl,rvl")
+	     (match_operand 6 "const_int_operand"                    "  i,  i")
+	     (match_operand 7 "const_int_operand"                    "  i,  i")
+	     (match_operand 8 "const_int_operand"                    "  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
 	  (plus:VWEXTI
 	    (mult:VWEXTI
 	      (any_extend:VWEXTI
-	        (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "   vr"))
+	        (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "Wvr,Wvr"))
 	      (any_extend:VWEXTI
-	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "   vr")))
-	    (match_operand:VWEXTI 2 "register_operand"               "    0"))
+	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "Wvr,Wvr")))
+	    (match_operand:VWEXTI 2 "register_operand"               "  0,  0"))
 	  (match_dup 2)))]
   "TARGET_VECTOR"
   "vwmacc<u>.vv\t%0,%3,%4%p1"
@@ -6095,24 +6095,24 @@
    (set_attr "mode" "<V_DOUBLE_TRUNC>")])
 
 (define_insn "@pred_widen_mul_plus<su><mode>_scalar"
-  [(set (match_operand:VWEXTI 0 "register_operand"                    "=&vr")
+  [(set (match_operand:VWEXTI 0 "register_operand"                   "=vr, vd")
 	(if_then_else:VWEXTI
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"             "vmWc1")
-	     (match_operand 5 "vector_length_operand"                "  rvl")
-	     (match_operand 6 "const_int_operand"                    "    i")
-	     (match_operand 7 "const_int_operand"                    "    i")
-	     (match_operand 8 "const_int_operand"                    "    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"             "Wc1, vm")
+	     (match_operand 5 "vector_length_operand"                "rvl,rvl")
+	     (match_operand 6 "const_int_operand"                    "  i,  i")
+	     (match_operand 7 "const_int_operand"                    "  i,  i")
+	     (match_operand 8 "const_int_operand"                    "  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
 	  (plus:VWEXTI
 	    (mult:VWEXTI
 	      (any_extend:VWEXTI
 	        (vec_duplicate:<V_DOUBLE_TRUNC>
-	          (match_operand:<VSUBEL> 3 "register_operand"       "    r")))
+	          (match_operand:<VSUBEL> 3 "register_operand"       "  r,  r")))
 	      (any_extend:VWEXTI
-	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "   vr")))
-	    (match_operand:VWEXTI 2 "register_operand"               "    0"))
+	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "Wvr,Wvr")))
+	    (match_operand:VWEXTI 2 "register_operand"               "  0,  0"))
 	  (match_dup 2)))]
   "TARGET_VECTOR"
   "vwmacc<u>.vx\t%0,%3,%4%p1"
@@ -6120,23 +6120,23 @@
    (set_attr "mode" "<V_DOUBLE_TRUNC>")])
 
 (define_insn "@pred_widen_mul_plussu<mode>"
-  [(set (match_operand:VWEXTI 0 "register_operand"                    "=&vr")
+  [(set (match_operand:VWEXTI 0 "register_operand"                   "=vr, vd")
 	(if_then_else:VWEXTI
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"             "vmWc1")
-	     (match_operand 5 "vector_length_operand"                "  rvl")
-	     (match_operand 6 "const_int_operand"                    "    i")
-	     (match_operand 7 "const_int_operand"                    "    i")
-	     (match_operand 8 "const_int_operand"                    "    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"             "Wc1, vm")
+	     (match_operand 5 "vector_length_operand"                "rvl,rvl")
+	     (match_operand 6 "const_int_operand"                    "  i,  i")
+	     (match_operand 7 "const_int_operand"                    "  i,  i")
+	     (match_operand 8 "const_int_operand"                    "  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
 	  (plus:VWEXTI
 	    (mult:VWEXTI
 	      (sign_extend:VWEXTI
-	        (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "   vr"))
+	        (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "Wvr, Wvr"))
 	      (zero_extend:VWEXTI
-	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "   vr")))
-	    (match_operand:VWEXTI 2 "register_operand"               "    0"))
+	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "Wvr, Wvr")))
+	    (match_operand:VWEXTI 2 "register_operand"               "  0,   0"))
 	  (match_dup 2)))]
   "TARGET_VECTOR"
   "vwmaccsu.vv\t%0,%3,%4%p1"
@@ -6144,24 +6144,24 @@
    (set_attr "mode" "<V_DOUBLE_TRUNC>")])
 
 (define_insn "@pred_widen_mul_plussu<mode>_scalar"
-  [(set (match_operand:VWEXTI 0 "register_operand"                    "=&vr")
+  [(set (match_operand:VWEXTI 0 "register_operand"                   "=vr, vd")
 	(if_then_else:VWEXTI
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"             "vmWc1")
-	     (match_operand 5 "vector_length_operand"                "  rvl")
-	     (match_operand 6 "const_int_operand"                    "    i")
-	     (match_operand 7 "const_int_operand"                    "    i")
-	     (match_operand 8 "const_int_operand"                    "    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"             "Wc1, vm")
+	     (match_operand 5 "vector_length_operand"                "rvl,rvl")
+	     (match_operand 6 "const_int_operand"                    "  i,  i")
+	     (match_operand 7 "const_int_operand"                    "  i,  i")
+	     (match_operand 8 "const_int_operand"                    "  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
 	  (plus:VWEXTI
 	    (mult:VWEXTI
 	      (sign_extend:VWEXTI
 	        (vec_duplicate:<V_DOUBLE_TRUNC>
-	          (match_operand:<VSUBEL> 3 "register_operand"       "    r")))
+	          (match_operand:<VSUBEL> 3 "register_operand"       "  r,  r")))
 	      (zero_extend:VWEXTI
-	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "   vr")))
-	    (match_operand:VWEXTI 2 "register_operand"               "    0"))
+	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "Wvr,Wvr")))
+	    (match_operand:VWEXTI 2 "register_operand"               "  0,  0"))
 	  (match_dup 2)))]
   "TARGET_VECTOR"
   "vwmaccsu.vx\t%0,%3,%4%p1"
@@ -6169,24 +6169,24 @@
    (set_attr "mode" "<V_DOUBLE_TRUNC>")])
 
 (define_insn "@pred_widen_mul_plusus<mode>_scalar"
-  [(set (match_operand:VWEXTI 0 "register_operand"                    "=&vr")
+  [(set (match_operand:VWEXTI 0 "register_operand"                   "=vr, vd")
 	(if_then_else:VWEXTI
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"             "vmWc1")
-	     (match_operand 5 "vector_length_operand"                "  rvl")
-	     (match_operand 6 "const_int_operand"                    "    i")
-	     (match_operand 7 "const_int_operand"                    "    i")
-	     (match_operand 8 "const_int_operand"                    "    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"             "Wc1, vm")
+	     (match_operand 5 "vector_length_operand"                "rvl,rvl")
+	     (match_operand 6 "const_int_operand"                    "  i,  i")
+	     (match_operand 7 "const_int_operand"                    "  i,  i")
+	     (match_operand 8 "const_int_operand"                    "  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
 	  (plus:VWEXTI
 	    (mult:VWEXTI
 	      (zero_extend:VWEXTI
 	        (vec_duplicate:<V_DOUBLE_TRUNC>
-	          (match_operand:<VSUBEL> 3 "register_operand"       "    r")))
+	          (match_operand:<VSUBEL> 3 "register_operand"       "  r,  r")))
 	      (sign_extend:VWEXTI
-	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "   vr")))
-	    (match_operand:VWEXTI 2 "register_operand"               "    0"))
+	        (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "Wvr,Wvr")))
+	    (match_operand:VWEXTI 2 "register_operand"               "  0,  0"))
 	  (match_dup 2)))]
   "TARGET_VECTOR"
   "vwmaccus.vx\t%0,%3,%4%p1"
@@ -7292,24 +7292,24 @@
 
 ;; Vector Widening Add/Subtract/Multiply.
 (define_insn "@pred_dual_widen_<optab><mode>"
-  [(set (match_operand:VWEXTF 0 "register_operand"                  "=&vr,  &vr")
+  [(set (match_operand:VWEXTF 0 "register_operand"                 "=vr, vr, vd, vd")
 	(if_then_else:VWEXTF
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"           "vmWc1,vmWc1")
-	     (match_operand 5 "vector_length_operand"              "  rvl,  rvl")
-	     (match_operand 6 "const_int_operand"                  "    i,    i")
-	     (match_operand 7 "const_int_operand"                  "    i,    i")
-	     (match_operand 8 "const_int_operand"                  "    i,    i")
-	     (match_operand 9 "const_int_operand"                  "    i,    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"           "Wc1,Wc1, vm, vm")
+	     (match_operand 5 "vector_length_operand"              "rvl,rvl,rvl,rvl")
+	     (match_operand 6 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 7 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 8 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 9 "const_int_operand"                  "  i,  i,  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)
 	     (reg:SI FRM_REGNUM)] UNSPEC_VPREDICATE)
 	  (any_widen_binop:VWEXTF
 	    (float_extend:VWEXTF
-	      (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "   vr,   vr"))
+	      (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "Wvr,Wvr,Wvr,Wvr"))
 	    (float_extend:VWEXTF
-	      (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "   vr,   vr")))
-	  (match_operand:VWEXTF 2 "vector_merge_operand"           "   vu,    0")))]
+	      (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "Wvr,Wvr,Wvr,Wvr")))
+	  (match_operand:VWEXTF 2 "vector_merge_operand"           " vu,  0, vu,  0")))]
   "TARGET_VECTOR"
   "vfw<insn>.vv\t%0,%3,%4%p1"
   [(set_attr "type" "vf<widen_binop_insn_type>")
@@ -7318,25 +7318,25 @@
 	(symbol_ref "riscv_vector::get_frm_mode (operands[9])"))])
 
 (define_insn "@pred_dual_widen_<optab><mode>_scalar"
-  [(set (match_operand:VWEXTF 0 "register_operand"                  "=&vr,  &vr")
+  [(set (match_operand:VWEXTF 0 "register_operand"                 "=vr, vr, vd, vd")
 	(if_then_else:VWEXTF
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"           "vmWc1,vmWc1")
-	     (match_operand 5 "vector_length_operand"              "  rvl,  rvl")
-	     (match_operand 6 "const_int_operand"                  "    i,    i")
-	     (match_operand 7 "const_int_operand"                  "    i,    i")
-	     (match_operand 8 "const_int_operand"                  "    i,    i")
-	     (match_operand 9 "const_int_operand"                  "    i,    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"           "Wc1,Wc1, vm, vm")
+	     (match_operand 5 "vector_length_operand"              "rvl,rvl,rvl,rvl")
+	     (match_operand 6 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 7 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 8 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 9 "const_int_operand"                  "  i,  i,  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)
 	     (reg:SI FRM_REGNUM)] UNSPEC_VPREDICATE)
 	  (any_widen_binop:VWEXTF
 	    (float_extend:VWEXTF
-	      (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "   vr,   vr"))
+	      (match_operand:<V_DOUBLE_TRUNC> 3 "register_operand" "Wvr,Wvr,Wvr,Wvr"))
 	    (vec_duplicate:VWEXTF
 	      (float_extend:<VEL>
-		(match_operand:<VSUBEL> 4 "register_operand"       "    f,    f"))))
-	  (match_operand:VWEXTF 2 "vector_merge_operand"           "   vu,    0")))]
+		(match_operand:<VSUBEL> 4 "register_operand"       "  f,  f,  f,  f"))))
+	  (match_operand:VWEXTF 2 "vector_merge_operand"           " vu,  0, vu,  0")))]
   "TARGET_VECTOR"
   "vfw<insn>.vf\t%0,%3,%4%p1"
   [(set_attr "type" "vf<widen_binop_insn_type>")
@@ -7345,23 +7345,23 @@
    (symbol_ref "riscv_vector::get_frm_mode (operands[9])"))])
 
 (define_insn "@pred_single_widen_add<mode>"
-  [(set (match_operand:VWEXTF 0 "register_operand"                  "=&vr,  &vr")
+  [(set (match_operand:VWEXTF 0 "register_operand"                 "=vr, vr, vd, vd")
 	(if_then_else:VWEXTF
 	  (unspec:<VM>
-	    [(match_operand:<VM> 1 "vector_mask_operand"           "vmWc1,vmWc1")
-	     (match_operand 5 "vector_length_operand"              "  rvl,  rvl")
-	     (match_operand 6 "const_int_operand"                  "    i,    i")
-	     (match_operand 7 "const_int_operand"                  "    i,    i")
-	     (match_operand 8 "const_int_operand"                  "    i,    i")
-	     (match_operand 9 "const_int_operand"                  "    i,    i")
+	    [(match_operand:<VM> 1 "vector_mask_operand"           "Wc1,Wc1, vm, vm")
+	     (match_operand 5 "vector_length_operand"              "rvl,rvl,rvl,rvl")
+	     (match_operand 6 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 7 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 8 "const_int_operand"                  "  i,  i,  i,  i")
+	     (match_operand 9 "const_int_operand"                  "  i,  i,  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)
 	     (reg:SI FRM_REGNUM)] UNSPEC_VPREDICATE)
 	  (plus:VWEXTF
 	    (float_extend:VWEXTF
-	      (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "   vr,   vr"))
-	    (match_operand:VWEXTF 3 "register_operand"             "   vr,   vr"))
-	  (match_operand:VWEXTF 2 "vector_merge_operand"           "   vu,    0")))]
+	      (match_operand:<V_DOUBLE_TRUNC> 4 "register_operand" "Wvr,Wvr,Wvr,Wvr"))
+	    (match_operand:VWEXTF 3 "register_operand"             "Wn4,Wn4,Wn4,Wn4"))
+	  (match_operand:VWEXTF 2 "vector_merge_operand"           " vu,  0, vu, 0")))]
   "TARGET_VECTOR"
   "vfwadd.wv\t%0,%3,%4%p1"
   [(set_attr "type" "vfwalu")
@@ -8093,7 +8093,7 @@
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
            (unspec:<V_EXT_LMUL1> [
 	     (match_operand:VI_QHS         3 "register_operand"      "   vr,   vr")
-	     (match_operand:<V_EXT_LMUL1>  4 "register_operand"      "   vr,   vr")
+	     (match_operand:<V_EXT_LMUL1>  4 "register_operand"      "  Wn3,  Wn3")
            ] ANY_WREDUC)
 	   (match_operand:<V_EXT_LMUL1>    2 "vector_merge_operand"  "   vu,    0")] UNSPEC_REDUC))]
   "TARGET_VECTOR"
@@ -9181,24 +9181,24 @@
   })
 
 (define_insn "*pred_widen_mul_plus_u_vx<mode>_undef"
-  [(set (match_operand:VWEXTI                   0 "register_operand"      "=&vr")
+  [(set (match_operand:VWEXTI                   0 "register_operand"      "=vr, vd")
 	(if_then_else:VWEXTI
 	  (unspec:<VM>
-	    [(match_operand:<VM>                1 "vector_mask_operand"   "vmWc1")
-	     (match_operand                     6 "vector_length_operand" "  rvl")
-	     (match_operand                     7 "const_int_operand"     "    i")
-	     (match_operand                     8 "const_int_operand"     "    i")
-	     (match_operand                     9 "const_int_operand"     "    i")
+	    [(match_operand:<VM>                1 "vector_mask_operand"   "Wc1, vm")
+	     (match_operand                     6 "vector_length_operand" "rvl,rvl")
+	     (match_operand                     7 "const_int_operand"     "  i,  i")
+	     (match_operand                     8 "const_int_operand"     "  i,  i")
+	     (match_operand                     9 "const_int_operand"     "  i,  i")
 	     (reg:SI VL_REGNUM)
 	     (reg:SI VTYPE_REGNUM)] UNSPEC_VPREDICATE)
 	  (plus:VWEXTI
 	    (mult:VWEXTI
 	      (zero_extend:VWEXTI
 		(vec_duplicate:<V_DOUBLE_TRUNC>
-		  (match_operand:<VSUBEL>       3 "register_operand"      "   rJ")))
+		  (match_operand:<VSUBEL>       3 "register_operand"      " rJ, rJ")))
 	      (zero_extend:VWEXTI
-		(match_operand:<V_DOUBLE_TRUNC> 4 "register_operand"      "   vr")))
-	    (match_operand:VWEXTI               5 "register_operand"      "    0"))
+		(match_operand:<V_DOUBLE_TRUNC> 4 "register_operand"      "Wvr,Wvr")))
+	    (match_operand:VWEXTI               5 "register_operand"      "  0,  0"))
 	  (match_operand:VWEXTI                 2 "vector_undef_operand")))]
   "TARGET_VECTOR"
   "vwmaccu.vx\t%0,%z3,%4%p1"

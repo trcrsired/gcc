@@ -1,3 +1,23 @@
+2026-09-10  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/127032
+	* libf7-asm.sx (config.h): Include it.
+	(DALIAS) [sizeof(double)==8 && HAVE_AS_AVR_GNU_ATTRIBUTE]:
+	Add .gnu_attribute 8,64.
+	(LALIAS) [sizeof(long double)==8 && HAVE_AS_AVR_GNU_ATTRIBUTE]:
+	Add .gnu_attribute 12,64.
+
+2026-08-25  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/127071
+	* t-libf7-math-symbols: Adjust comment.
+
+2026-08-24  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/127024
+	* libf7-asm.sx (to_integer): Don't skip XJMP
+	if __AVR_ERRATA_SKIP_JMP_CALL__.
+
 2026-06-28  Georg-Johann Lay  <avr@gjlay.de>
 
 	PR target/125752

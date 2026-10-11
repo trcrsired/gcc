@@ -58,8 +58,6 @@ int repository_function_tok( const char name[] );
 
 void next_sentence_label(cbl_label_t*);
 
-int repeat_count( const char picture[] );
-
 size_t program_level();
 
 static int ydfparse(void);
@@ -351,14 +349,12 @@ static bool level_needed() {
   return scanner_normal() && parsing.need_level();
 }
 
-static void level_found() {
-  if( scanner_normal() ) parsing.need_level(false);
-}
+#define PUSH_CDF_STATE if( YY_START != cdf_state ) yy_push_state(cdf_state)
 
 /*
  * Return all but the first N characters, to be rescanned by the nexst yylex.
- * IOW, keep N characters as the token, and relinquish the rest. 
- * Must be a macro because it expands yyless. 
+ * IOW, keep N characters as the token, and relinquish the rest.
+ * Must be a macro because it expands yyless.
  */
 #define myless(N)				\
   do {						\
@@ -429,11 +425,11 @@ class enter_leave_t {
 /*
  * The lexer knows the immediate status of the input file and its line number
  * from the PUSH, POP, and LINE directives.  It saves yylineno whenever it
- * encounters a PUSH, and updates it for a POP.  
+ * encounters a PUSH, and updates it for a POP.
  *
  * The line number trickles into the parser by way of location.  Only the
  * parser knows what token it is parsing.  As for the filename, the lexer
- * queues enter/leave notices for the parser.  
+ * queues enter/leave notices for the parser.
  *
  * Whenever the parser fetches a token, it gets the current line number from
  * yylineno, and the current filename by depleting the notification queue, if
@@ -536,10 +532,10 @@ trim_location( int nkeep) {
     yylloc.last_column = 1 + (eokeep - nl);
   }
 
-  gcc_assert( yylloc.first_line <= yylloc.last_line );    
-  gcc_assert( 0 < yylloc.last_column );    
+  gcc_assert( yylloc.first_line <= yylloc.last_line );
+  gcc_assert( 0 < yylloc.last_column );
 
-  location_dump(__func__, __LINE__, "yylloc", yylloc, true);
+  ////location_dump(__func__, __LINE__, "yylloc", yylloc, true);
 }
 
 static void
@@ -578,7 +574,7 @@ update_location_col( const char str[], int correction = 0) {
 #define bcomputable(T, C)                               \
     yylval.computational.type=T,                        \
     yylval.computational.capacity=C,                    \
-    yylval.computational.signable=true, BINARY_INTEGER
+    yylval.computational.signable=true, _BINARY_INTEGER
 #define scomputable(T, C)                               \
     yylval.computational.type=T,                        \
     yylval.computational.capacity=C,                    \
@@ -595,11 +591,11 @@ static char *tmpstring = NULL;
 // map of alias => canonical
 static std::map <std::string, std::string> keyword_aliases;
 
-const std::string& 
+std::pair<std::string, bool>
 keyword_alias_add( const std::string& keyword, const std::string& alias ) {
-  auto p = keyword_aliases.find(alias);
-  if( p != keyword_aliases.end() ) return p->second; // error: do not overwrite
-  return keyword_aliases[alias] = keyword;
+  auto elem = std::make_pair(alias, keyword);
+  auto result = keyword_aliases.insert(elem);
+  return std::make_pair(keyword_aliases[alias], result.second);
 }
 
 /*
@@ -614,37 +610,37 @@ struct bint_t {
   bool signable;
 };
 static const std::map <std::string, bint_t > binary_integers {
-  { "BINARY",           { COMPUTATIONAL, FldNumericBinary,  0, false } }, 
-  { "COMP",             { COMPUTATIONAL, FldNumericBinary,  0, false } }, 
-  { "COMPUTATIONAL",    { COMPUTATIONAL, FldNumericBinary,  0, false } }, 
-  { "COMP-4",           { COMPUTATIONAL, FldNumericBinary,  0, false } }, 
-  { "COMPUTATIONAL-4",  { COMPUTATIONAL, FldNumericBinary,  0, false } }, 
-  
-  { "BINARY-CHAR",      { BINARY_INTEGER, FldNumericBin5,   1, true } }, 
-  { "BINARY-SHORT",     { BINARY_INTEGER, FldNumericBin5,   2, true } }, 
-  { "BINARY-LONG",      { BINARY_INTEGER, FldNumericBin5,   4, true } }, 
-  { "BINARY-DOUBLE",    { BINARY_INTEGER, FldNumericBin5,   8, true } }, 
-  { "BINARY-LONG-LONG", { BINARY_INTEGER, FldNumericBin5,   8, true } }, 
+  { "BINARY",           { COMPUTATIONAL, FldNumericBinary,  0, false } },
+  { "COMP",             { COMPUTATIONAL, FldNumericBinary,  0, false } },
+  { "COMPUTATIONAL",    { COMPUTATIONAL, FldNumericBinary,  0, false } },
+  { "COMP-4",           { COMPUTATIONAL, FldNumericBinary,  0, false } },
+  { "COMPUTATIONAL-4",  { COMPUTATIONAL, FldNumericBinary,  0, false } },
 
-  { "COMP-5",           { COMPUTATIONAL, FldNumericBin5,    0, false } }, 
-  { "COMPUTATIONAL-5",  { COMPUTATIONAL, FldNumericBin5,    0, false } }, 
-  { "COMP-X",           { COMPUTATIONAL, FldNumericBin5, 0xFF, false } }, 
-  { "COMPUTATIONAL-X",  { COMPUTATIONAL, FldNumericBin5, 0xFF, false } }, 
+  { "BINARY-CHAR",      { _BINARY_INTEGER, FldNumericBin5,   1, true } },
+  { "BINARY-SHORT",     { _BINARY_INTEGER, FldNumericBin5,   2, true } },
+  { "BINARY-LONG",      { _BINARY_INTEGER, FldNumericBin5,   4, true } },
+  { "BINARY-DOUBLE",    { _BINARY_INTEGER, FldNumericBin5,   8, true } },
+  { "BINARY-LONG-LONG", { _BINARY_INTEGER, FldNumericBin5,   8, true } },
 
-  { "COMP-1",           { COMPUTATIONAL, FldFloat,  4, false } }, 
-  { "COMPUTATIONAL-1",  { COMPUTATIONAL, FldFloat,  4, false } }, 
-  { "FLOAT-BINARY-32",  { COMPUTATIONAL, FldFloat,  4, false } }, 
-  { "FLOAT-SHORT",      { COMPUTATIONAL, FldFloat,  4, false } }, 
+  { "COMP-5",           { COMPUTATIONAL, FldNumericBin5,    0, false } },
+  { "COMPUTATIONAL-5",  { COMPUTATIONAL, FldNumericBin5,    0, false } },
+  { "COMP-X",           { COMPUTATIONAL, FldNumericBin5, 0xFF, false } },
+  { "COMPUTATIONAL-X",  { COMPUTATIONAL, FldNumericBin5, 0xFF, false } },
 
-  { "COMP-2",           { COMPUTATIONAL, FldFloat,  8, false } }, 
-  { "COMPUTATIONAL-2",  { COMPUTATIONAL, FldFloat,  8, false } }, 
-  { "FLOAT-BINARY-64",  { COMPUTATIONAL, FldFloat,  8, false } }, 
-  { "FLOAT-LONG",       { COMPUTATIONAL, FldFloat,  8, false } }, 
-  { "FLOAT-BINARY-128", { COMPUTATIONAL, FldFloat, 16, false } }, 
-  { "FLOAT-EXTENDED",   { COMPUTATIONAL, FldFloat, 16, false } }, 
+  { "COMP-1",           { COMPUTATIONAL, FldFloat,  4, false } },
+  { "COMPUTATIONAL-1",  { COMPUTATIONAL, FldFloat,  4, false } },
+  { "FLOAT-BINARY-32",  { COMPUTATIONAL, FldFloat,  4, false } },
+  { "FLOAT-SHORT",      { COMPUTATIONAL, FldFloat,  4, false } },
 
-  { "COMP-6",           { COMPUTATIONAL, FldPacked, 0, false } }, 
-  { "COMPUTATIONAL-6",  { COMPUTATIONAL, FldPacked, 0, false } }, 
+  { "COMP-2",           { COMPUTATIONAL, FldFloat,  8, false } },
+  { "COMPUTATIONAL-2",  { COMPUTATIONAL, FldFloat,  8, false } },
+  { "FLOAT-BINARY-64",  { COMPUTATIONAL, FldFloat,  8, false } },
+  { "FLOAT-LONG",       { COMPUTATIONAL, FldFloat,  8, false } },
+  { "FLOAT-BINARY-128", { COMPUTATIONAL, FldFloat, 16, false } },
+  { "FLOAT-EXTENDED",   { COMPUTATIONAL, FldFloat, 16, false } },
+
+  { "COMP-6",           { COMPUTATIONAL, FldPacked, 0, false } },
+  { "COMPUTATIONAL-6",  { COMPUTATIONAL, FldPacked, 0, false } },
 };
 
 static int
@@ -661,10 +657,10 @@ binary_integer_usage( const char name[]) {
   std::string key = uname;
   auto alias = keyword_aliases.find(key);
   if( alias != keyword_aliases.end() ) key = alias->second;
-  
+
   auto p = binary_integers.find(key);
   if( p == binary_integers.end() ) return 0;
-  
+
   yylval.computational.type = p->second.type;
   yylval.computational.capacity = p->second.capacity;
   yylval.computational.signable = p->second.signable;
@@ -673,7 +669,7 @@ binary_integer_usage( const char name[]) {
   free(uname);
   return p->second.token;
 }
-      
+
 static void
 verify_ws( char ch ) {
   if( ! fisspace(ch) ) {
@@ -691,7 +687,7 @@ binary_integer_usage_of( const char name[] ) {
     int token = p->second.token;
     switch( token ) {
     case COMPUTATIONAL:
-    case BINARY_INTEGER:
+    case _BINARY_INTEGER:
       return token;
     default:
       gcc_unreachable();
@@ -714,407 +710,52 @@ level_of( const char input[] ) {
   return output;
 }
 
-// Called by lexer with leading or trailing V, which is ignored.
-static inline int
-ndigit(int len) {
-  const char *input = yytext + (TOUPPER(yytext[0]) == 'V'? 1 : 0);
-  if( input == yytext + yyleng ) return 0; // Only the V
-  int n = repeat_count(input);
-  return n == -1? len : n;
+/*
+ * Input may have leading or trailing V, which is ignored.
+ * Return the decoded picture size insofar as possible.
+ * If the picture switches from 9s to Ps, say, set pleft to the remainder.
+ */
+static int
+ndigit(int len, const char **pleft = nullptr) {
+  const char *p = yytext, *pend = yytext + len;
+  if( TOUPPER(p[0]) == 'V' ) p++;
+  if( p == pend ) return 0; // Only the V
+  int n = 0;
+
+  for( char model = *p; p < pend; p++ ) {
+    assert(*p == model);
+    n++;
+    if( p[1] == model ) continue;
+
+    std::pair<uint32_t, int> result = repeat_count(p);
+    int count = result.first, pos = result.second;
+
+    if( pos == -1 ) {
+      if( pleft ) *pleft = ++p;  // because *p at least was ok, per assertion.
+      break;
+    }
+    --n += count; // the 9 before the paren in 9(8) doesn't count
+    p += pos;
+    if( *p != model ) {
+      if( pleft ) *pleft  = p;
+      break;
+    }
+    --p; // point to closing parenthesis
+  }
+  return n;
 }
 
 static int
-picset( int token ) {
+picset( int token, int leng = yyleng ) {
   static const char * const eop = orig_picture + sizeof(orig_picture);
   char *p = orig_picture + strlen(orig_picture);
 
-  if( eop < p + yyleng ) {
+  if( eop < p + leng ) {
     error_msg(yylloc, "PICTURE exceeds maximum size of %zu bytes",
              sizeof(orig_picture) - 1);
   }
   snprintf( p, eop - p, "%s", yytext );
   return token;
-}
-
-/**
-## Script and data to produce picture_t::followers.
-## Based on ISO Table 10. 
-#! /usr/bin/awk -f
-
-BEGIN  {
-  str = "B0/ , . + +- +- CR/DB cs cs Z* Z* + + cs cs 9 AX S V P P 1 N E"
-  split(str, cols)
-}
-
-$1 ~ /CR|DB|cs/ { next }
-
-0 && !nlines++ {
-  for( i=0; i < length(cols); i++ ) {
-    print i, cols[i], "'" $i "'"
-  }
-}
-
-$field == "x" {
-  if( ! nout++ ) {
-    printf "%2d: %5s: \"", field, cols[field - 1]
-  }
-
-  gsub(/^ +| +$/, "", $1) 
-  printf "%s", $1
-}
-
-END {
-  if( ! nout++ ) {
-    printf "%2d: %5s: \"", field, cols[field - 1]
-  }
-  print "\""
-}
-
-B  x x x - x - - x - x x x x x x x x - x - x - x
-0  x x x - x - - x - x x x x x x x x - x - x - x
-/  x x x - x - - x - x x x x x x x x - x - x - x
-,  x x x - x - - x - x x x x x x x - - x - x
-.  x x - - x - - x - x - x - x - x
-+  - - - - - - - - - - - - - - - - - - - - - - - x
-+
-–
-+  x x x - - - - x x x x - - x x x - - x x x
-CR x x x - - - - x x x x - - x x x - - x x x
-DB x x x - - - - x x x x - - x x x - - x x x
-cs - - - - x
-cs x x x - x - - - - x x - - - - x - - x x x
-
-Z  x x - - x - - x - x
-*  x x - - x - - x - x
-Z  x x x - x - - x - x x - - - - - - - x - x
-*  x x x - x - - x - x x - - - - - - - x - x
-+  x x - - - - - x - - - x
-–  x x - - - - - x - - - x
-+  x x x - - - - x - - - x x - - - - - x
-–  x x x - - - - x - - - x x - - - - - x
-cs x x - - x - - - - - - - - x
-cs x x x - x - - - - - - - - x x - - - x
-
-9  x x x x x - - x - x - x - x - x x x x - x - - x
-A  x - - - - - - - - - - - - - - x x
-X  x - - - - - - - - - - - - - - x x
-S 
-V  x x - - x - - x - x - x - x - x - x - x
-P  x x - - x - - x - x - x - x - x - x - x
-P  - - - - x - - x - - - - - - - - - x x - x
-1  - - - - - - - - - - - - - - - - - - - - - x
-N  x - - - - - - - - - - - - - - - - - - - - - x
-E  x x x - x - - - - - - - - - - x
-**/
-
-class picture_t {
-  static const char dot = '.', comma = ',';
-
-  typedef std::vector<std::string> followings_t;
-  static const std::map <char, followings_t> followers;
-  
-  const char * const begin;
-  const char *p, *pend; 
-  size_t pos;
-  struct exclusions_t { // Nonzero if set, > 1 is false.
-    // crdb means CR/DB or +/-.
-    // pluses means 2 or more consecutive '+'.
-    // minuses means 2 or more consecutive '-'.
-    // "21) The symbol 'Z' and the symbol '*' are mutually exclusive "
-    // stars means '*' or Z.
-    unsigned short int crdb, currency, dot, pluses, minuses, stars, zzz;
-    exclusions_t()
-      : crdb(0), currency(0), dot(0), pluses(0), minuses(0), stars(0)
-    {}
-  } exclusions;
-  cbl_loc_t loc;
-  
-  bool is_crdb() const { // input must be uppercase for CR/DB
-    if( p[0] == 'C' || p[0] == 'D' ) {
-      char input[3] = { p[0], p[1] };
-      return ( 0 == strcmp(input, "CR") || 0 == strcmp(input, "DB") );
-    }
-    return false;
-  }
-
-  const char * match_paren( const char *paren ) const {
-    gcc_assert(paren[0] == '(');  // start with opening paren
-    paren = std::find_if( paren, pend,
-                          []( char ch ) {
-                            return ch == '(' || ch == ')';
-                          } );
-    if( *paren == '(' ) return nullptr; // no nesting
-    if( paren == pend ) return nullptr;
-    return ++paren;
-  }
-
-  const char * next_not( char ch ) const {
-    return std::find_if( p, pend,
-                         [ch = TOUPPER(ch)]( char next ) {
-                           return ch != next;
-                         } );
-  }
-
-  const char * valid_next( const char *p, const std::string& valid ) const {
-    if( p == pend || p + 1 == pend ) return pend;
-    if( p[1] == '(' ) {
-      return match_paren(++p);
-    }
-    auto pv = std::find(valid.begin(), valid.end(), TOUPPER(p[1]));
-    return pv != valid.end()? ++p : nullptr;
-  }
-  const char * valid_next( const char *p,
-                           bool first = true, char ch = '\0' ) const {
-    if( p == pend || p + 1 == pend ) return pend;
-    if( p[0] == '(' ) {
-      if( (p = match_paren(p)) == nullptr ) return nullptr;
-    }
-    if( p[0] == '(' ) return nullptr;  // consecutive parentheses
-    
-    int index = first? 0 : 1;
-    if( !ch ) ch = *p;   // use current character unless overridden
-    auto valid = followers.find(TOUPPER(ch));
-    if( valid == followers.end() ) {
-      cbl_loc_t loc(yylloc);
-      loc.first_column += int(p - begin);
-      error_msg( loc, "PICTURE: strange character %qc, giving up", ch );
-      return nullptr;
-    }
-    return valid_next(p, valid->second[index]);
-  }
-
-  const char * start() { // start modifies exclusions, but not p
-    auto pnext = p;
-
-    switch(TOUPPER(p[0])) {
-    case comma: case dot:
-      // use decimal_is_comma()
-      //  4:     .: "B0/,+Z*+-9E"
-      exclusions.dot++;
-      pnext = valid_next(p, "B0/,+Z*+-9E");
-      break;
-    case '+': case '-':
-      //  6:    +-: "B0/,.Z*Z*9VPPE"
-      exclusions.crdb++;
-      pnext = next_not(p[0]);
-      if( p + 1 < pnext ) {
-        exclusions.pluses++;
-      }
-      pnext = valid_next(--pnext, "B0/,.Z*Z*9VPPE");
-      break;
-    case 'Z': case '*': 
-      exclusions.stars++;
-      pnext = next_not(p[0]);
-      break;
-    case 'S':
-      // 19:     S: "9VP"
-      pnext = valid_next(p, "9VP");
-      break;
-    }
-
-    /*
-     * "For fixed editing sign control, the currency symbol, when used, shall
-     * be either the leftmost symbol in character-string-1, optionally preceded
-     * by one of the symbols '+' or '-' "
-     */
-    if( pnext ) {
-      if( p == pnext || p[0] == '+' || p[0] == '-' ) {
-        if( symbol_currency(*pnext) ) {
-          exclusions.currency++;
-          pnext = next_not(*pnext);
-          pnext = valid_next(--pnext, true, '$');
-        }
-      }
-    }
-    
-    return pnext;
-  }
-
-  const char * next() { // modify state; do not modify position
-    auto pnext = p;
-    auto loc(picture_t::loc);
-    loc.first_column += int(p - begin);
-
-    if( is_crdb() ) {
-      if( exclusions.crdb++ ) {
-        error_msg( loc, "PICTURE: CR/DB and %c/%c may appear only once", '+', '-' );
-        return nullptr;
-      }
-      if( p + 2 != pend ) { 
-        error_msg( loc, "PICTURE: CR/DB must appear at the end" );
-        return nullptr;
-      }
-      return pend;
-    }
-
-    if( symbol_currency(p[0]) ) {
-      if( false && exclusions.currency++ ) { // not enforced
-        error_msg( loc, "PICTURE: CURRENCY SYMBOL sequence may appear at most once" );
-        return nullptr;
-      }
-      return valid_next(p, ! exclusions.dot, '$');
-    }
-
-    switch(TOUPPER(p[0])) {
-    case '(':
-      return match_paren(p);
-      break;
-    case 'B': case '0': case '/':
-      pnext = valid_next(p);
-      break;
-    case comma: 
-      if( decimal_is_comma() ) {
-        if( exclusions.dot++ ) {
-          error_msg( loc, "PICTURE: %qc: may appear at most once", p[0] );
-          return nullptr;
-        }
-        pnext = valid_next(p, true, dot);
-      } else {
-        pnext = valid_next(p);
-      }
-      break;
-    case dot: 
-      if( p + 1 == pend ) {
-        pnext = pend;
-      } else {
-        if( decimal_is_comma() ) {
-          pnext = valid_next(p, true, comma );
-        } else {
-          if( exclusions.dot++ ) {
-            error_msg( loc, "PICTURE: %qc: may appear at most once", p[0] );
-            return nullptr;
-          }
-          pnext = valid_next(p);
-        }
-      }
-      break;
-
-    case '+': case '-':
-      // 7 is trailing sign; 13 & 14 are numeric.  Leading sign handled by start(). 
-      if( p + 1 == pend ) {
-        if( exclusions.crdb++ ) {
-          error_msg( loc, "PICTURE: %c/%c may appear at most once as a sign", '+', '-' );
-          return nullptr;
-        }
-        pnext = pend;
-      } else {
-        pnext = next_not(p[0]);
-        if( p + 1 < pnext ) {
-          if( false && exclusions.pluses++ )  { // not enforced
-            error_msg( loc, "PICTURE: %qc: sequence may appear at most once", p[0] );
-            return nullptr;
-          }
-        }
-        pnext = valid_next(pnext, ! exclusions.dot);
-      }
-      break;
-
-    case 'Z': case '*':
-      if( false && exclusions.stars++ ) { // not enforced 
-        error_msg( loc, "PICTURE: %qc: sequence may appear at most once", p[0] );
-        return nullptr;
-      }
-      if( (pnext = next_not(p[0])) == nullptr ) return pnext;
-      pnext = valid_next(pnext, ! exclusions.dot);
-      break;
-    case 'P':
-      pnext = valid_next(pnext, ! exclusions.dot);
-      break;
-    case '9':
-    case 'A': case 'X':
-    case 'V':
-    case '1':
-    case 'N':
-      pnext = valid_next(p);
-      break;
-    case 'E':
-      pnext = valid_next(p, "+9");
-      if( pnext && *pnext == '+' ) {
-        pnext = valid_next(p, "9");
-      }
-      break;
-    default:
-      error_msg( loc, "PICTURE: %qc: invalid character", p[0] );
-      return nullptr;
-    }
-    return pnext;
-  }
-  
- public:
-  picture_t( const char *p, int len )
-    : begin(p)
-    , p(p), pend(p + len)
-    , loc(yylloc)
-  { 
-    assert(TOUPPER(*p) == 'P'); // as in PICTURE (or PICTURE IS)
-    // move p to start of picture string
-    while( (p = std::find_if(p, pend, fisspace)) != pend ) {
-      this->p = p = std::find_if(p, pend,
-                                 []( char ch ) { return ! fisspace(ch); } );
-    }
-    assert(this->p != pend);
-    pos = this->p - begin;
-  }
-
-  bool is_valid() {
-    if( !p ) return false;
-    if( (p = start()) == nullptr ) {
-      return false;
-    }
-
-    while( p && p < pend) {
-      p = next();
-    }
-    return p == pend;
-  }
-
-  int starts_at() const { return pos; }
-};
-
-/*
- * The Followers map gives 1 or 2 lists of valid characters following a
- * character, the one in the key. If there are two lists, the correct one is
- * determined by the caller based on the state of the picture string, i.e.,
- * what has been seen before.
- */
-const std::map <char, picture_t::followings_t> picture_t::followers {
-  /*   B0/ */ { 'B', {"B0/,.Z*+-9AXVPNE" } },
-  /*   B0/ */ { '0', {"B0/,.Z*+-9AXVPNE" } },
-  /*   B0/ */ { '/', {"B0/,.Z*+-9AXVPNE" } },
-  /*     , */ { ',', {"B0/,.Z*+-9VPE"} },
-  /*     . */ { '.', {"B0/,Z*+-9E"} },
-  /*     +    { '+', "9" }, */
-  /*    +- */ { '+', {"B0/,.Z*9VPE", "" } },
-  /*    +- */ { '-', {"B0/,.Z*9VPE", "" } },
-  /* CR/DB    { 'C', "" }, */
-  /*    cs    { 'c', "B0/,.Z*+-9VP" }, */
-  /*    cs    { 'c', "+" }, */
-  /*    Z* */ { 'Z', {"B0/,.+Z*9VP", "B0/,+Z*"} },
-  /*    Z* */ { '*', {"B0/,.+Z*9VP", "B0/,+Z*"} },
-  /*     + */ { '+', {"B0/,.+-9VP",  "B0/,+-"} },
-  /*    cs */ { '$', {"B0/,.+9VP",   "B0/,+"} },
-  /*     9 */ { '9', {"B0/,.+9AXVPE"} },
-  /*    AX */ { 'A', {"B0/9AX"} },
-  /*    AX */ { 'X', {"B0/9AX"} },
-  /*     S */ { 'S', {"9VP"} },
-  /*     V */ { 'V', {"B0/,+Z*+-9P"} },
-  /*     P */ { 'P', {"+VP", "B0/,+Z*9P"} },
-  /*     1 */ { '1', {"1"} },
-  /*     N */ { 'N', {"B0/N"} },
-  /*     E */ { 'E', {"+9"} },
-};
-
-/*
- * Although picture_t::is_valid return a bool, it's not used. The validation
- * routines emit messages where the error is detected. The entire string is
- * subsequently parsed by the parser, which might otherwise accept an invalid
- * string, but will usually emit a message of its own.
- */
-static int 
-validate_picture() {
-  picture_t picture(yytext, yyleng);
-  picture.is_valid();
-  return  picture.starts_at();
 }
 
 static inline bool
@@ -1142,45 +783,30 @@ symbol_function_token( const char name[] ) {
   return 0;
 }
 
-bool in_procedure_division(void);
-bool in_environment_division(void );
+bool
+in_identification_division();
+bool in_procedure_division();
+bool in_environment_division();
 
 static symbol_elem_t *
 symbol_exists( const char name[] ) {
-  typedef std::map <std::string, size_t> name_cache_t;
-  static std::map <size_t, name_cache_t> cachemap;
-
-  cbl_name_t lname;
-  std::transform( name, name + strlen(name) + 1, lname, tolower );
-  auto& cache = cachemap[PROGRAM];
-
-  if( in_procedure_division() && cache.empty() ) {
-    for( auto e = symbols_begin(PROGRAM) + 1;
-         e < symbols_end() && PROGRAM == e->program; e++ ) {
-      if( e->type == SymFile ) {
-        cbl_file_t *f(cbl_file_of(e));
-        cbl_name_t lname;
-        std::transform( f->name, f->name + strlen(f->name) + 1, lname, tolower );
-        cache[lname] = symbol_index(e);
-        continue;
-      }
-      if( e->type == SymField ) {
-        auto f(cbl_field_of(e));
-        cbl_name_t lname;
-        std::transform( f->name, f->name + strlen(f->name) + 1, lname, tolower );
-        cache[lname] = symbol_index(e);
-      }
-    }
-    cache.erase("");
+  if( in_procedure_division() ) {
+    auto names = teed_up_names();
+    names.push_front(name);
+    auto found = symbol_find( PROGRAM, names, false);
+    if( found.second ) return found.first;
+    // try again with just one name in case of e.g. FldClass
+    names.clear();
+    names.push_front(name);
+    found = symbol_find( PROGRAM, names, false);
+    if( found.second ) return found.first;
   }
-  auto p = cache.find(lname);
-
-  if( p == cache.end() ) {
-    symbol_elem_t * e = symbol_field( PROGRAM, 0, name );
-    return e;
-  }
-
-  return symbol_at(p->second);
+  /*
+   * Before data division has been defined and the cache populated, or if the
+   * map search failes, search the symbol table in case of named literal.
+   */
+  symbol_elem_t *e = symbol_field( PROGRAM, 0, name );
+  return e;
 }
 
 static int
@@ -1191,8 +817,8 @@ typed_name( const char name[] ) {
   int token = repository_function_tok(name);
   switch(token) {
   case 0:
-    if(false) // we don't know how to do this yet. 
-    { // Functions in the symbol table may be used without the FUNCTION keyword. 
+    if(false) // we don't know how to do this yet.
+    { // Functions in the symbol table may be used without the FUNCTION keyword.
       cbl_label_t *L = symbol_function_any(0, name);
       if( L ) {
         auto args = prototype_args(L->name);
@@ -1202,6 +828,7 @@ typed_name( const char name[] ) {
       }
     }
     break;
+  case FUNCTION_UDF:
   case FUNCTION_UDF_0:
     yylval.number = symbol_function_token(name);
     __attribute__((fallthrough));
@@ -1219,8 +846,6 @@ typed_name( const char name[] ) {
     auto name = intrinsic_function_name(token);
     if( name ) return token;
   }
-
-  if( (token = redefined_token(name)) ) { return token; }
 
   e = symbol_exists( name );
 
@@ -1321,21 +946,53 @@ static inline bool is_quote( const char ch ) {
   return ch == '\'' || ch == '"';
 }
 
-static const char*
-skip_string(const char* p, const char* pend, char delimiter) {
-  p++; // Skip opening delimiter
-  while (p < pend) {
-    if (p[0] == delimiter) {
-      if (p[1] == delimiter) {
-        p += 2; // doubled delimiter is escaped 
-      } else {
-        return ++p; // Found valid closing delimiter
+static int yyinput();
+static void yyunput(int ch, char yytext_ptr[]);
+
+static int
+continue_string( char quote ) {
+  int ch;
+
+  for( ; (ch = yyinput()) != quote; yylloc.last_column++ ) {
+    switch(ch) {
+    case EOF: case 0:  return ch;
+    case '\n':
+      yylloc.last_line = ++yylineno;
+      yylloc.last_column = 0;
+      break;
+    default:
+      if( ! ISSPACE(ch) ) {
+        return ch;
       }
-    } else {
-      p++;
     }
   }
-  return pend;
+
+  yylloc.last_column++;
+  return ch;
+}
+
+static std::string
+skip_string(char delimiter) {
+  int ch;
+  std::string found;
+
+  while ((ch = yyinput()) != EOF ) {
+    dbgmsg("%s:%d: input '%c'", __func__, __LINE__, ch);
+    found += ch;
+    if (ch == delimiter) {
+      if( (ch = yyinput()) == EOF ) break;
+      dbgmsg("%s:%d: input '%c'", __func__, __LINE__, ch);
+      if (ch == delimiter) {
+        found += ch;
+        continue;
+      } else {
+        unput(ch);
+        dbgmsg("%s:%d: unput '%c'", __func__, __LINE__, ch);
+        return found; // Found valid closing delimiter
+      }
+    }
+  }
+  return found;
 }
 
 /*
@@ -1349,16 +1006,44 @@ skip_string(const char* p, const char* pend, char delimiter) {
  * parentheses in the left part, e.g. ((LENGTH OF x/2) - (y/2)) : 1.
  */
 static bool
-is_refmod( const char input[], const char enput[] ) {
-  if( input == enput ) return false;
-  gcc_assert( *input == '(' );
-  int depth = 1;
+is_refmod() {
+  class yystr_t {
+    std::string text;
+  public:
+    ~yystr_t() {
+      while( ! text.empty() ) {
+        char ch = text.back();
+        text.pop_back();
+        unput(ch);
+        dbgmsg("%s:%d: unput '%c'", __func__, __LINE__, ch);
+      }
+    }
+    int input() {
+      int ch = yyinput();
+      dbgmsg("%s:%d: input '%c'", __func__, __LINE__, ch);
+      if( ch != EOF) text += ch;
+      return ch;
+    }
+    yystr_t& operator+=( const std::string& that ) {
+      text += that;
+      return *this;
+    }
+    const char * c_str() const { return text.c_str(); }
+    size_t size() const { return text.size(); }
+  } yystr;
+
+  gcc_assert( *yytext == '(' );
+
+  int ch, depth = 1;
   bool colon_at_depth1 = false;
 
-  for( const char *p = input + 1; p < enput; p++ ) {
-    char ch = *p;
+  while( (ch = yystr.input()) != EOF ) {
     if( is_quote(ch) ) {
-      p = skip_string(p, enput, ch) - 1;
+      std::string s = skip_string(ch);
+      if( s.empty() ) {
+        break;
+      }
+      yystr += s;
       continue;
     }
     if( ch == '(' ) {
@@ -1378,6 +1063,31 @@ is_refmod( const char input[], const char enput[] ) {
     }
   }
   dbgmsg("%s:%d: '%.*s' is %sa refmod", __func__, __LINE__,
-         int(enput - input), input, colon_at_depth1? "" : "not ");
+         int(yystr.size()), yystr.c_str(), colon_at_depth1? "" : "not ");
   return colon_at_depth1;
+}
+
+/*
+ * Given a QSTRING in yytext, remove leading and trailing quotes, and undouble
+ * any in the body of the string.
+ */
+static char*
+unquote() {
+  char *p = yytext, *pend = yytext + yyleng;
+  char *output = xstrdup(yytext), quote = *p;
+  char prior = '\0';
+
+  pend = std::copy_if( ++p, --pend, output,
+                       [quote, &prior]( char ch ) {
+                         if( ch == quote ) {
+                           if( ch == prior ) {
+                             prior = '\0';
+                             return false;
+                           }
+                           prior = ch;
+                         }
+                         return true;
+                       } );
+  *pend = '\0';
+  return output;
 }

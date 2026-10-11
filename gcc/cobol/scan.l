@@ -53,6 +53,70 @@
 #pragma GCC diagnostic ignored "-Wsign-compare"
 #pragma GCC diagnostic ignored "-Wunused-function"
 
+namespace picture_validation {
+  enum state_t {
+    none_e,
+    alphabetic_e   = 1,
+    alphanumeric_e,
+    alpha_ed_e,
+    national_e,
+    national_ed_e,
+    numeric_e,
+    numeric_ed_e,
+    invalid_e = 0x80,
+    alpha_pending_e,
+    c_need_r_e,
+    crdb_e,
+    d_need_b_e,
+    postdec_e,
+    antedec_e,
+    exponent_e,
+    accept_e,
+  };
+}
+
+static const char *
+crdb_maybe( const char *p )  {
+  char candidate[3] = { TOUPPER(p[-1]), TOUPPER(p[0]) };
+  static const std::set<std::string> endings{ "CR", "DB" };
+  return 1 == endings.count(candidate)? --p : p;
+}
+
+static const char *
+picture_at() {
+  std::reverse_iterator<const char*> end(yytext), beg(yytext + yyleng);
+  auto pos = std::find(beg, end, 0x20);
+  auto picture = pos.base();
+  dbgmsg("%s: picture is '%s'", __func__, picture);
+  return picture;
+}
+
+static size_t
+old_valid_picture(){
+    auto picture = picture_at();
+    dbgmsg("%s: picture is '%s'", __func__, picture);
+
+    auto result = is_valid_picture(yylloc, picture);
+
+    if( result.valid() ) {
+      auto p = crdb_maybe( yytext + result.pos );
+      auto loc(yylloc);
+      if( loc.first_line == loc.last_line ) {
+        auto error_col = p - yytext;
+        if( p == yytext + yyleng ) error_col = picture - yytext;
+        if( loc.first_column + error_col < loc.last_column )
+          loc.first_column += error_col;
+      }
+      if( *p ) {
+        unsigned int pos = p - picture;
+        error_msg(loc, "invalid PICTURE character %qc at offset %u", *p, pos);
+      } else {
+        error_msg(loc, "invalid picture");
+      }
+    }
+    dbgmsg("%s: returning '%u'", __func__, unsigned(picture - yytext));
+    return picture - yytext;
+}
 %}
 
     /* C99 floating point constant, per flex(1) appendix "common patterns" */
@@ -79,6 +143,7 @@ nonseq    (([''][[:alnum:]]+][''])|([""][[:alnum:]]+[""]))
 INTEGER   0*[1-9][[:digit:]]*
 INTEGERZ  [[:digit:]]+
 
+NOTWORD   [^[:alnum:]$_-]
 NONWORD   [^[:alnum:]$_-]+
 
 SPC  [[:space:]]+
@@ -87,7 +152,6 @@ BLANK  [[:blank:]]+
 OBLANK [[:blank:]]*
 EOL  \r?\n
 BLANK_EOL   [[:blank:]]*{EOL}
-BLANK_OEOL  [[:blank:]]*{EOL}?
 
 PICTURE   [^[:space:]]+
 
@@ -100,15 +164,18 @@ DOTEOL    [[:blank:]]*[.]{BLANK_EOL}
 	   *  of the data description entry and shall be followed immediately
 	   *  (without an intervening separator space) by the separator period."
 	   */
-NONPIC	  [,]{DOTSEP} 
+NONPIC	  [,]{DOTSEP}
 EOPIC	  [.,;]?[[:space:]]
 
 SKIP	  [[:blank:]]*SKIP[123][[:blank:]]*[.]?{BLANK_EOL}
-TITLE	  [[:blank:]]*TITLE($|[.]|[^\n]*)
+
+NAME      [[:alnum:]]+([_-]+[[:alnum:]]+)*
 
 COUNT     [(][[:digit:]]+[)]
-N9        9+|(9{COUNT})
-NP        P+|(P{COUNT})
+NAMECOUNT [(]{NAME}[)]
+
+N9        9+|9{COUNT}|9{NAMECOUNT}
+NP        P+|P{COUNT}
 
 UNSIGNED  [[:space:]]+UNSIGNED
 SIGNED    [[:space:]]+SIGNED
@@ -119,25 +186,6 @@ ALNUM     [AX9]+|N+|U+
 
 AX       [AX]{COUNT}?
 B0       [B0/]{COUNT}?
-ALPHEDREQ   ({N9}*{AX}+{N9}*{B0}+{N9}*)|({N9}*({B0}|[.])+{N9}*{AX}+{N9}*)
-ALPHED   {ALPHEDREQ}([AX9B0/]{COUNT}?)*
-
-			/* Must contain at least one 0, B, /, Z, *, +,
-                         * (comma), ., –, CR, DB, or cs. Can contain
-                         * Ps, 9s, and one V. Must describe 1 to 31
-                         * digit positions, which can be represented
-                         * by 9s, zero suppression symbols (Z, *), and
-                         * floating insertion symbols (+, –, cs).
-                         * Cannot end with '.'.  // BPVZ90/,.+- CR DB * cs
-			 */
-NUMEDCHAR  [BPVZ90/,]+{COUNT}?
-NUMEDCHARS {NUMEDCHAR}([.]?{NUMEDCHAR})*
-NUMED     ([+-]{NUMEDCHARS}+)|({NUMEDCHARS}+[+-]?)
-CURRENCY [A-Zfhijklmoqtuwy\x80-\xFF]{-}[ABCDEGNPRSVXZ]
-NUMEDCUR (([.]?[$0B/Z*+,P9()V+-]|{CURRENCY}+|{COUNT})+([.][$0B/Z*+P9()V+-])*)+
-
-NUMEDITED         {NUMED}|{NUMEDCUR}
-EDITED   {ALPHED}|{NUMED}|{NUMEDCUR}
 
 DATE_FMT_B (YYYYMMDD)|(YYYYDDD)|(YYYYWwwD)
 DATE_FMT_E (YYYY-MM-DD)|(YYYY-DDD)|(YYYY-Www-D)
@@ -156,7 +204,8 @@ TIME_FMT   {TIME_FMT_B}|{TIME_FMT_E}
 
 DATETIME_FMT ({DATE_FMT_B}T{TIME_FMT_B})|({DATE_FMT_E}T{TIME_FMT_E})
 
-NAME      [[:alnum:]]+([_-]+[[:alnum:]]+)*
+TITLE    TITLE
+
 SUBELEMS  {NAME}({SPC}{NAME})*
 
 EOP (EOP|END-OF-PAGE)
@@ -166,8 +215,11 @@ SUBSCRIPT [(]{OSPC}{SUBELEMS}{OSPC}[)]
 NAMEQUAL  OF{SPC}{NAME}
 NAMEQUALS {NAMEQUAL}({SPC}{NAMEQUAL})*
 
-STRING   [^\r\n""]+
-STRING1  [^\r\n'']+
+STRING2  [^\n""]+
+STRING1  [^\n'']+
+QSTRING1 ['']{STRING1}(['']{2}{STRING1})*['']
+QSTRING2 [""]{STRING2}([""]{2}{STRING2})*[""]
+
 			/* comma & semicolon must be followed by a space */
 COMMA    [,;][[:blank:]]*
 
@@ -196,7 +248,7 @@ LINE_DIRECTIVE ^[#]line{SPC}[[:alnum:]]+{SPC}[""''].+\n
 
 %x procedure_div ident_state addr_of function classify
 %x program_id_state comment_entries
-%x date_state field_level field_state dot_state
+%x date_state field_state fd_state field_data_item dot_state
 %x numeric_state name_state
 %x quoted1 quoted2 quoteq
 %x picture picture_count integer_count
@@ -255,7 +307,7 @@ LOCAL-STORAGE{SPC}SECTION {
                   yy_push_state(field_state);
                   return LOCAL_STORAGE_SECT; }
 WORKING-STORAGE	{ return WORKING_STORAGE; }
-LOCAL-STORAGE 	{ return LOCAL_STORAGE; }
+LOCAL-STORAGE 		{ return LOCAL_STORAGE; }
 SCREEN 		{ return SCREEN; }
 
 LINKAGE{SPC}SECTION {
@@ -270,16 +322,35 @@ PROGRAM-ID{OSPC}{DOTSEP}?	{ yy_push_state(ident_state);
 	                  	  yy_push_state(program_id_state);
         	          	  yy_push_state(name_state); return PROGRAM_ID; }
 
-PROCEDURE{SPC}DIVISION	{ yy_push_state(procedure_div);
+<*>{
+  {TITLE} 	{   // In Identification Section TITLE is commentary, else it's a name.
+		    if( in_identification_division() ) {
+                      if( ! dialect_ibm() ) {
+                        warn_msg(yylloc, "ignored TITLE: %qs", yytext);
+                      }
+                      int ch;  // consume characters to EOL
+                      while ((ch = yyinput()) != '\n' ) {
+                        if (ch == EOF) return YYEOF;
+                      }
+                    } else {
+                      ydflval.string = yylval.string = xstrdup(yytext);
+                      return NAME;
+                    }
+		}
+  PROCEDURE{SPC}DIVISION	{ yy_push_state(procedure_div);
                                   return PROCEDURE_DIV; }
+}
+
 <comment_entries>{
   (ENVIRONMENT|DATA|PROCEDURE){SPC}DIVISION  { myless(0); yy_pop_state(); }
+  {COMMENTARY}.*
+  [[:blank:]]+
+  [[:graph:]]+
   {BLANK_EOL}
-  [^[:space:]]{1,512}{BLANK_OEOL}  // about 1/2 KB at a time
 }
 
 <ident_state>{
-  {BLANK_OEOL}
+  EJECT{DOTEOL}?			{ dialect_ok(yylloc, IbmEjectE, "EJECT"); }
   ID(ENTIFICATION)?{SPC}DIVISION	{ myless(0); yy_pop_state(); }
   (ENVIRONMENT|DATA|PROCEDURE){SPC}DIVISION {
 					  myless(0); yy_pop_state(); }
@@ -289,7 +360,7 @@ PROCEDURE{SPC}DIVISION	{ yy_push_state(procedure_div);
   AS{SPC}[''] 	{ yy_push_state(quoted1); return AS; }
   IS		{ pop_return IS; }
 
-  {COMMENTARY} { BEGIN(comment_entries); }
+  {COMMENTARY}.* { BEGIN(comment_entries); }
 }
 
 <INITIAL>{
@@ -315,38 +386,38 @@ PROCEDURE{SPC}DIVISION	{ yy_push_state(procedure_div);
 
 <INITIAL,procedure_div,cdf_state>{
   (IS{SPC})?"<"         { return '<'; }
-  (IS{SPC})?"<="        { return LE;  }
+  (IS{SPC})?"<="        { return _LE;  }
   (IS{SPC})?"="         { static char eq[] = "=";
 			  ydflval.string = yylval.string = eq;
-  			  return EQ; }
-  (IS{SPC})?"<>"        { return NE;  }
-  (IS{SPC})?">="        { return GE;  }
+  			  return _EQ; }
+  (IS{SPC})?"<>"        { return _NE;  }
+  (IS{SPC})?">="        { return _GE;  }
   (IS{SPC})?">"         { return '>'; }
 
   {LESS_THAN}/[[:space:]] 		{ return '<'; }
-  {LESS_THAN}{SPC}{OR_EQUAL}/[[:space:]]	{ return LE; }
+  {LESS_THAN}{SPC}{OR_EQUAL}/[[:space:]]	{ return _LE; }
   (IS{SPC})?EQUALS?({SPC}TO)?/[[:space:]] {
 		  static char eq[] = "EQUAL";
 		  ydflval.string = yylval.string = eq;
-		  return EQ; }
-  {GREATER_THAN}{SPC}{OR_EQUAL}/[[:space:]]	{ return GE; }
+		  return _EQ; }
+  {GREATER_THAN}{SPC}{OR_EQUAL}/[[:space:]]	{ return _GE; }
   {GREATER_THAN}/[[:space:]]			{ return '>'; }
 
   {ISNT}{OSPC}">="        { verify_ws(yytext[yyleng - 3]); return '<'; }
-  {ISNT}{OSPC}">"         { verify_ws(yytext[yyleng - 2]); return LE;  }
-  {ISNT}{OSPC}"="         { verify_ws(yytext[yyleng - 2]); return NE;  }
-  {ISNT}{OSPC}"<"         { verify_ws(yytext[yyleng - 2]); return GE;  }
+  {ISNT}{OSPC}">"         { verify_ws(yytext[yyleng - 2]); return _LE;  }
+  {ISNT}{OSPC}"="         { verify_ws(yytext[yyleng - 2]); return _NE;  }
+  {ISNT}{OSPC}"<"         { verify_ws(yytext[yyleng - 2]); return _GE;  }
   {ISNT}{OSPC}"<="        { verify_ws(yytext[yyleng - 3]); return '>'; }
 
   {ISNT}{SPC}GREATER({SPC}THAN)?{SPC}{OR_EQUAL}/[[:space:]] { return '<'; }
-  {ISNT}{SPC}GREATER({SPC}THAN)?/[[:space:]]	{ return LE; }
-  {ISNT}{SPC}EQUALS?({SPC}TO)?/[[:space:]]	{ return NE; }
-  {ISNT}{SPC}LESS({SPC}THAN)?/[[:space:]]	{ return GE; }
+  {ISNT}{SPC}GREATER({SPC}THAN)?/[[:space:]]	{ return _LE; }
+  {ISNT}{SPC}EQUALS?({SPC}TO)?/[[:space:]]	{ return _NE; }
+  {ISNT}{SPC}LESS({SPC}THAN)?/[[:space:]]	{ return _GE; }
   {ISNT}{SPC}LESS({SPC}THAN)?{SPC}{OR_EQUAL}/[[:space:]] { return '>'; }
 
   [*]{2}	{ return POW; }
 
-  /* 
+  /*
    * "A boolean operator specifies the type of boolean operation to be performed
    *  on one or two operands, for a unary operator or binary operator,
    *  respectively."
@@ -539,13 +610,8 @@ XML-DECLARATION		{ return XML_DECLARATION; }
 END-XML			{ return END_XML; }
 
 ZEROE?S?	{ return ZERO; }
-
 WRITE		{ return WRITE; }
-
-WITH{SPC}NO/[[:^alnum:]_-]		{ return NO; }
-
 WITH		{ return WITH; }
-
 WHEN	        { return WHEN; }
 ALSO	        { return ALSO; }
 
@@ -553,7 +619,8 @@ VARYING		{ return VARYING; }
 VALUE		{ return VALUE; }
 UTILITY		{ return UTILITY; }
 USING		{ return USING; }
-USE{SPC}(AFTER{SPC})?/(EC|EXCEPTION)		{ return USE; }
+
+USE{SPC}(AFTER{SPC})?/(EC|EXCEPTION) |
 USE		{ return USE; }
 
 UPON		{ return UPON; }
@@ -635,7 +702,7 @@ REVERSED	{ return REVERSED; }
 RETURN		{ return RETURN; }
 RESTRICTED	{ return RESTRICTED; }
 
-RESUME		{ // RESUME is ISO syntax, not IBM.  
+RESUME		{ // RESUME is ISO syntax, not IBM.
 		  if( ! dialect_ibm() ) return RESUME;
 		  yylval.string = xstrdup(yytext);
 		  return typed_name(yytext);
@@ -810,12 +877,9 @@ FINAL		{ return FINAL; }
 FILE-LIMIT	{ return FILE_LIMIT; }
 FILE-CONTROL	{ return FILE_CONTROL; }
 
-FILE{SPC}SECTION { return FILE_SECT; }
+FILE{SPC}SECTION { BEGIN(field_state); return FILE_SECT; }
 
 FILE		{ return FILE_KW; }
-
-FD		{ return FD; }
-SD		{ return SD; }
 
 EXTERNAL	{ return EXTERNAL; }
 EXIT		{ return EXIT; }
@@ -893,7 +957,10 @@ DATE-WRITTEN	{ return DATE_WRITTEN; }
 DATE-COMPILED	{ return DATE_COMPILED; }
 DAY-OF-WEEK	{ return DAY_OF_WEEK; }
 
-DATA{SPC}DIVISION{DOTEOL}		{ return DATA_DIV; }
+DATA{SPC}DIVISION{DOTEOL} {
+		  yy_push_state(field_state);
+                  return DATA_DIV; }
+
 DATA		{ return DATA; }
 
 CURRENCY	{ return CURRENCY; }
@@ -970,164 +1037,16 @@ INSERTT		{ return INSERTT; }
 LABEL		{ return LABEL; }
 PROCESS		{ return PROCESS; }
 SERVICE[[:blank:]]+RELOAD		{ return SERVICE_RELOAD; }
-TITLE		{ return TITLE; }
 USE({SPC}FOR)?		{ return USE; }
 
 }
 
-<field_level>{
-  66/{SPC}(\f#)?{NAME} { yy_pop_state();
-                          if( !parsing.on() ) orig_picture[0] = '\0';
-                          if( level_needed() ) {
-                            level_found();
-                            yylval.number = level_of(yytext); return LEVEL66;
-                          } else {
-                            return numstr_of(yytext);
-                          }
-                        }
-  78/{SPC}(\f#)?{NAME} { yy_pop_state();
-                          if( !parsing.on() ) orig_picture[0] = '\0';
-                          if( level_needed() ) {
-                            level_found();
-                            yylval.number = level_of(yytext); return LEVEL78;
-                          } else {
-                            return numstr_of(yytext);
-                          }
-                        }
-  88/{SPC}(\f#)?{NAME} { yy_pop_state();
-                          if( !parsing.on() ) orig_picture[0] = '\0';
-                          if( level_needed() ) {
-                            level_found();
-                            yylval.number = level_of(yytext); return LEVEL88;
-                          } else {
-                            return numstr_of(yytext);
-                          }
-                        }
-  [[:digit:]]{1,2}/[[:space:]] { yy_pop_state();
-                          if( !parsing.on() ) orig_picture[0] = '\0';
-                          if( level_needed() ) {
-                            level_found();
-                            yylval.number = level_of(yytext); return LEVEL;
-                          } else {
-                            return numstr_of(yytext);
-                          }
-                        }
-
-  . { cbl_errx( "failed to parse field level on line %d", yylineno); }
-}
-
-<field_state>{
-  ^[[:blank:]]*[[:digit:]]{1,2}{OSPC}/[.] {
-                              if( !parsing.on() ) orig_picture[0] = '\0';
-                              level_found();
-                              yylval.number = level_of(yytext);
-                              return LEVEL;
-                            }
-
-  ^[[:blank:]]+             {}
-               ^[[:digit:]]{1,2}[[:space:]]              { yy_push_state(field_level); }
-   [[:blank:]]*/[[:digit:]]{1,2}{SPC}(\f#)?{NAME} { yy_push_state(field_level); }
-
-  [+-]?{INTEGERZ}           { return numstr_of(yytext); }
-  [+-]?{dfc}                { char *s = xstrdup(yytext);
-                              // "The decimal point can appear anywhere within
-                              //  the literal except as the rightmost character."
-                              size_t len = strlen(s);
-                              assert(len);
-                              if( s[--len] == '.' ) {
-                                s[len] = '\0';
-                                myless(len);
-                              }
-                              numstr_of(s); free(s);
-                              return NUMSTR;
-                           }
-
-  PIC(TURE)?({SPC}IS)?{SPC}{PICTURE} {
-				  auto pos = validate_picture();
-				  myless(pos);
-				  yy_push_state(picture); return PIC; }
-
-  ANY				{ return ANY; }
-  LENGTH			{ return LENGTH; }
-  LENGTH{SPC}OF			{ return LENGTH_OF; }
-  BASED				{ return BASED; }
-  USAGE				{ return USAGE; }
-  UNBOUNDED			{ return UNBOUNDED; }
-				  /* use coded capacity 255 to indicate comp-x */
-  COMP(UTATIONAL)?-X		{ return ucomputable(FldNumericBin5, 0xFF); }
-  COMP(UTATIONAL)?-6		{ return ucomputable(FldPacked, 0); }
-  COMP(UTATIONAL)?-5		{ return ucomputable(FldNumericBin5, 0); }
-  COMP(UTATIONAL)?-4		{ return ucomputable(FldNumericBinary, 0); }
-  COMP(UTATIONAL)?-3		{ return PACKED_DECIMAL; }
-  COMP(UTATIONAL)?-2		{ return ucomputable(FldFloat, 8); }
-  COMP(UTATIONAL)?-1		{ return ucomputable(FldFloat, 4); }
-  COMP(UTATIONAL)?		{ return ucomputable(FldNumericBinary, 0); }
-  BINARY            		{ return ucomputable(FldNumericBinary, 0); }
-
-  BINARY-CHAR	   		{ return bcomputable(FldNumericBin5, 1); }
-  BINARY-SHORT	  		{ return bcomputable(FldNumericBin5, 2); }
-  BINARY-LONG	   		{ return bcomputable(FldNumericBin5, 4); }
-  BINARY-DOUBLE			{ return bcomputable(FldNumericBin5, 8); }
-  BINARY-LONG-LONG		{ dialect_ok(yylloc, MfBinaryLongLong, "BINARY-LONG-LONG");
-				  return bcomputable(FldNumericBin5, 8);
-				}
-
-  BIT				{ not_implemented("USAGE type: BIT");
-				  return BIT; }
-
-  FLOAT-BINARY-32		{ return ucomputable(FldFloat, 4); }
-  FLOAT-BINARY-64		{ return ucomputable(FldFloat, 8); }
-  FLOAT-BINARY-128		{ return ucomputable(FldFloat, 16); }
-  FLOAT-DECIMAL-(16|34)		{ not_implemented("USAGE type: %<FLOAT_DECIMAL%>");
-				  return FLOAT_DECIMAL; // causes syntax error
-				}
-  /* 21) The representation and length of a data item described with USAGE
-     BINARY-CHAR, BINARY-SHORT, BINARY-LONG, BINARY-DOUBLE, FLOAT-SHORT,
-     FLOAT-LONG, or FLOAT-EXTENDED is implementor-defined. */
-  FLOAT-EXTENDED  		{ return ucomputable(FldFloat, 16); }
-  FLOAT-LONG	  		{ return ucomputable(FldFloat, 8); }
-  FLOAT-SHORT    		{ return ucomputable(FldFloat, 4); }
-
-  SIGNED			{ return SIGNED_kw; }
-  UNSIGNED			{ return UNSIGNED_kw; }
-
-  INDEX				{ return INDEX; }
-  MESSAGE-TAG			{ not_implemented("USAGE type: MESSAGE-TAG"); }
-  NATIONAL			{ return NATIONAL; }
-  OBJECT{SPC}REFERENCE		{ not_implemented("USAGE type: OBJECT REFERENCE"); }
-
-  PACKED-DECIMAL		{ return PACKED_DECIMAL; }
-
-  FUNCTION-POINTER     	|
-  PROGRAM-POINTER      	{ yylval.field_attr = prog_ptr_e; return POINTER; }
-  POINTER           	{ yylval.field_attr = none_e;     return POINTER; }
-
-  PROCEDURE-POINTER    	{ 
-			  dialect_ok(yylloc, IbmProcedurePointer, yytext);
-			  yylval.field_attr = prog_ptr_e;
-			  return POINTER;  // return it anyway
-			}
-
-  ZEROE?S?	        { return ZERO; }
-  SPACES?		{ yylval.string = NULL; return SPACES; }
-  LOW-VALUES?	        { return LOW_VALUES; }
-  HIGH-VALUES?	        { return HIGH_VALUES; }
-  QUOTES?		{ return QUOTES; }
-  NULLS?		{ return NULLS; }
-  OF			{ return OF; }
-
-  VALUE				{ return VALUE; }
-  VALUE({SPC}IS)?/[[:space:]]   { return VALUE; }
-  VALUES({SPC}ARE)?/[[:space:]] { return VALUE; }
-
-  VALUES?({SPC}(IS|ARE))?{SPC}NULLS? { return NULLPTR; }
-  VALUES?({SPC}(IS|ARE))?/{SPC}[+-]?{dfc} {
-                          yy_push_state(numeric_state); return VALUE; }
-
-  THRU|THROUGH		{ return THRU; }
- (THRU|THROUGH)/{SPC}[[:digit:].,+-] {
-                          yy_push_state(numeric_state);
-			  return THRU; }
+<field_state,field_data_item>{
+  WORKING-STORAGE{SPC}SECTION { return WORKING_STORAGE_SECT; }
+  LOCAL-STORAGE{SPC}SECTION   { return LOCAL_STORAGE_SECT; }
+  LINKAGE{SPC}SECTION         { return LINKAGE_SECT; }
+  SCREEN{SPC}/SECTION	      { return SCREEN; }
+  SECTION{OSPC}/{DOTSEP}      { yylval.string = NULL; return SECTION; }
 
   ALL			{ return ALL; }
   AS			{ return AS; }
@@ -1147,7 +1066,7 @@ USE({SPC}FOR)?		{ return USE; }
   DISPLAY		{ return DISPLAY; }
   EBCDIC		{ return EBCDIC; }
   EJECT{DOTEOL}?  	{
-			  dialect_ok(yylloc, IbmEjectE, "EJECT"); 
+			  dialect_ok(yylloc, IbmEjectE, "EJECT");
 			  auto len = yyleng - 1;
 			  if( yytext[len] == '\f' ) myless(--len);
 			}
@@ -1205,9 +1124,283 @@ USE({SPC}FOR)?		{ return USE; }
                 	  myless(0);
                 	}
 
-  FD/[[:blank:]]+       { parsing.need_level(false); return FD; }
-  SD/[[:blank:]]+       { parsing.need_level(false); return SD; }
+  PROCEDURE{SPC}DIVISION	{ BEGIN(procedure_div); return PROCEDURE_DIV; }
+}
 
+<fd_state>{
+  ALL			{ return ALL; }
+  AS			{ return AS; }
+  ASCENDING		{ return ASCENDING; }
+  BLANK    		{ return BLANK; }
+  BLOCK			{ return BLOCK_kw; }
+  BY			{ return BY; }
+  BYTE-LENGTH		{ return BYTE_LENGTH; }
+  CHARACTER		{ return CHARACTER; }
+  CHARACTERS		{ return CHARACTERS; }
+  CODE-SET		{ return CODESET; }
+  CONSTANT		{ return CONSTANT; }
+  CONTAINS		{ return CONTAINS; }
+  DATA			{ return DATA; }
+  DEPENDING		{ return DEPENDING; }
+  DESCENDING		{ return DESCENDING; }
+  DISPLAY		{ return DISPLAY; }
+  EBCDIC		{ return EBCDIC; }
+  EJECT{DOTEOL}?  	{
+			  dialect_ok(yylloc, IbmEjectE, "EJECT");
+			  auto len = yyleng - 1;
+			  if( yytext[len] == '\f' ) myless(--len);
+			}
+  EXTERNAL		{ return EXTERNAL; }
+  FALSE			{ return FALSE_kw; }
+  FROM			{ return FROM; }
+  GLOBAL		{ return GLOBAL; }
+  IN			{ return IN; }
+  INDEXED		{ return INDEXED; }
+  IS			{ return IS; }
+  JUST(IFIED)?({SPC}RIGHT)?		{ return JUSTIFIED; }
+  KEY			{ return KEY; }
+  LABEL			{ return LABEL; }
+  LEADING		{ return LEADING; }
+  LEFT    		{ return LEFT; }
+  MODE			{ return MODE; }
+  NATIVE		{ return NATIVE; }
+  NO			{ return NO; }
+  OCCURS		{ return OCCURS; }
+  OF			{ return OF; }
+  OMITTED		{ return OMITTED; }
+  ON			{ return ON; }
+  RECORD		{ return RECORD; }
+  RECORDING		{ return RECORDING; }
+  RECORDS		{ return RECORDS; }
+  RECORDS{SPC}ARE	{ return RECORDS; }
+  RECORD{SPC}IS		{ return RECORD; }
+  REDEFINES		{ return REDEFINES; }
+  RENAMES		{ return RENAMES; }
+  RIGHT    		{ return RIGHT; }
+  SEPARATE		{ return SEPARATE; }
+  SET			{ return SET; }
+  SAME			{ return SAME; }
+  SIGN			{ return SIGN; }
+  SIZE			{ return SIZE; }
+  STANDARD		{ return STANDARD; }
+  STANDARD{SPC}ALPHABET	{ return STANDARD_ALPHABET; }
+  STRONG		{ return STRONG; }
+  SYNC(HRONIZED)?	{ return SYNCHRONIZED; }
+  TIMES			{ return TIMES; }
+  TIMES[[:space::]]+DEPENDING		{ return DEPENDING; }
+  TO			{ return TO; }
+  TRAILING		{ return TRAILING; }
+  TRUE			{ return TRUE_kw; }
+  TYPE			{ return TYPE; }
+  TYPEDEF		{ return TYPEDEF; }
+  VALUE			{ return VALUE; }
+  VARYING		{ return VARYING; }
+  VOLATILE    		{ return VOLATILE; }
+  WHEN    		{ return WHEN; }
+  WITH			{ return WITH; }
+
+  {INTEGERZ}	{ return numstr_of(yytext); }
+  H{hexseq}	{
+                  dialect_ok(yylloc, MfHexNumeric, yytext);
+                  yylval.numstr.radix = decimal_e;
+		  yylval.numstr.string = hex2numstr(yytext);
+                  return NUMSTR;
+		}
+
+  {NAME}	{
+                  yylval.string = xstrdup(yytext);
+                  return NAME;
+                }
+  {QSTRING1} |
+  {QSTRING2}	{
+                  static const char prefix[] = "";
+		  char *s = unquote();
+                  yylval.literal.set(strlen(s), s, prefix);
+		  return LITERAL;
+		}
+
+  {DOTSEP}		{ BEGIN(field_state); return *yytext; }
+}
+
+
+	/*
+	 * Field state begins with a Data Division section and ends with
+	 * Procedure Division.  The work is done by field_data_item.
+	 */
+<field_state>{
+  FD		{ yy_push_state(fd_state); return FD; }
+  SD		{ yy_push_state(fd_state); return SD; }
+  {NAME}	{
+                  ydflval.string = yylval.string = xstrdup(yytext);
+                  return NAME;
+                }
+
+  [[:digit:]]{1,2}/{NOTWORD} {
+      yy_push_state(field_data_item);
+      yylval.number = level_of(yytext);
+
+      switch(yylval.number) {
+      case 66: return LEVEL66;
+      case 78: return LEVEL78;
+      case 88: return LEVEL88;
+      }
+      return LEVEL;
+  }
+}
+<field_data_item>{
+  {DOTSEP}		{ yy_pop_state(); return '.'; }
+
+  [+-]?{INTEGERZ}	{ return numstr_of(yytext); }
+  H{hexseq}		{
+                          dialect_ok(yylloc, MfHexNumeric, yytext);
+                          yylval.numstr.radix = decimal_e;
+			  yylval.numstr.string = hex2numstr(yytext);
+                          return NUMSTR;
+			}
+  [+-]?{dfc}		{ char *s = xstrdup(yytext);
+			  // "The decimal point can appear anywhere within
+			  //  the literal except as the rightmost character."
+			  size_t len = strlen(s);
+			  assert(len);
+			  if( s[--len] == '.' ) {
+			    s[len] = '\0';
+			    myless(len);
+			  }
+			  numstr_of(s); free(s);
+			  return NUMSTR;
+			}
+
+  PIC(TURE)?({SPC}IS)?{SPC}{PICTURE} {
+				  const auto nerror = parse_error_count();
+                                  auto end_dot = yyleng - 1;
+				  auto p = picture_at();
+                                  auto loc(yylloc);
+                                  loc.first_column += (p - yytext);
+				  const auto& pic = is_valid_picture(loc, p);
+                                  switch( pic.type ) {
+                                  case FldAlphaEdited:
+                                  case FldNumericEdited:
+                                    ////pic.dump();
+                                    yylval.lex_picture = pic;
+                                    if( yytext[end_dot] == '.' )  {
+                                      myless(end_dot);
+                                    }
+                                    return PICTURE;
+                                  case FldInvalid:
+                                    if( nerror == parse_error_count() ) {
+                                      if( *p == '1' ) {
+                                        cbl_unimplemented_at(loc, "BOOLEAN PICTURE %qs", p);
+                                      } else {
+                                        loc += pic.pos;
+                                        error_msg(loc, "invalid %qc at %u in PICTURE %qs",
+                                                  p[pic.pos], unsigned(pic.pos), p);
+                                      }
+                                    }
+                                    if( yytext[end_dot] == '.' )  {
+                                      myless(end_dot);
+                                    }
+                                    return NO_CONDITION;
+                                    break;
+                                  default:
+                                    if( nerror < parse_error_count() ) {
+                                      if( yytext[end_dot] == '.' )  {
+                                        myless(end_dot);
+                                        dbgmsg("picture is %s, %u error",
+                                               cbl_field_type_str(pic.type),
+                                               unsigned(nerror));
+                                        return NO_CONDITION;
+                                      }
+                                    }
+                                    break;
+                                  }
+				  myless(p - yytext);
+				  yy_push_state(picture);
+                                  return PIC;
+                                }
+
+  ANY				{ return ANY; }
+  LENGTH			{ return LENGTH; }
+  LENGTH{SPC}OF			{ return LENGTH_OF; }
+  BASED				{ return BASED; }
+  USAGE				{ return USAGE; }
+  UNBOUNDED			{ return UNBOUNDED; }
+				  /* use coded capacity 255 to indicate comp-x */
+  COMP(UTATIONAL)?-X		{ return ucomputable(FldNumericBin5, 0xFF); }
+  COMP(UTATIONAL)?-6		{ return ucomputable(FldPacked, 0); }
+  COMP(UTATIONAL)?-5		{ return ucomputable(FldNumericBin5, 0); }
+  COMP(UTATIONAL)?-4		{ return ucomputable(FldNumericBinary, 0); }
+  COMP(UTATIONAL)?-3		{ return PACKED_DECIMAL; }
+  COMP(UTATIONAL)?-2		{ return ucomputable(FldFloat, 8); }
+  COMP(UTATIONAL)?-1		{ return ucomputable(FldFloat, 4); }
+  COMP(UTATIONAL)?		{ return ucomputable(FldNumericBinary, 0); }
+  BINARY            		{ return ucomputable(FldNumericBinary, 0); }
+
+  BINARY-CHAR	   		{ return bcomputable(FldNumericBin5, 1); }
+  BINARY-SHORT	  		{ return bcomputable(FldNumericBin5, 2); }
+  BINARY-LONG	   		{ return bcomputable(FldNumericBin5, 4); }
+  BINARY-DOUBLE			{ return bcomputable(FldNumericBin5, 8); }
+  BINARY-LONG-LONG		{ dialect_ok(yylloc, MfBinaryLongLong, "BINARY-LONG-LONG");
+				  return bcomputable(FldNumericBin5, 8);
+				}
+
+  BIT				{ not_implemented("USAGE type: BIT");
+				  return BIT; }
+
+  FLOAT-BINARY-32		{ return ucomputable(FldFloat, 4); }
+  FLOAT-BINARY-64		{ return ucomputable(FldFloat, 8); }
+  FLOAT-BINARY-128		{ return ucomputable(FldFloat, 16); }
+  FLOAT-DECIMAL-(16|34)		{ not_implemented("USAGE type: %<FLOAT_DECIMAL%>");
+				  return FLOAT_DECIMAL; // causes syntax error
+				}
+  /* 21) The representation and length of a data item described with USAGE
+     BINARY-CHAR, BINARY-SHORT, BINARY-LONG, BINARY-DOUBLE, FLOAT-SHORT,
+     FLOAT-LONG, or FLOAT-EXTENDED is implementor-defined. */
+  FLOAT-EXTENDED  		{ return ucomputable(FldFloat, 16); }
+  FLOAT-LONG	  		{ return ucomputable(FldFloat, 8); }
+  FLOAT-SHORT    		{ return ucomputable(FldFloat, 4); }
+
+  SIGNED			{ return SIGNED_kw; }
+  UNSIGNED			{ return UNSIGNED_kw; }
+
+  INDEX				{ return INDEX; }
+  MESSAGE-TAG			{ not_implemented("USAGE type: MESSAGE-TAG"); }
+  NATIONAL			{ return NATIONAL; }
+  OBJECT{SPC}REFERENCE		{ not_implemented("USAGE type: OBJECT REFERENCE"); }
+
+  PACKED-DECIMAL		{ return PACKED_DECIMAL; }
+
+  FUNCTION-POINTER     	|
+  PROGRAM-POINTER      	{ yylval.field_attr = prog_ptr_e; return POINTER; }
+  POINTER           	{ yylval.field_attr = none_e;     return POINTER; }
+
+  PROCEDURE-POINTER    	{
+			  dialect_ok(yylloc, IbmProcedurePointer, yytext);
+			  yylval.field_attr = prog_ptr_e;
+			  return POINTER;  // return it anyway
+			}
+
+  ZEROE?S?	        { return ZERO; }
+  SPACES?		{ yylval.string = NULL; return SPACES; }
+  LOW-VALUES?	        { return LOW_VALUES; }
+  HIGH-VALUES?	        { return HIGH_VALUES; }
+  QUOTES?		{ return QUOTES; }
+  NULLS?		{ return NULLS; }
+  OF			{ return OF; }
+
+  VALUE				{ return VALUE; }
+  VALUE({SPC}IS)?/[[:space:]]   { return VALUE; }
+  VALUES({SPC}ARE)?/[[:space:]] { return VALUE; }
+
+  VALUES?({SPC}(IS|ARE))?{SPC}NULLS? { return NULLPTR; }
+  VALUES?({SPC}(IS|ARE))?/{SPC}(H{hexseq}|[+-]?{dfc}) {
+                          yy_push_state(numeric_state); return VALUE; }
+
+  THRU|THROUGH		{ return THRU; }
+ (THRU|THROUGH)/{SPC}(H{hexseq}|[[:digit:].,+-]) {
+                          yy_push_state(numeric_state);
+			  return THRU; }
+
+  FILLER		{ return FILLER_kw; }
   {NAME}                { // NAME here might be a token alias
 		   	  int token;
 		          if( 0 != (token = binary_integer_usage(yytext)) ) {
@@ -1227,17 +1420,6 @@ USE({SPC}FOR)?		{ return USE; }
 	    		  yy_push_state(hex_state); }
   N?X{nonseq}		{ dbgmsg("invalid hexadecimal value: %s", yytext);
 			  return NO_CONDITION; }
-  [[:blank:]]*{EOL}     {}
-
-  WORKING-STORAGE{SPC}SECTION { return WORKING_STORAGE_SECT; }
-  LOCAL-STORAGE{SPC}SECTION   { return LOCAL_STORAGE_SECT; }
-  LINKAGE{SPC}SECTION         { return LINKAGE_SECT; }
-  SCREEN{SPC}/SECTION	      { return SCREEN; }
-  SECTION{OSPC}/{DOTSEP}      { yylval.string = NULL; return SECTION; }
-
-  PROCEDURE{SPC}DIVISION	{ BEGIN(procedure_div); return PROCEDURE_DIV; }
-
-  [*]>.*$ // ignore inline comment
 }
 
 <numstr_state>{
@@ -1279,36 +1461,27 @@ USE({SPC}FOR)?		{ return USE; }
     * Any blank or separator period ends terminates the picture.
     */
 <picture>{
-  ^[[:blank:]]+
-  ^{BLANK_EOL}
-
   {COMMA} 			|
   [[:blank:]]*{EOL}		|
   [[:blank:]]+{EOL}?		{ yy_pop_state(); /* embedded/trailing blank */ }
-  {DOTSEP}[[:blank:].]+$	{ yy_pop_state(); return '.'; }
-  {DOTSEP}			{ yy_pop_state(); return '.'; }
-
-
-  [[:blank:]]+[-+]/{EDITED} 	{ return picset(yytext[yyleng-1]); }
+  {DOTSEP}[[:blank:].]+$	{ yy_pop_state(); myless(0); }
+  {DOTSEP}			{ yy_pop_state(); myless(0); }
 
   /* Sign, if any, first */
   S/({NP}|{N9}|V)+{EOPIC} { return picset('S'); }
   /* P's either lead (after sign) or trail, with any V adjacent, see Table 10. */
-  V?{NP}/{N9}*{EOPIC}   { yylval.number =   ndigit(yyleng); return picset(PIC_P); }
-  {NP}V?/{EOPIC}        { yylval.number =   ndigit(yyleng); return picset(PIC_P); }
+  V?{NP}/{N9}*{EOPIC}   { yylval.number = ndigit(yyleng); return picset(PIC_P); }
+  {NP}V?/{EOPIC}        { yylval.number = ndigit(yyleng); return picset(PIC_P); }
   /* Parser accepts any sequence of 9's with one optional V. */
-  {N9}?V/{N9}*{EOPIC}   { yylval.number = ndigit(yyleng - 1); return picset(NINEV); }
-  {N9}/{NP}?V?{EOPIC}   { yylval.number = ndigit(yyleng); return picset(NINES); }
-  /* Match 99(5) as 9 and 9(5) */
-  99+{COUNT}/(V|{N9})*{EOPIC} {
-    auto len = length_upto('(');
-    yylval.number = len;
-    myless(len);
-    return picset(NINES);
-  }
-  [9P]+[(]{NAME}[)] {
-    cbl_unimplemented_at(yylloc, "unimplemented: symbolic count for numeric PICTURE" );
-  }
+  {N9}*V/{N9}*{EOPIC}   { yylval.number = ndigit(yyleng - 1); return picset(NINEV); }
+  {N9}+{NP}?V?{EOPIC}   { const char *p = yytext + yyleng;
+			  yylval.number = ndigit(yyleng, &p);
+                          int len = p - yytext;
+                          int token = picset(NINES, len);
+                          if( len < yyleng ) myless(len);
+                          return token; }
+
+  [9P]+[(]{NAME}[)] { gcc_unreachable(); }
 
   1{1,31}/({COUNT}|[(]{NAME}[)]) {
                          yy_push_state(picture_count);
@@ -1325,16 +1498,6 @@ USE({SPC}FOR)?		{ return USE; }
                          yy_push_state(picture_count);
                          yylval.string = xstrdup(yytext); return picset(ALNUM); }
   {ALNUM}/{EOPIC}?     { yylval.string = xstrdup(yytext); return picset(ALNUM); }
-
-  {ALPHED}             { yylval.string = xstrdup(yytext); return picset(ALPHED); }
-  {NUMEDITED}          { yylval.string = xstrdup(yytext); return picset(NUMED); }
-  {NUMEDITED}[.]?CR    { yylval.string = xstrdup(yytext); return picset(NUMED_CR); }
-  {NUMEDITED}[.]?DB    { yylval.string = xstrdup(yytext); return picset(NUMED_DB); }
-  {NUMEDITED}[.]/{DOTEOL} {
-                         yylval.string = xstrdup(yytext); return picset(NUMED); }
-
-  [^[:space:].,;]+([.,;][^[:space:].,;]+)* {
-                         yylval.string = xstrdup(yytext); return picset(ALPHED); }
 
   .     { dbgmsg("unrecognized character '%c' (0x%x) in PICTURE",
                     *yytext, *yytext ); return NO_CONDITION; }
@@ -1384,7 +1547,7 @@ USE({SPC}FOR)?		{ return USE; }
 			  ydflval.string = s;
 			  update_location_col(s);
 			  return LITERAL; }
-  {PREFIX}?[""]{STRING}[""]    { ydflval.string = xstrdup(yytext);
+  {PREFIX}?[""]{STRING2}[""]    { ydflval.string = xstrdup(yytext);
 			  update_location_col(yytext);
 			  return LITERAL; }
   [=]{4}                { static char nullstring[] = "";
@@ -1420,14 +1583,19 @@ USE({SPC}FOR)?		{ return USE; }
 }
 
 <quoted2>{
-  {STRING}$           { tmpstring_append(yyleng); }
+  {STRING2}$           { tmpstring_append(yyleng); }
   ^-[ ]{4,}[""]/.+    /* ignore continuation mark */
-  {STRING}?[""]{2}    { tmpstring_append(yyleng - 1); }
-  {STRING}            { tmpstring_append(yyleng); }
+  {STRING2}?[""]{2}    { tmpstring_append(yyleng - 1); }
+  {STRING2}            { tmpstring_append(yyleng); }
   [""]{SPC}[&]{SPC}[""''] {
 		        if( yytext[yyleng - 1] == '\'' ) BEGIN(quoted1);
 		      }
-  [""]-{OSPC}({EOL}{OSPC})+[""] /* continue ...  */
+  [""]-{OSPC}{EOL}    {  // string continuation
+			int ch = continue_string(*yytext);
+                        if( ch != *yytext ) {
+			  error_msg(yylloc, "invalid string continuation");
+                        }
+		      }
   [""]                {
       			char *s = xstrdup(tmpstring? tmpstring : "\0");
                         yylval.literal.set_data(strlen(s), s);
@@ -1444,13 +1612,200 @@ USE({SPC}FOR)?		{ return USE; }
   ['']{SPC}[&]{SPC}[""''] {
 		        if( yytext[yyleng - 1] == '"' ) BEGIN(quoted2);
 		      }
-  ['']-{OSPC}({EOL}{OSPC})+[''] /* continue ...  */
+  ['']-{OSPC}{EOL}    {  // string continuation
+			int ch = continue_string(*yytext);
+                        if( ch != *yytext ) {
+			  error_msg(yylloc, "invalid string continuation");
+                        }
+		      }
   ['']                {
       			char *s = xstrdup(tmpstring? tmpstring : "\0");
                         yylval.literal.set_data(strlen(s), s);
                         ydflval.string = yylval.literal.data;
 			update_location_col(yylval.literal.data, -2);
                         tmpstring = NULL; pop_return LITERAL; }
+}
+
+
+  /* These appear only in ISO list of CDF reserved words */
+  /* DE-EDITING 		{ return DE_EDITING; } */
+  /* EXTERNAL-FILE-FILE-STATUS 	{ return EXTERNAL_FILE_FILE_STATUS; } */
+  /* FORMAT 		{ return FORMAT; } */
+  /* FUNCTION-ARGUMENT	{ return FUNCTION_ARGUMENT; } */
+  /* GREATER 		{ return GREATER; } */
+
+<cdf_state>{
+  ALL 			{ return ALL; }
+  AND 			{ return AND; }
+  AS 			{ return AS; }
+  B-AND 		{ return B_AND; }
+  B-NOT 		{ return B_NOT; }
+  B-OR 			{ return B_OR; }
+  B-SHIFT-L 		{ return B_SHIFT_L; }
+  B-SHIFT-LC 		{ return B_SHIFT_LC; }
+  B-SHIFT-R 		{ return B_SHIFT_R; }
+  B-SHIFT-RC 		{ return B_SHIFT_RC; }
+  B-XOR 		{ return B_XOR; }
+  CALL-CONVENTION 	{ return CALL_CONVENTION; }
+  CHECKING 		{ return CHECKING; }
+  COBOL 		{ return COBOL; }
+  /* COBOL-WORDS 		{ return COBOL_WORDS; } */
+  COMPILE-TIME-ARITHMETIC-EXPRESSIONS 	{ return COMPILE_TIME_ARITHMETIC_EXPRESSIONS; }
+  CORRESPONDING 	{ return CORRESPONDING; }
+  DEFINE 		{ return CDF_DEFINE; }
+  DEFINED 		{ return DEFINED; }
+  DISPLAY 		{ return CDF_DISPLAY; }
+  DIVIDE 		{ return DIVIDE; }
+  ELSE 			{ return CDF_ELSE; }
+  END-EVALUATE 		{ return CDF_END_EVALUATE; }
+  END-IF 		{ return CDF_END_IF; }
+  EQUAL 		{ return '='; }
+  EQUATE 		{ return EQUATE; }
+  EVALUATE 		{ return CDF_EVALUATE; }
+  FIXED 		{ return FIXED; }
+  FLAG-02 		{ return FLAG_02; }
+  FLAG-14 		{ return FLAG_14; }
+  FREE 			{ return FREE; }
+  I-O-DECLARATIVE 	{ return I_O_DECLARATIVE; }
+  I-O-STATUS-04 	{ return I_O_STATUS_04; }
+  I-O-STATUS-07 	{ return I_O_STATUS_07; }
+  IF 			{ return CDF_IF; }
+  IS 			{ return IS; }
+  LEAP-SECOND 		{ return LEAP_SECOND; }
+  LISTING 		{ return LISTING; }
+  LOCATION 		{ return LOCATION; }
+  MOVE 			{ return MOVE; }
+  MOVE-TO-SAME-NAME	{ return MOVE_TO_SAME_NAME; }
+  NOT 			{ return NOT; }
+  NUM-ED-ZERO-FIGCONST	{ return NUM_ED_ZERO_FIGCONST; }
+  NUMVAL 		{ return NUMVAL; }
+  OFF 			{ return OFF; }
+  ON 			{ return ON; }
+  OR 			{ return OR; }
+  OTHER 		{ return OTHER; }
+  OVERRIDE 		{ return OVERRIDE; }
+  PAGE 			{ return PAGE; }
+  PARAMETER 		{ return PARAMETER_kw; }
+  POP	 		{ return CDF_POP; }
+  PROPAGATE 		{ return PROPAGATE; }
+  PUSH 			{ return CDF_PUSH; }
+  RANGE-EXCEPTION-FOR-INDEX { return RANGE_EXCEPTION_FOR_INDEX; }
+  READ-PREVIOUS 	{ return READ_PREVIOUS; }
+  REF-MOD-ZERO-LENGTH	{ return REF_MOD_ZERO_LENGTH; }
+  TERMINATE-WITH-VARYING { return TERMINATE_WITH_VARYING; }
+  RESERVE 		{ return RESERVE; }
+  SET	 		{ return SET; }
+  SIZE 			{ return SIZE; }
+  SOURCE 		{ return SOURCE; }
+  SOURCE{BLANK}FORMAT	{ return SOURCE_FORMAT; }
+  STANDARD-1 		{ return STANDARD_1; }
+  STANDARD-2 		{ return STANDARD_2; }
+  STATUS 		{ return STATUS; }
+  SUBSTITUTE 		{ return SUBSTITUTE; }
+  THAN 			{ return THAN; }
+  THROUGH |
+  THRU 			{ return THRU; }
+  TO 			{ return TO; }
+  TRUE 			{ return TRUE; }
+  TURN 			{ return TURN; }
+  UNDEFINE 		{ return UNDEFINE; }
+  UPON 			{ return UPON; }
+  VALUE-EDITING 	{ return VALUE_EDITING; }
+  VALUE-FIG-CON-LENGTH	{ return VALUE_FIG_CON_LENGTH; }
+  VALUE-ZERO 		{ return VALUE_ZERO; }
+  WHEN	 		{ return CDF_WHEN; }
+  WITH 			{ return WITH; }
+  WRITE-END-OF-PAGE	{ return WRITE_END_OF_PAGE; }
+  EXCLUSIVE-OR |
+  XOR	 		{ return XOR; }
+  ZERO-LENGTH 		{ return ZERO_LENGTH; }
+
+  [+-]?{INTEGERZ}       { int value;
+			  if( is_integer_token(&value) ) {
+			    ydflval.number = value;
+			    return cdf::parser::token::YDF_NUMBER;
+			  }
+			  dbgmsg("%s not an integer = %d",
+				   yytext, value);
+			  return NO_CONDITION;
+			}
+
+  {NAME}{SPC}AS 	{ char *s = xstrdup(yytext);
+			  char *p = strchr(s, 0x20);
+			  gcc_assert(p); // just found via regex
+			  *p = '\0';
+			  ydflval.string = yylval.string = s;
+			  return NAME;
+			}
+  {NAME}	 	{ ydflval.string = yylval.string = xstrdup(yytext);
+			  return NAME;
+			}
+
+  {QSTRING1} |
+  {QSTRING2}		{ char *s = unquote();
+			  ydflval.string = s;
+			  auto& lit(yylval.literal);
+			  lit.set_data(strlen(s), s);
+			  return LITERAL;
+			}
+
+  %EBCDIC-MODE		{ ydflval.number = feature_internal_ebcdic_e;
+			  return FEATURE; }
+  %64-BIT-POINTER	{ ydflval.number = feature_embiggen_e;
+			  return FEATURE; }
+  [[:blank:]]+
+  {BLANK_EOL}
+}
+
+<cobol_words>{
+  BY            { return BY; }
+  EQUATE	{ return EQUATE; }
+  UNDEFINE	{ return UNDEFINE; }
+  SUBSTITUTE	{ return SUBSTITUTE; }
+  RESERVE	{ return RESERVE; }
+  WITH		{ return WITH; }
+
+  {QSTRING1} |
+  {QSTRING2} 	{ char *s = unquote();
+		  auto& lit(yylval.literal);
+		  lit.set_data(strlen(s), s);
+                  dbgmsg("%s:%d: literally '%s'", __FILE__, __LINE__, s);
+		  return LITERAL;
+		}
+
+  ID(ENTIFICATION)?{SPC}DIVISION { BEGIN(0); return IDENTIFICATION_DIV; }
+
+  {NAME}	{ // COBOL-WORDS might change "ID DIVISION" to "Chapter One"
+		  static struct {
+                    int token;
+                    size_t pos;
+                  } prior;
+                  dbgmsg("yytext: %s {%d} @ %lu", yytext, yyleng, (unsigned long)prior.pos);
+		  if( keyword_tok(yytext) == IDENTIFICATION ) {
+                    int ch;
+		    while( (ch = yyinput()) != EOF ) {
+                        dbgmsg("yytext: got  a  '%c'", ch);
+		      if( ! ISSPACE(ch) ) {
+			unput(ch);
+                        dbgmsg("yytext: skip to '%c'", ch);
+			break;
+                      }
+                    }
+                    if( ch == EOF ) return YYEOF;
+                    prior.token = IDENTIFICATION;
+                  } else {
+                    while( YY_START ) yy_pop_state(); // end of COBOL-WORDS, for sure
+                    if( prior.token == IDENTIFICATION ) {
+                      prior = {};
+                      if( keyword_tok(yytext) == DIVISION ) {
+                        return IDENTIFICATION_DIV;
+                      }
+                      myless(0);
+                      return IDENTIFICATION;
+                    }
+                    myless(0); // try again with INIITAL start condition
+                  }
+		}
 }
 
     /* ISO Reserved Words */
@@ -1553,7 +1908,7 @@ USE({SPC}FOR)?		{ return USE; }
   END-WRITE	{ return END_WRITE; }
   ENVIRONMENT	{ return ENVIRONMENT; }
   EQUAL		{ ydflval.string = yylval.string = xstrdup(yytext);
-		  return EQ; }
+		  return _EQ; }
   ERROR		{ return ERROR; }
   EVALUATE	{ return EVALUATE; }
   /* EXCEPTION	special handling */
@@ -1747,6 +2102,14 @@ USE({SPC}FOR)?		{ return USE; }
   ZERO	|
   ZEROES	|
   ZEROS		{ return ZERO; }
+
+  CONFIGURATION{SPC}SECTION	{ return CONFIGURATION_SECT; }
+  FILE{SPC}SECTION 		{ return FILE_SECT; }
+  INPUT-OUTPUT{SPC}SECTION	{ return INPUT_OUTPUT_SECT; }
+  LINKAGE{SPC}SECTION 		{ return LINKAGE_SECT; }
+  LOCAL-STORAGE{SPC}SECTION 	{ return LOCAL_STORAGE_SECT; }
+  WORKING-STORAGE{SPC}SECTION 	{ return WORKING_STORAGE_SECT; }
+
 }
 
 <*>{
@@ -1757,45 +2120,7 @@ USE({SPC}FOR)?		{ return USE; }
   OFF		{ return OFF; }
 }
 
-<cdf_state>{
-  CALL-CONVENTION	{ return CALL_CONVENTION; }
-  COBOL-WORDS		{ return COBOL_WORDS; }
-  DEFINE		{ return CDF_DEFINE; }
-  OVERRIDE		{ return OVERRIDE; }
-  PARAMETER		{ return PARAMETER_kw; }
-  SOURCE{BLANK}FORMAT	{ return SOURCE_FORMAT; }
-
-  [+-]?{INTEGERZ}       { int value;
-			  if( is_integer_token(&value) ) {
-			    ydflval.number = value;
-			    return cdf::parser::token::YDF_NUMBER;
-			  }
-			  dbgmsg("%s not an integer = %d",
-				   yytext, value);
-			  return NO_CONDITION;
-			}
-
-  {NAME}{SPC}AS 	{ char *s = xstrdup(yytext);
-			  char *p = strchr(s, 0x20);
-			  gcc_assert(p); // just found via regex
-			  *p = '\0';
-			  ydflval.string = yylval.string = s;
-			  return NAME;
-			}
-  {NAME}	 	{ ydflval.string = yylval.string = xstrdup(yytext);
-			  return NAME;
-			}
-  %EBCDIC-MODE		{ ydflval.number = feature_internal_ebcdic_e;
-			  return FEATURE; }
-  %64-BIT-POINTER	{ ydflval.number = feature_embiggen_e;
-			  return FEATURE; }
-  [[:blank:]]+
-  {BLANK_EOL}
-  . 			{ myless(0); yy_pop_state(); } // not a CDF token
-}
-
 <program_id_state>{
-  {BLANK_OEOL}
   (IS)?[[:space:]]
   AS/{SPC} 	{ myless(0); yy_pop_state(); } /* => ident_state */
 
@@ -1805,14 +2130,15 @@ USE({SPC}FOR)?		{ return USE; }
   PROGRAM 	{ return PROGRAM_kw; }
 
   {DOTSEP}	{ pop_return '.'; }
+  (ENVIRONMENT|DATA|PROCEDURE){SPC}DIVISION {	myless(0);
+						yy_pop_state();   // to ident_state
+						yy_pop_state(); } // to initial state
 }
 
 <name_state>{           /* Either pop from here, or let the quoted state pop */
-  {BLANK_OEOL}
-
   {NAME}	        { yy_pop_state();
 			  yylval.string = xstrdup(yytext);
-			  return NAME; 
+			  return NAME;
 			}
   {PREFIX}?['']                { yylval.literal.set_prefix(yytext, yyleng-1);
 			  BEGIN(quoted1); }
@@ -1837,15 +2163,21 @@ USE({SPC}FOR)?		{ return USE; }
 
   BX/{hexseq}			{ yylval.numstr.radix = hexadecimal_e;
 			  	  yy_push_state(numstr_state); }
+  H{hexseq}			{
+                                  dialect_ok(yylloc, MfHexNumeric, yytext);
+                                  yylval.numstr.radix = decimal_e;
+			  	  yylval.numstr.string = hex2numstr(yytext);
+                                  return NUMSTR;
+				}
 
-  {PREFIX}?['']                   { yylval.literal.set_prefix(yytext, yyleng-1);
-			     yy_push_state(quoted1); }
-  {PREFIX}?[""]                   { yylval.literal.set_prefix(yytext, yyleng-1);
-			     yy_push_state(quoted2); }
-  {PREFIX}?[""]/{STRING}[""]      { yylval.literal.set_prefix(yytext, yyleng-1);
-			     yy_push_state(quoted2); }
+  {PREFIX}?['']			{ yylval.literal.set_prefix(yytext, yyleng-1);
+				  yy_push_state(quoted1); }
+  {PREFIX}?[""]			{ yylval.literal.set_prefix(yytext, yyleng-1);
+				  yy_push_state(quoted2); }
+  {PREFIX}?[""]/{STRING2}[""]	{ yylval.literal.set_prefix(yytext, yyleng-1);
+				  yy_push_state(quoted2); }
 
-  {INTEGERZ}/[[:punct:]][[:space:]]{BLANK_OEOL} { return numstr_of(yytext); }
+  {INTEGERZ}/[[:punct:]][[:space:]]{BLANK_EOL}? { return numstr_of(yytext); }
   {dfc}/[[:blank:][:punct:]]         		{ return numstr_of(yytext); }
 
   [+-]?({dfc}|{dseq})([.,][[:digit:]])* { auto eotext = yytext + yyleng - 1;
@@ -1868,18 +2200,24 @@ USE({SPC}FOR)?		{ return USE; }
   [[:blank:]]+
   {BLANK_EOL}
 
-  [+-]?{INTEGERZ} {            pop_return numstr_of(yytext); }
-  [+-]?{dfc}([.][[:digit:]])*  {
-                               char *s = xstrdup(yytext);
-                               char *p = strchr(s, '.');
-                               if( p && strlen(p) == 1 ) {
-                                 *p = '\0';
-                                 myless(p - s);
-                               }
-                               int token = numstr_of(s);
-			       free(s);
-                               pop_return token;
-			     }
+  [+-]?{INTEGERZ}		{ pop_return numstr_of(yytext); }
+  H{hexseq}			{
+                                  dialect_ok(yylloc, MfHexNumeric, yytext);
+                                  yylval.numstr.radix = decimal_e;
+			  	  yylval.numstr.string = hex2numstr(yytext);
+                                  pop_return NUMSTR;
+				}
+  [+-]?{dfc}([.][[:digit:]])*	{
+				  char *s = xstrdup(yytext);
+				  char *p = strchr(s, '.');
+				  if( p && strlen(p) == 1 ) {
+				    *p = '\0';
+				    myless(p - s);
+				  }
+				  int token = numstr_of(s);
+				  free(s);
+				  pop_return token;
+				}
 }
 
 <procedure_div>{
@@ -1915,13 +2253,11 @@ USE({SPC}FOR)?		{ return USE; }
 
   {ISNT}{SPC}/OMITTED { return NOT; }
 
-  [(:)] 			{ return *yytext; }
+  [:)]	 			{ return *yytext; }
   [(]/[^(:)""'']*[:][^)]*[)] 	{ return LPAREN; /* parentheses around a colon */ }
-  [(][^:""'']*[:][^)]*[)] 	{ // does not match foo(bar)\n:  :-(  
-                                  int tok = is_refmod(yytext, yytext + yyleng)?
-                                      int(LPAREN) : '(';
-                                  myless(1);
-                                  return tok; 
+  [(] 				{
+                                  int tok = is_refmod()? int(LPAREN) : '(';
+                                  return tok;
                                 }
 
   FILLER			{ return FILLER_kw; }
@@ -2051,7 +2387,8 @@ USE({SPC}FOR)?		{ return USE; }
 	            yy_push_state(partial_name);
 		    tee_up_empty();
 		}
-  {NAME}({SPC}(IN|OF){SPC}{NAME})+ { // Keep only {NAME}.
+  LENGTH{SPC}OF/{SPC}{NAME}	{ return LENGTH_OF; }
+  {NAME}{SPC}(IN|OF){SPC}{NAME} { // Keep only {NAME}.
 		    auto len = length_upto(0x20);
 		    myless(len); // avoid dangerous trailing context
                     int token = keyword_tok(yytext);
@@ -2064,6 +2401,13 @@ USE({SPC}FOR)?		{ return USE; }
 }
 
 <partial_name>{
+  LENGTH{SPC}OF{SPC}{NAME}	{
+    std::reverse_iterator<const char*>  beg(yytext + yyleng), end(yytext);
+    auto p = std::find_if(beg, end, []( char ch ) { return ISSPACE(ch); });
+    auto len = p.base() - yytext;
+    myless(len); // avoid dangerous trailing context
+    return LENGTH_OF;
+  }
   {NAME}/{SPC}(IN|OF)[[:space:]] {
     tee_up_name(yylloc, xstrdup(yytext));
   }
@@ -2114,8 +2458,12 @@ USE({SPC}FOR)?		{ return USE; }
 }
 
 <sort_state>{
+  LENGTH{SPC}OF/{SPC}{NAME}	{ return LENGTH_OF; }
+  {NAME}{SPC}(IN|OF) |
+  {NAME}{OSPC}[(] { myless(0); yy_pop_state(); }
+
   {NAME} 	{ yylval.string = xstrdup(yytext);
-		  pop_return symbol_file(PROGRAM, yytext)? FILENAME : NAME;
+		  pop_return symbol_file(PROGRAM, yytext)? _FILENAME : NAME;
 		}
 }
 
@@ -2325,7 +2673,7 @@ USE({SPC}FOR)?		{ return USE; }
 [*]CBL		{ return STAR_CBL; }
 [*]CONTROL	{ return STAR_CBL; }
 
-(PROCESS|CBL)({BLANK}.*)?/{EOL} {
+(PROCESS|CBL)({BLANK}.*)?{EOL} {
 		  yylval.string = xstrdup(yytext);
                   for(char *p = yylval.string + strlen(yylval.string) - 1;
                       *p == 0x20; p-- ) {
@@ -2344,7 +2692,8 @@ BASIS		{ yy_push_state(basis); return BASIS; }
   [[:blank:]]+
   {BLANK_EOL}
 
-  {STRING}      { yy_pop_state();
+  {STRING1} |
+  {STRING2}     { yy_pop_state();
                   yypush_buffer_state( yy_create_buffer(yyin, YY_BUF_SIZE) );
                   if( (yyin = cdftext::lex_open(yytext)) == NULL ) {
                     cbl_message(yylloc, LexIncludeE,
@@ -2360,7 +2709,7 @@ BASIS		{ yy_push_state(basis); return BASIS; }
 
 <procedure_div>{
    EQUALS?{OSPC}/[(]	{ ydflval.string = yylval.string = xstrdup(yytext);
-		  	  return EQ; }
+		  	  return _EQ; }
 
    {NAME}{OSPC}/[(] { /* If /{OSPC}, "dangerous trailing context" "*/
                   if( is_integer_token() ) return numstr_of(yytext);
@@ -2413,7 +2762,7 @@ BASIS		{ yy_push_state(basis); return BASIS; }
 		    return EXCEPTION_NAME;
 		  }
 		  ydflval.string = xstrdup(yytext);
-		  return symbol_file(PROGRAM, yytext)? FILENAME : NAME;
+		  return symbol_file(PROGRAM, yytext)? _FILENAME : NAME;
 		}
   [[:blank:]]+
   {EOL}		{ yy_pop_state(); }
@@ -2430,24 +2779,26 @@ BASIS		{ yy_push_state(basis); return BASIS; }
                  */
 <*>{
   ^[ ]{6}\x8d.*\n {
-		  // lexio munged fixed-format D indicator to 0x8D. 
+		  // lexio munged fixed-format D indicator to 0x8D.
 		  // If WITH DEBUGGING MODE, drop the D, else drop the line.
 		  if( include_debug() ) myless(7);
 		}
-  ^[ ]*>>{OBLANK}IF		{ yy_push_state(cdf_state); return CDF_IF; }
+  ^[ ]*>>{OBLANK}IF		{ PUSH_CDF_STATE; return CDF_IF; }
   ^[ ]*>>{OBLANK}ELSE	 	{ return CDF_ELSE; }
   ^[ ]*>>{OBLANK}END-IF	 	{ return CDF_END_IF; }
 
-  ^[ ]*[$]{OBLANK}IF		{ dialect_ok(yylloc, MfCdfDollar, yytext); 
-				  yy_push_state(cdf_state); return CDF_IF; }
-  ^[ ]*[$]{OBLANK}ELSE	 	{ dialect_ok(yylloc, MfCdfDollar, yytext); 
+  ^[ ]*[$]{OBLANK}IF		{ dialect_ok(yylloc, MfCdfDollar, yytext);
+				  PUSH_CDF_STATE; return CDF_IF; }
+  ^[ ]*[$]{OBLANK}ELSE	 	{ dialect_ok(yylloc, MfCdfDollar, yytext);
 				  return CDF_ELSE; }
-  ^[ ]*[$]{OBLANK}END(-IF)? 	{ dialect_ok(yylloc, MfCdfDollar, yytext); 
+  ^[ ]*[$]{OBLANK}END(-IF)? 	{ dialect_ok(yylloc, MfCdfDollar, yytext);
 				  return CDF_END_IF; }
 
   ^[ ]*[$]{OBLANK}SET({SPC}CONSTANT)? {
-				  dialect_ok(yylloc, MfCdfDollar, yytext); 
-				  yy_push_state(cdf_state); return CDF_DEFINE; }
+				  dialect_ok(yylloc, MfCdfDollar, yytext);
+				  PUSH_CDF_STATE; return CDF_DEFINE; }
+  ^[ ]*[$]{OBLANK}DISPLAY 	{ dialect_ok(yylloc, MfCdfDollar, yytext);
+				  PUSH_CDF_STATE; return CDF_DISPLAY; }
 
   ^[ ]*>>{OBLANK}EVALUATE		{ return CDF_EVALUATE; }
   ^[ ]*>>{OBLANK}WHEN		{ return CDF_WHEN; }
@@ -2457,10 +2808,11 @@ BASIS		{ yy_push_state(basis); return BASIS; }
   ^[ ]*>>{OBLANK}CALL-CONVENTION{BLANK}COBOL	{ return CALL_COBOL; }
   ^[ ]*>>{OBLANK}CALL-CONVENTION{BLANK}VERBATIM	{ return CALL_VERBATIM; }
 
-  ^[ ]*>>{OBLANK}DEFINE	{ yy_push_state(cdf_state); return CDF_DEFINE; }
-  ^[ ]*>>{OBLANK}DISPLAY 	{ return CDF_DISPLAY; }
-  ^[ ]*>>{OBLANK}TURN 	{ yy_push_state(exception); return TURN; }
-  ^[ ]*>>{OBLANK}COBOL-WORDS	{ yy_push_state(cobol_words); return COBOL_WORDS; }
+  ^[ ]*>>{OBLANK}DEFINE		{ PUSH_CDF_STATE; return CDF_DEFINE; }
+  ^[ ]*>>{OBLANK}DISPLAY 	{ PUSH_CDF_STATE; return CDF_DISPLAY; }
+
+  ^[ ]*>>{OBLANK}TURN 		{ yy_push_state(exception); return TURN; }
+  ^[ ]*>>{OBLANK}COBOL-WORDS	{ yy_push_state( cobol_words); return COBOL_WORDS; }
 
   ^[ ]*>>{OBLANK}SOURCE{BLANK}FORMAT	{ return SOURCE_FORMAT; }
 
@@ -2477,17 +2829,6 @@ BASIS		{ yy_push_state(basis); return BASIS; }
   TRUE		{ return TRUE_kw; }
 
   ALL			{ return ALL; }
-}
-
-<cobol_words>{
-  EQUATE	{ return EQUATE; }
-  UNDEFINE	{ return UNDEFINE; }
-  SUBSTITUTE	{ return SUBSTITUTE; }
-  RESERVE	{ return RESERVE; }
-  {NAME}	{
-                  ydflval.string = yylval.string = xstrdup(yytext);
-		  pop_return NAME;
-		}
 }
 
 <*>{
@@ -2544,7 +2885,6 @@ BASIS		{ yy_push_state(basis); return BASIS; }
 <*>{
   {COMMA}
   ^{SKIP}
-  ^{TITLE}
 }
 
 <*>{
@@ -2556,17 +2896,6 @@ BASIS		{ yy_push_state(basis); return BASIS; }
 
 <*>{
    {NAME}       {
-                  int token = keyword_tok(yytext);
-                  if( token ) {
-		    if(yy_flex_debug && YY_START) {
-                       dbgmsg("missed token %s in start condition %d",
-			      yytext, YY_START);
-		    }
-		    // Do not return "token" because it may have been excluded
-		    // by a start condition.  For example, REM might be a name,
-		    // but is the name of an intrinsic function, which would
-		    // appear only after FUNCTION.
-		  }
                   if( is_integer_token() ) return numstr_of(yytext);
                   ydflval.string = yylval.string = xstrdup(yytext);
                   return typed_name(yytext);

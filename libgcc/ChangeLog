@@ -1,3 +1,86 @@
+2026-10-09  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.in (STDC_HEADERS): Delete.
+	* configure: Regenerate.
+	* configure.ac: Drop AC_HEADER_STDC.
+
+2026-09-11  Manjunath Matti  <mmatti@linux.ibm.com>
+	    Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/117584
+	* config/rs6000/float128-sed: Add __floatbitinttf/__floatbitintkf
+	and __fixtfbitint/__fixkfbitint substitution rules.
+	* config/rs6000/float128-sed-hw: Likewise.
+	* config/rs6000/libgcc-glibc.ver (GCC_17.0.0): New version node
+	inheriting GCC_4.2.0; export __floatbitintkf, __fixkfbitint,
+	__floatbitinttf, __fixtfbitint, __floatbitintsf, __fixsfbitint,
+	__floatbitintdf and __fixdfbitint.
+	* config/rs6000/t-float128 (fp128_softfp_funcs): Add floatbitintkf
+	and fixkfbitint.
+	(rs6000_bitint_bin_funcs, rs6000_bitint_bin_src): New; add to
+	LIB2ADD unconditionally.
+	(rs6000_bitint_dec_funcs, rs6000_bitint_dec_src): New; add to
+	LIB2ADD_ST when decimal float is enabled.
+	* config/rs6000/t-linux (ibm128_bitint_funcs, ibm128_bitint_src):
+	New; add to LIB2ADD.
+	(ibm128_bitint_objs, IBM128_BITINT_CFLAGS): New.
+	* config/rs6000/floatbitinttf-ibm128.c: New file.
+	* config/rs6000/fixtfbitint-ibm128.c: New file.
+
+2026-09-04  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (FUNCS_notiny): Add _divsq3, _udivusq3.
+	* config/avr/lib1funcs-fixed.S (__udivusq3, __divsq3): New DEFUN.
+	(__usdivusq3, __ssdivsq3): New ENTRY.
+
+2026-09-01  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (FUNCS_notiny): Add _mulsq3.
+	* config/avr/lib1funcs-fixed.S (__mulsq3, __ssmulsq3): Implement.
+	* config/avr/lib1funcs.S (__umulsidi3): Add ENTRYs
+	__mulusq3, __usmulusq3.
+
+2026-09-01  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs-fixed.S (__mulQ64_work):
+	Restore B = R10..R17 to its orignal value.
+
+2026-08-25  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR target/127071
+	* config/avr/t-copy-libgcc: Remove file.
+	* config/avr/t-avrlibc: Remove code to pull in t-copy-libgcc.
+
+2026-08-24  Kito Cheng  <kito.cheng@sifive.com>
+
+	* config/riscv/feature_bits.c: Include
+	common/config/riscv/riscv-hwprobe.h, and drop the hwprobe key
+	numbers, extension bit positions, struct riscv_hwprobe and
+	syscall_5_args that moved there.
+	(__init_riscv_features_bits_linux): Set the extension bits from
+	riscv-hwprobe.def.
+	(__init_riscv_feature_bits): Add a declaration.
+
+2026-08-16  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/lib1funcs.S: Fix typo in comment.
+
+2026-08-12  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (LIB1ASMFUNCS): Add _usshift_1, _usshift_2,
+	_usshift_4, _ssshift_1, _ssshift_2, _ssshift_4.
+	(FUNCS_notiny): Add _usshift_8, _ssshift_8.
+	(LIB2FUNCS_EXCLUDE): Add all the default libgcc saturated shifts.
+	* config/avr/lib1funcs-fixed.S: Support saturated ashl for
+	all fixed-point modes.
+
+2026-08-11  Georg-Johann Lay  <avr@gjlay.de>
+
+	* config/avr/t-avr (conv_YX): New variable.
+	(LIB2FUNCS_EXCLUDE): Add more modules that handle modes which
+	we don't support, or which are handled by avr-specific modules.
+
 2026-08-05  Georg-Johann Lay  <avr@gjlay.de>
 
 	* config/avr/t-avr (LIB1ASMFUNCS): Add _divQ16_tail.

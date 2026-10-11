@@ -39,6 +39,7 @@
 .Op Fl fyacc-debug
 .\" warnings
 .Op Fl Wno-apply-commit
+.Op Fl Wno-content-expr
 .Op Fl Wno-file-code-set
 .Op Fl Wno-high-order-bit
 .Op Fl Wno-bad-line-directive
@@ -58,8 +59,11 @@
 .Op Fl Wno-comp-6
 .Op Fl Wno-comp-x
 .Op Fl Wno-copybook-found
+.Op Fl Wno-display-screen
+.Op Fl Wno-dynamic-call
 .Op Fl Wno-ec-unknown
 .Op Fl Wno-entry-convention
+.Op Fl Wno-hex-numeric
 .Op Fl Wno-ibm-cdf
 .Op Fl Wno-iconv-error
 .Op Fl Wno-include-file-found
@@ -81,6 +85,7 @@
 .Op Fl Wno-procedure-pointer
 .Op Fl Wno-replace-error
 .Op Fl Wno-redefines-first
+.Op Fl Wno-redefines-table
 .Op Fl Wno-returning-number
 .Op Fl Wno-segment-error
 .Op Fl Wno-segment-negative
@@ -89,8 +94,10 @@
 .Op Fl Wno-stray-indicator
 .Op Fl Wno-usage-typename
 .Op Fl Wno-recording-mode
+.Op Fl Wno-redefines-grow
 .Op Fl Wno-set-locale-to
 .Op Fl Wno-set-to-locale
+.Op Fl Wno-value-clause
 .Ar filename Op ...
 .
 .Sh DESCRIPTION
@@ -493,13 +500,14 @@ to indicate MicroFocus syntax:
 .Bl -bullet -compact
 .It
 CDF
-.Sy $IF , $ELSE , $END , Sy $END-IF , Li and Sy $SET
+.Sy \[Do]IF , \[Do]ELSE , \[Do]END , Sy \[Do]END-IF , Li and Sy \[Do]SET
+.It
+CDF
+.Sy \[Do]DISPLAY
 .It
 .Sy BINARY-LONG-LONG
 .It
-.Sy CALL ... GIVING
-.It
-.Sy CDF \[Do]IF
+.Sy CALL Li ... Sy GIVING
 .It
 .Sy COMPUTATIONAL-6
 .It
@@ -507,7 +515,11 @@ CDF
 used with
 .Sy PICTURE X
 .It
-.Sy INSPECT ... TRAILING
+.Sy DISPLAY WITH
+.Aq "screen features"
+.Li *> e.g. BACKGROUND-COLOR
+.It
+.Sy INSPECT Li ... Sy TRAILING
 .It
 .Sy LEVEL 78
 constants
@@ -607,6 +619,10 @@ features may be enabled as a warning, or error, or suppressed.
 .Bl -tag -width Wno-cdf-name-not-found\0\0 -compact
 .It Fl Wno-apply-commit
 Warn if APPLY COMMIT is used.
+.It Fl Wno-content-expr
+Warn if an expression is a BY CONTENT parameter.  This subsumes IBM
+syntax supporting LENGTH of and ADDRESS OF as valid BY CONTENT
+arguments.
 .It Fl Wno-bad-line-directive
 Warn if malformed
 .Ql #line
@@ -617,21 +633,31 @@ Warn if EXTERNAL is used with ASSIGN.
 Warn if filename is used with ASSIGN.
 .It Fl Wno-binary-long-long
 Warn if BINARY-LONG-LONG is used.
-.It Fl Wno-call_fd
+.It Fl Wno-call-fd
 Warn if CALL with FD parameter is used.
 This feature is currently unimplemented. 
-.It Fl Wno-call_giving
+.It Fl Wno-call-giving
 Warn if CALL ... GIVING is used.
-.It Fl Wno-call_literal
-Warn if CALL is used is used with a literal parameter by reference.
+.It Fl Wno-call-literal
+Warn if CALL is used is used with a literal parameter by
+reference. Validation applies not only to alphanumeric and national
+literals, but to
+.Dq "named literals" :
+01 constants, 78 constants, and strings defined by the CDF.
 .It Fl Wno-cdf-dollar
 Warn if CDF \[Do]IF is used.
 .It Fl Wno-comp-6
 Warn if COMPUTATIONAL-6 is used.
 .It Fl Wno-comp-x
 Warn if COMPUTATIONAL is used with PICTURE X.
+.It Fl Wno-display-screen
+Warn if DISPLAY WITH screen options is used.
+.It Fl Wno-dynamic-call
+Note if CALL with dynamic target is used.
 .It Fl Wno-file-code-set
 Warn if FILE CODE SET is used.
+.It Fl Wno-hex-numeric
+Warn if hexadecimal notation is used for integers.
 .It Fl Wno-inspect-trailing
 Warn if INSPECT ... TRAILING is used.
 .It Fl Wno-level-1-occurs
@@ -641,12 +667,13 @@ Warn if CDF defines Level 78 constant.
 .It Fl Wno-move-index
 Warn if MOVE INDEX is used.
 .It Fl Wno-move-pointer
-Warn if
-MOVE POINTER is used.
+Warn if MOVE POINTER is used.
 .It Fl Wno-set-numeric
 Warn if SET is used with NUMERIC target.
 .It Fl Wno-redefines-first
 Warn if REDEFINES does not appear immediately after NAME.
+.It Fl Wno-redefines-table
+Warn if REDEFINES target is a table.
 .It Fl Wno-returning-number
 Warn if RETURNING <number> is used.
 .It Fl Wno-usage-typename
@@ -693,6 +720,8 @@ Warn if SECTION segments are used.
 Warn if SET LOCALE ... TO is used.
 .It Fl Wno-set-to-locale
 Warn if SET ... TO LOCALE is used.
+.It Fl Wno-value-clause
+Warn if VALUE has too many trailing blanks.
 .
 `.\" convert errors to warnings
 Warn if a line directive is malformed (instead of error).
@@ -716,6 +745,8 @@ Warn if a preprocessor fails  (instead of error).
 Warn if PROCEDURE POINTER is used.
 .It Fl Wno-procedure-not-found
 Warn if a referenced procedure is not found (instead of error).
+.It Fl Wno-redefines-grow
+Warn if REDEFINES data item is larger.
 .It Fl Wno-replace-error
 Warn if REPLACE cannot be processed (instead of error).
 .It Fl Wno-segment-error
@@ -1170,6 +1201,14 @@ resolution of
 .Ar filename
 is deferred until runtime, when the name must appear in the program's
 environment.
+.Ss TRACE
+.Nm
+accepts the CDF directives
+.Sy "READY TRACE"
+and
+.Sy "RESET TRACE" .
+Per documentation of modern IBM compilers, these directives have no effect.
+They allow old code to compile without comment.
 .Ss XML PARSE
 .Nm
 emulates the IBM
@@ -1714,58 +1753,58 @@ To test a feature-set variable, use
 .Nm
 implements all intrinsic functions defined by \*[isostd], plus a few
 others. They are listed alphabetically below.
-.Bl -item -compact
-.It
+.Bl -tag -width 2n -compact
+.It A
 ABS ACOS ANNUITY ASIN ATAN
-.It
-BASECONVERT \%BIT-OF \%BIT-TO-CHAR \%BOOLEAN-OF-INTEGER \%BYTE-LENGTH
-.It
-CHAR \%CHAR-NATIONAL \%COMBINED-DATETIME CONCAT CONVERT COS \%CURRENT-DATE
-.It
-\%DATE-OF-INTEGER \%DATE-TO-YYYYMMDD \%DAY-OF-INTEGER \%DAY-TO-YYYYDDD \%DISPLAY-OF
-.It
-E \%EXCEPTION-FILE
-\%EXCEPTION-FILE-N \%EXCEPTION-LOCATION \%EXCEPTION-LOCATION-N
-\%EXCEPTION-STATEMENT \%EXCEPTION-STATUS EXP EXP10
-.It
-FACTORIAL \%FIND-STRING
-\%FORMATTED-CURRENT-DATE \%FORMATTED-DATE \%FORMATTED-DATETIME
-\%FORMATTED-TIME \%FRACTION-PART
-.It
-\%HEX-OF \%HEX-TO-CHAR \%HIGHEST-ALGEBRAIC
-.It
-INTEGER \%INTEGER-OF-BOOLEAN \%INTEGER-OF-DATE \%INTEGER-OF-DAY
-\%INTEGER-OF-FORMATTED-DATE \%INTEGER-PART
-.It
-LENGTH \%LOCALE-COMPARE
-\%LOCALE-DATE \%LOCALE-TIME \%LOCALE-TIME-FROM-SECONDS LOG LOG10 \%LOWER-CASE
-\%LOWEST-ALGEBRAIC
-.It
-MAX MEAN MEDIAN MIDRANGE MIN MOD \%MODULE-NAME
-.It
-\%NATIONAL-OF NUMVAL \%NUMVAL-C \%NUMVAL-F ORD
-.It
-\%ORD-MAX \%ORD-MIN
-.It
-PI \%PRESENT-VALUE
-.It
+.It B
+BASECONVERT BIT-OF BIT-TO-CHAR BOOLEAN-OF-INTEGER BYTE-LENGTH
+.It C
+CHAR CHAR-NATIONAL COMBINED-DATETIME CONCAT CONVERT COS CURRENT-DATE
+.It D
+DATE-OF-INTEGER DATE-TO-YYYYMMDD DAY-OF-INTEGER DAY-TO-YYYYDDD DISPLAY-OF
+.It E
+E EXCEPTION-FILE
+EXCEPTION-FILE-N EXCEPTION-LOCATION EXCEPTION-LOCATION-N
+EXCEPTION-STATEMENT EXCEPTION-STATUS EXP EXP10
+.It F
+FACTORIAL FIND-STRING
+FORMATTED-CURRENT-DATE FORMATTED-DATE FORMATTED-DATETIME
+FORMATTED-TIME FRACTION-PART
+.It H
+HEX-OF HEX-TO-CHAR HIGHEST-ALGEBRAIC
+.It I
+INTEGER INTEGER-OF-BOOLEAN INTEGER-OF-DATE INTEGER-OF-DAY
+INTEGER-OF-FORMATTED-DATE INTEGER-PART
+.It L
+LENGTH LOCALE-COMPARE
+LOCALE-DATE LOCALE-TIME LOCALE-TIME-FROM-SECONDS LOG LOG10 LOWER-CASE
+LOWEST-ALGEBRAIC
+.It M
+MAX MEAN MEDIAN MIDRANGE MIN MOD MODULE-NAME
+.It N
+NATIONAL-OF NUMVAL NUMVAL-C NUMVAL-F ORD
+.It O
+ORD-MAX ORD-MIN
+.It P
+PI PRESENT-VALUE
+.It R
 RANDOM RANGE REM REVERSE
-.It
-\%SECONDS-FROM-FORMATTED-TIME
-\%SECONDS-PAST-MIDNIGHT SIGN SIN \%SMALLEST-ALGEBRAIC SQRT
-\%STANDARD-COMPARE \%STANDARD-DEVIATION SUBSTITUTE SUM
-.It
-TAN \%TEST-DATE-YYYYMMDD \%TEST-DAY-YYYYDDD \%TEST-FORMATTED-DATETIME
-\%TEST-NUMVAL \%TEST-NUMVAL-C \%TEST-NUMVAL-F TRIM
-.It
-ULENGTH UPOS \%UPPER-CASE
+.It S
+SECONDS-FROM-FORMATTED-TIME
+SECONDS-PAST-MIDNIGHT SIGN SIN SMALLEST-ALGEBRAIC SQRT
+STANDARD-COMPARE STANDARD-DEVIATION SUBSTITUTE SUM
+.It T
+TAN TEST-DATE-YYYYMMDD TEST-DAY-YYYYDDD TEST-FORMATTED-DATETIME
+TEST-NUMVAL TEST-NUMVAL-C TEST-NUMVAL-F TRIM
+.It U
+ULENGTH UPOS UPPER-CASE
 USUBSTR USUPPLEMENTARY UUID4 UVALID UWIDTH
-.It
+.It V
 VARIANCE
-.It
-\%WHEN-COMPILED
-.It
-\%YEAR-TO-YYYY
+.It W
+WHEN-COMPILED
+.It Y
+YEAR-TO-YYYY
 .El
 .
 .Ss Binary floating point DISPLAY
@@ -1924,7 +1963,7 @@ If defined, specifies the directory paths to be used by the
 .Nm
 runtime library,
 .Pa libgcobol.so ,
-to locate shared objects.
+to locate entry points in shared objects.
 Like
 .Ev LD_LIBRARY_PATH ,
 it may contain several directory names separated by a colon
@@ -1942,16 +1981,22 @@ when the executable loads is controlled by
 .Xr ld.so 8 ,
 not libgcobol.
 .Pp
-Each directory is searched for files whose name ends in
-.Ql ".so" .
-For each such file,
+Each directory is searched for files whose names are based on the desired
+symbol.  As an example, consider a CALL to the program-id "FooBar". When the
+.Sy CALL-CONVENTION COBOL
+is operative, the symbol is forced to lowercase and an attempt is made to find
+"FOOBAR.so", followed by an attempt to find "foobar.so".  When
+.Sy CALL-CONVENTION VERBATIM
+is operative, attempts are made to find "FOOBAR.so", then "FooBar.so, and finally
+"foobar.so".  For each such file,
 .Xr dlopen 3
-is attempted, and, if successful
-.Xr dlsym 3 .
-No relationship is defined between the symbol's name and the filename.
+is attempted, and if successful,
+.Xr dlsym 3 is used to search for the 
+symbol.
 .Pp
-Without
-.Ev COBPATH ,
+When 
+.Ev COBPATH and 
+.Ev LD_LIBRARY_PATH are not explicitly used, 
 binaries produced by
 .Nm
 behave as one might expect of any program compiled with gcc.  Any
@@ -2087,6 +2132,85 @@ with
 .Sy "LINE SEQUENTIAL"
 files.
 .
+.Sh COMPUTATION POLICY
+Inputs to
+.Sy ADD ,
+.Sy SUBTRACT ,
+.Sy MULTIPLY ,
+.Sy DIVIDE ,
+and
+.Sy COMPUTE
+must be
+numeric, and outputs must be numeric or numeric-edited. Type-checking
+is done by the compiler.  However, the program may cause non-numeric
+data to be moved into those operands.  That situation is dealt with at
+runtime in the form of Exception Conditions.
+.Pp
+Per \*[isostd] 14.6.13.2 Incompatible data,
+.Sy EC-DATA-INCOMPATIBLE
+is raised when the receiving data item is numeric and the sending item
+is not. In addition to the above statements, that can occur with
+.Sy MOVE
+if the sending item cannot be interpreted as an integer.
+.Pp
+To the question,
+.Dq "How could that happen?"
+there are three answers: I/O,
+.Sy REDEFINES ,
+and
+.Sy MOVE .
+Unlike some languages, \*[lang] generally uses
+.Dq "late binding" ;
+errors are not raised until the last possible moment.  A
+.Sy READ
+populates a record, and nothing says the input record must match the
+\*[lang] record definition.  Similarly a
+.Em group
+.Sy MOVE
+is defined at copying one block of characters to another. \*[lang]
+does not require the fields to match up.  Even the most specific
+.Sy MOVE
+may still copy arbitrary data:
+.Bd -literal
+77 A PIC X VALUE 'a'.
+77 N PIC 9 VALUE  1.
+ ...
+MOVE A TO N.
+DISPLAY N.
+MOVE N TO A. 
+DISPLAY A.
+.Ed
+.Lp
+displays
+.Bd -literal
+a
+a
+.Ed
+.Pp
+The system will not raise
+.Sy EC-DATA-INCOMPATIBLE
+unless enabled.  When it is not enabled,
+.Nm
+interprets the data as best it can.  For numeric display and packed
+decimal, the values are masked against the ASCII digits 0-9, and
+computation proceeds apace.
+.Pp
+For something in between all-or-nothing checking, 
+.Nm
+supports an implementation-defined EC:
+.Sy EC-DATA-IMP-OC7 ,
+whose name in no way derives from the famous IBM error code.  This EC
+is enabled by default with
+.Sy "-dialect ibm"
+to emulate observed behavior of some IBM compilers.  If enabled,
+the runtime system verifies that numeric 
+.Sy "DISPLAY"
+and
+.Sy "PACKED-DECIMAL"
+data indeed contain valid values at point of computation. If the
+values are not in range, the EC is raised.  It is a fatal EC and, as
+with other fatal ECs causes process termination if not handled.
+.
 .\" .Sh SEE ALSO
 .
 .Sh STANDARDS
@@ -2128,12 +2252,14 @@ Inter-Program Communication
 .It ST 100%
 Sort-Merge
 .It SM 100%
-Source Text Manipulation RW \en Report Writer
-.It CM
+Source Text Manipulation
+.It RW \0\00%
+Report Writer
+.It CM \0\00%
 Communication
-.It DB to do?
+.It DB \0\00%
 Debug
-.It SG
+.It SG \0\00%
 Segmentation
 .It IF 100%
 Intrinsic Function

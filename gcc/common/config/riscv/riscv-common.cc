@@ -298,7 +298,7 @@ static const riscv_cpu_alias_info riscv_cpu_alias_table[] =
 
 static const riscv_cpu_info riscv_cpu_tables[] =
 {
-#define RISCV_CORE(CORE_NAME, ARCH, TUNE) \
+#define RISCV_CORE(CORE_NAME, ARCH, TUNE, MVENDORID, MARCHID, MIMPID) \
     {CORE_NAME, ARCH, TUNE},
 #include "../../../config/riscv/riscv-cores.def"
     {NULL, NULL, NULL}
@@ -522,10 +522,11 @@ subset_cmp (const std::string &a, const std::string &b)
     }
 }
 
-/* Return true if EXT is a standard extension.  */
+/* Return true if EXT names an extension this compiler knows about, whether
+   standard or vendor defined.  */
 
-static bool
-standard_extensions_p (const char *ext)
+bool
+riscv_ext_is_known_p (const char *ext)
 {
   auto itr = riscv_ext_infos.find (ext);
   return itr != riscv_ext_infos.end ();
@@ -562,7 +563,7 @@ riscv_subset_list::add (const char *subset, int major_version,
 	}
       return;
     }
-  else if (strlen (subset) == 1 && !standard_extensions_p (subset))
+  else if (strlen (subset) == 1 && !riscv_ext_is_known_p (subset))
     {
       if (m_loc)
 	error_at (*m_loc,
@@ -571,7 +572,7 @@ riscv_subset_list::add (const char *subset, int major_version,
 		  m_arch, subset);
       return;
     }
-  else if (subset[0] == 'z' && !standard_extensions_p (subset))
+  else if (subset[0] == 'z' && !riscv_ext_is_known_p (subset))
     {
       if (m_loc)
 	error_at (*m_loc,
@@ -580,7 +581,7 @@ riscv_subset_list::add (const char *subset, int major_version,
 		  m_arch, subset);
       return;
     }
-  else if (subset[0] == 's' && !standard_extensions_p (subset))
+  else if (subset[0] == 's' && !riscv_ext_is_known_p (subset))
     {
       if (m_loc)
 	error_at (*m_loc,
@@ -589,7 +590,7 @@ riscv_subset_list::add (const char *subset, int major_version,
 		  m_arch, subset);
       return;
     }
-  else if (subset[0] == 'x' && !standard_extensions_p (subset))
+  else if (subset[0] == 'x' && !riscv_ext_is_known_p (subset))
     {
       if (m_loc)
 	error_at (*m_loc,
@@ -1922,11 +1923,21 @@ riscv_multi_lib_info_t::parse (
   else
     {
       std::vector<std::string>::const_iterator itr;
+      bool only_arch_abi = true;
       for (itr = conds.begin (); itr != conds.end (); ++itr)
 	if (prefixed_with (*itr, "march="))
 	  multi_lib_info->arch_str = itr->c_str () + strlen ("march=");
 	else if (prefixed_with (*itr, "mabi="))
 	  multi_lib_info->abi_str = itr->c_str () + strlen ("mabi=");
+	else
+	  only_arch_abi = false;
+
+      /* Skip a multi-lib that is exactly equivalent to the default: same
+	 march and mabi with no other distinguishing option. */
+      if (only_arch_abi
+	  && multi_lib_info->arch_str == default_arch_str
+	  && multi_lib_info->abi_str == default_abi_str)
+	return false;
     }
 
   multi_lib_info->subset_list =

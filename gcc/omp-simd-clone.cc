@@ -1574,7 +1574,7 @@ simd_clone_adjust (struct cgraph_node *node)
 	      c--;
 	      tree idx = make_ssa_name (TREE_TYPE (iter1));
 	      g = gimple_build_assign (idx, RSHIFT_EXPR, iter1,
-				       build_int_cst (NULL_TREE, s));
+				       build_int_cst (integer_type_node, s));
 	      gsi_insert_after (&gsi, g, GSI_CONTINUE_LINKING);
 	      mask = make_ssa_name (TREE_TYPE (TREE_TYPE (mask_array)));
 	      tree aref = build4 (ARRAY_REF,

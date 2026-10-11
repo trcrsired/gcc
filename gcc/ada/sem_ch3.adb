@@ -2142,15 +2142,15 @@ package body Sem_Ch3 is
                  ("access to specific tagged type required (RM 3.9.2(9))", E);
             end if;
 
-            --  (Ada 2005: AI-230): Accessibility check for anonymous
+            --  Ada 2005 (AI-230): Accessibility check for anonymous
             --  components
 
-            if Type_Access_Level (Etype (E)) >
-               Deepest_Type_Access_Level (T)
+            if Static_Type_Access_Level (Etype (E))
+                 > Static_Type_Access_Level (T, Deepest => True)
             then
                Error_Msg_N
-                 ("expression has deeper access level than component " &
-                  "(RM 3.10.2 (12.2))", E);
+                 ("expression has deeper accessibility level than component"
+                  & " (RM 3.10.2(12.2))", E);
             end if;
 
             --  The initialization expression is a reference to an access
@@ -2163,8 +2163,8 @@ package body Sem_Ch3 is
               and then Present (Discriminal_Link (Entity (E)))
             then
                Error_Msg_N
-                 ("discriminant has deeper accessibility level than target",
-                  E);
+                 ("access discriminant has deeper accessibility level than"
+                  & " component (RM 3.10.2(12.2))", E);
             end if;
          end if;
       end if;
@@ -2319,12 +2319,6 @@ package body Sem_Ch3 is
       --  of the parameter block, etc. to catch illegal uses within the
       --  contract expression. Full analysis of the expression is done when
       --  the contract is processed.
-
-      function Contains_Lib_Incomplete_Type (Pkg : Entity_Id) return Boolean;
-      --  Check if a nested package has entities within it that rely on library
-      --  level private types where the full view has not been completed for
-      --  the purposes of checking if it is acceptable to freeze an expression
-      --  function at the point of declaration.
 
       procedure Handle_Late_Controlled_Primitive (Body_Decl : Node_Id);
       --  Determine whether Body_Decl denotes the body of a late controlled
@@ -2528,40 +2522,6 @@ package body Sem_Ch3 is
             Next_Entity (Ent);
          end loop;
       end Check_Entry_Contracts;
-
-      ----------------------------------
-      -- Contains_Lib_Incomplete_Type --
-      ----------------------------------
-
-      function Contains_Lib_Incomplete_Type (Pkg : Entity_Id) return Boolean is
-         Curr : Entity_Id;
-
-      begin
-         --  Avoid looking through scopes that do not meet the precondition of
-         --  Pkg not being within a library unit spec.
-
-         if not Is_Compilation_Unit (Pkg)
-           and then not Is_Generic_Instance (Pkg)
-           and then not In_Package_Body (Enclosing_Lib_Unit_Entity (Pkg))
-         then
-            --  Loop through all entities in the current scope to identify
-            --  an entity that depends on a private type.
-
-            Curr := First_Entity (Pkg);
-            loop
-               if Nkind (Curr) in N_Entity
-                 and then Depends_On_Private (Curr)
-               then
-                  return True;
-               end if;
-
-               exit when Last_Entity (Current_Scope) = Curr;
-               Next_Entity (Curr);
-            end loop;
-         end if;
-
-         return False;
-      end Contains_Lib_Incomplete_Type;
 
       --------------------------------------
       -- Handle_Late_Controlled_Primitive --
@@ -2806,10 +2766,6 @@ package body Sem_Ch3 is
                Check_Entry_Contracts;
 
             elsif Nkind (Parent (L)) /= N_Package_Specification then
-               if Nkind (Parent (L)) = N_Package_Body then
-                  Freeze_From := First_Entity (Current_Scope);
-               end if;
-
                --  There may have been several freezing points previously,
                --  for example object declarations or subprogram bodies, but
                --  at the end of a declarative part we check freezing from
@@ -2881,7 +2837,7 @@ package body Sem_Ch3 is
                Resolve_Aspects;
             end if;
 
-         --  If next node is a body then freeze all types before the body.
+         --  If next node is a body, then freeze all entities before the body.
          --  An exception occurs for some expander-generated bodies. If these
          --  are generated at places where in general language rules would not
          --  allow a freeze point, then we assume that the expander has
@@ -2892,25 +2848,11 @@ package body Sem_Ch3 is
 
          --  In all other cases (bodies that come from source, and expander
          --  generated bodies that have not been analyzed yet), freeze all
-         --  types now. Note that in the latter case, the expander must take
-         --  care to attach the bodies at a proper place in the tree so as to
-         --  not cause unwanted freezing at that point. The exception is the
-         --  generated body of an expression function, which does not freeze.
+         --  entities now. Note that in the latter case, the expander must
+         --  take care to attach the bodies at a proper place in the tree,
+         --  so as not to cause unwanted freezing at that point.
 
-         --  It is also necessary to check for a case where both an expression
-         --  function is used and the current scope depends on an incomplete
-         --  private type from a library unit, otherwise premature freezing of
-         --  the private type will occur.
-
-         elsif not Analyzed (Next_Decl)
-           and then Is_Body (Next_Decl)
-           and then ((Nkind (Next_Decl) /= N_Subprogram_Body
-                      or else not Was_Expression_Function (Next_Decl))
-                     or else (not Is_Ignored_Ghost_Entity_In_Codegen
-                                    (Current_Scope)
-                              and then not Contains_Lib_Incomplete_Type
-                                             (Current_Scope)))
-         then
+         elsif Is_Body (Next_Decl) and then not Analyzed (Next_Decl) then
             --  When a controlled type is frozen, the expander generates stream
             --  and controlled-type support routines. If the freeze is caused
             --  by the stand-alone body of Initialize, Adjust, or Finalize, the
@@ -5264,17 +5206,28 @@ package body Sem_Ch3 is
          Rewrite (Object_Definition (N), New_Occurrence_Of (Act_T, Loc));
          Freeze_Before (N, Act_T);
 
-      --  If this is a constant declaration of an unconstrained type and
-      --  the initialization is an aggregate, we can use the subtype of the
-      --  aggregate for the declared entity because it is immutable.
+      --  If this is the declaration of a constant whose nominal subtype is an
+      --  unconstrained discriminated record type, or a constrained array type
+      --  whose component type is such a type, then we can use the subtype of
+      --  the aggregate for the constant because it is immutable.
 
-      elsif not Is_Constrained (T)
-        and then Has_Discriminants (T)
-        and then Constant_Present (N)
-        and then not Has_Unchecked_Union (T)
-        and then Nkind (E) = N_Aggregate
-      then
-         Act_T := Etype (E);
+      elsif Constant_Present (N) and then Nkind (E) = N_Aggregate then
+         declare
+            function Is_UDR (Typ : Entity_Id) return Boolean is
+              (not Is_Constrained (Typ)
+                and then Has_Discriminants (Typ)
+                and then not Has_Unchecked_Union (Typ));
+            --  Whether Typ is an unconstrained discriminated record type
+
+         begin
+            if Is_UDR (T)
+              or else (Is_Array_Type (T)
+                        and then Is_Constrained (T)
+                        and then Is_UDR (Component_Type (T)))
+            then
+               Act_T := Etype (E);
+            end if;
+         end;
       end if;
 
       --  Check No_Wide_Characters restriction
@@ -8767,8 +8720,6 @@ package body Sem_Ch3 is
          --  In any case, the primitive operations are inherited from the
          --  parent type, not from the internal full view.
 
-         Set_Etype (Base_Type (Derived_Type), Base_Type (Parent_Type));
-
          if Derive_Subps then
             --  Initialize the list of primitive operations to an empty list,
             --  to cover tagged types as well as untagged types. For untagged
@@ -8780,12 +8731,13 @@ package body Sem_Ch3 is
             Derive_Subprograms (Parent_Type, Derived_Type);
          end if;
 
+         Set_Has_Constrained_Partial_View
+           (Derived_Type, Has_Constrained_Partial_View (Par_Base));
+         Set_Is_Constrained (Derived_Type, Is_Constrained (Parent_Type));
          Set_Stored_Constraint (Derived_Type, No_Elist);
-         Set_Is_Constrained
-           (Derived_Type, Is_Constrained (Available_Full_View (Parent_Type)));
 
       else
-         --  Untagged type, No discriminants on either view
+         --  Untagged type, no discriminants on either view
 
          if Nkind (Subtype_Indication (Type_Definition (N))) =
                                                    N_Subtype_Indication
@@ -9820,31 +9772,37 @@ package body Sem_Ch3 is
          if Ada_Version >= Ada_2005 then
             Check_Generic_Ancestors;
 
-         elsif Type_Access_Level (Derived_Type) /=
-                 Type_Access_Level (Parent_Type)
+         --  In Ada 95, the accessibility level of a record extension cannot
+         --  be deeper than that of its parent type.
+
+         elsif Static_Type_Access_Level (Derived_Type)
+                 > Static_Type_Access_Level (Parent_Type)
            and then not Is_Generic_Type (Derived_Type)
          then
             if Is_Controlled (Parent_Type) then
                Error_Msg_N
-                 ("controlled type must be declared at the library level",
-                  Indic);
+                 ("controlled type must be declared at the library level"
+                  & " (RM 3.9.1(3))", Indic);
             else
                Error_Msg_N
-                 ("type extension at deeper accessibility level than parent",
-                  Indic);
+                 ("type extension at deeper accessibility level than parent"
+                  & " (RM 3.9.1(3))", Indic);
             end if;
+
+         --  In Ada 95, a type extension cannot be declared in a generic body
+         --  if the parent type is declared outside that body.
 
          else
             declare
                GB : constant Node_Id := Enclosing_Generic_Body (Derived_Type);
+
             begin
                if Present (GB)
                  and then GB /= Enclosing_Generic_Body (Parent_Base)
                then
                   Error_Msg_NE
                     ("parent type of& must not be outside generic body"
-                       & " (RM 3.9.1(4))",
-                         Indic, Derived_Type);
+                     & " (RM 3.9.1(4))", Indic, Derived_Type);
                end if;
             end;
          end if;
@@ -10127,6 +10085,8 @@ package body Sem_Ch3 is
       Propagate_Concurrent_Flags (Derived_Type, Parent_Base);
       Propagate_Controlled_Flags (Derived_Type, Parent_Base, Deriv => True);
 
+      Set_Has_Constrained_Partial_View
+        (Derived_Type, Has_Constrained_Partial_View (Parent_Base));
       Set_Has_Non_Standard_Rep
         (Derived_Type, Has_Non_Standard_Rep     (Parent_Base));
       Set_Has_Primitive_Operations
@@ -18422,8 +18382,9 @@ package body Sem_Ch3 is
                --  of the type.
 
                if Scope (Root_Class_Typ) /= Scope (T)
-                 and then Deepest_Type_Access_Level (Root_Class_Typ)
-                            < Deepest_Type_Access_Level (T)
+                 and then
+                   Static_Type_Access_Level (Root_Class_Typ, Deepest => True)
+                     < Static_Type_Access_Level (T)
                then
                   Error_Msg_NE
                     ("descendant of mutably tagged type cannot be deeper than"
@@ -18923,7 +18884,6 @@ package body Sem_Ch3 is
             Set_Full_View (Prev, Id);
             Append_Entity (Id, Current_Scope);
             Set_Is_Public (Id, Is_Public (Prev));
-            Set_Is_Internal (Id);
             New_Id := Prev;
 
             --  If the incomplete view is tagged, a class_wide type has been
@@ -23493,8 +23453,8 @@ package body Sem_Ch3 is
 
    procedure Record_Type_Definition (Def : Node_Id; Prev_T : Entity_Id) is
       Component            : Entity_Id;
-      Final_Storage_Only   : Boolean := True;
-      Relaxed_Finalization : Boolean := True;
+      Final_Storage_Only   : Boolean;
+      Relaxed_Finalization : Boolean;
       T                    : Entity_Id;
 
    begin
@@ -23502,6 +23462,17 @@ package body Sem_Ch3 is
          T := Full_View (Prev_T);
       else
          T := Prev_T;
+      end if;
+
+      --  Initialize Final_Storage_Only and Relaxed_Finalization from the
+      --  current state if we have inherited controlled components.
+
+      if Has_Controlled_Component (T) then
+         Final_Storage_Only := Finalize_Storage_Only (T);
+         Relaxed_Finalization := Has_Relaxed_Finalization (T);
+      else
+         Final_Storage_Only := True;
+         Relaxed_Finalization := True;
       end if;
 
       Set_Is_Not_Self_Hidden (T);
@@ -23568,13 +23539,12 @@ package body Sem_Ch3 is
          if Ekind (Component) /= E_Component then
             null;
 
-         --  Do not set Has_Controlled_Component on a class-wide equivalent
-         --  type. See Make_CW_Equivalent_Type.
+         --  Do not set Has_Controlled_Component on a CW equivalent type,
+         --  see Exp_Util.Make_CW_Equivalent_Type.
 
          elsif not Is_Class_Wide_Equivalent_Type (T)
-           and then (Has_Controlled_Component (Etype (Component))
-                      or else (Chars (Component) /= Name_uParent
-                                and then Is_Controlled (Etype (Component))))
+           and then Chars (Component) /= Name_uParent
+           and then Needs_Finalization (Etype (Component))
          then
             Set_Has_Controlled_Component (T);
             Final_Storage_Only :=
@@ -23591,7 +23561,7 @@ package body Sem_Ch3 is
       --  For a type that is not directly controlled but has controlled
       --  components, Finalize_Storage_Only is set if all the controlled
       --  components are Finalize_Storage_Only. The same processing is
-      --  appled to Has_Relaxed_Finalization.
+      --  applied to Has_Relaxed_Finalization.
 
       if not Is_Controlled (T) and then Has_Controlled_Component (T) then
          Set_Finalize_Storage_Only    (T, Final_Storage_Only);

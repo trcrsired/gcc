@@ -108,15 +108,22 @@
    enum from avr.h (or designated initialized must be used).  */
 const avr_addrspace_t avr_addrspace[ADDR_SPACE_COUNT] =
 {
-  { ADDR_SPACE_RAM,  0, 2, "", 0, nullptr },
-  { ADDR_SPACE_FLASH,  1, 2, "__flash",   0, ".progmem.data" },
-  { ADDR_SPACE_FLASH1, 1, 2, "__flash1",  1, ".progmem1.data" },
-  { ADDR_SPACE_FLASH2, 1, 2, "__flash2",  2, ".progmem2.data" },
-  { ADDR_SPACE_FLASH3, 1, 2, "__flash3",  3, ".progmem3.data" },
-  { ADDR_SPACE_FLASH4, 1, 2, "__flash4",  4, ".progmem4.data" },
-  { ADDR_SPACE_FLASH5, 1, 2, "__flash5",  5, ".progmem5.data" },
-  { ADDR_SPACE_FLASHX, 1, 3, "__flashx",  0, ".progmemx.data" },
-  { ADDR_SPACE_MEMX, 1, 3, "__memx",  0, ".progmemx.data" },
+  { ADDR_SPACE_RAM,  0, 2, "", 0, nullptr, Val_GNU_AVR_VTABLE_RAM },
+  { ADDR_SPACE_FLASH,  1, 2, "__flash",  0, ".progmem.data",
+					    Val_GNU_AVR_VTABLE_FLASH },
+  { ADDR_SPACE_FLASH1, 1, 2, "__flash1", 1, ".progmem1.data",
+					    Val_GNU_AVR_VTABLE_FLASH1 },
+  { ADDR_SPACE_FLASH2, 1, 2, "__flash2", 2, ".progmem2.data",
+					    Val_GNU_AVR_VTABLE_FLASH2 },
+  { ADDR_SPACE_FLASH3, 1, 2, "__flash3", 3, ".progmem3.data",
+					    Val_GNU_AVR_VTABLE_FLASH3 },
+  { ADDR_SPACE_FLASH4, 1, 2, "__flash4", 4, ".progmem4.data",
+					    Val_GNU_AVR_VTABLE_FLASH4 },
+  { ADDR_SPACE_FLASH5, 1, 2, "__flash5", 5, ".progmem5.data",
+					    Val_GNU_AVR_VTABLE_FLASH5 },
+  { ADDR_SPACE_FLASHX, 1, 3, "__flashx", 0, ".progmemx.data",
+					    Val_GNU_AVR_VTABLE_FLASHX },
+  { ADDR_SPACE_MEMX, 1, 3, "__memx", 0, ".progmemx.data", -1 },
 };
 
 
@@ -248,6 +255,17 @@ bool avr_have_dimode = true;
 bool avr_need_clear_bss_p = false;
 bool avr_need_copy_data_p = false;
 bool avr_has_rodata_p = false;
+
+/* Features used by the target code that are affected by the chosen ABI.
+   Output as .gnu_attribute in order to guarantee that only compatible
+   objects files are linked together.
+      Notice that for the latter two cases, there are loop holes like
+   sizeof(double).  Just mapping -mdouble=X to a .gnu_attribute *,X
+   would be too strict since libgcc may reuse a multilib provided it
+   doesn't depend on -m[long-]double.  */
+bool avr_uses_vtable_p = false;
+static bool avr_uses_double_p = false;
+static bool avr_uses_long_double_p = false;
 
 /* Counts how often pass avr-fuse-add has been executed.  It is kept in
    sync with cfun->machine->n_avr_fuse_add_executed and serves as an
@@ -1339,6 +1357,12 @@ avr_simple_epilogue (void)
 static int
 sequent_regs_live (void)
 {
+  // Behave according to avr_regs_to_save().
+  if (TREE_THIS_VOLATILE (current_function_decl)
+      || cfun->machine->is_OS_task
+      || cfun->machine->is_OS_main)
+    return 0;
+
   int live_seq = 0;
   int cur_seq = 0;
 
@@ -1518,12 +1542,16 @@ avr_prologue_setup_frame (HOST_WIDE_INT size, HARD_REG_SET set)
 		   && size < size_max
 		   && live_seq
 		   && !isr_p
-		   && !cfun->machine->is_OS_task
-		   && !cfun->machine->is_OS_main
 		   && !AVR_TINY);
 
+  // Small frame sizes can be realized by RCALL . + PUSH tmp_reg.  Get the
+  // respective insn count, and only use prologue_saves when it is profitable.
+  const int pc_size = AVR_2_BYTE_PC ? 2 : 3;
+  const int n_insns = 2 + live_seq + size / pc_size + size % pc_size;
+  const int n_mini_insns = 5 + AVR_HAVE_JMP_CALL;
+
   if (minimize
-      && (frame_pointer_needed
+      && ((frame_pointer_needed && n_mini_insns < n_insns)
 	  || avr_outgoing_args_size () > 8
 	  || (AVR_2_BYTE_PC && live_seq > 6)
 	  || live_seq > 7))
@@ -2044,8 +2072,6 @@ avr_expand_epilogue (bool sibcall_p)
   bool minimize = (TARGET_CALL_PROLOGUES
 		   && live_seq
 		   && !isr_p
-		   && !cfun->machine->is_OS_task
-		   && !cfun->machine->is_OS_main
 		   && !AVR_TINY);
 
   if (minimize
@@ -6162,7 +6188,7 @@ avr_out_set_some (rtx_insn *insn, rtx *xop, int *plen)
   scratch = REG_P (xop[1]) ? xop[1] : NULL_RTX;
   oldval = NULL_RTX;
 
-  /* There are 3 ways to get a scratch, starting withe the most preferred ones:
+  /* There are 3 ways to get a scratch, starting with the most preferred ones:
      1) avr_find_unused_d_reg() need not to be restored, and it takes care
 	of fixed regs.  This is an unlikely case, e.g. with -fno-peephole2.
      2) "set_some" provides a scratch register with a known content.
@@ -6539,6 +6565,100 @@ avr_out_cmp_lsr (rtx_insn *insn, rtx *xop, int *plen)
 }
 
 
+/* Helper for `avr_out_compare' that compares in the EQ/NE case,
+   and that permutes the sub-regs of the compare register.
+   XREG is the reg to compare against const_int XVAL.
+   Return TRUE iff the comparison has been carried out.  */
+
+static bool
+avr_out_perm_compare_eqne (rtx_insn *insn, rtx *xop, int *plen,
+			   rtx xreg, rtx xval)
+{
+  // Number of bytes to compare.
+  const int n_bytes = GET_MODE_SIZE (GET_MODE (xreg));
+
+  // Comparisons == and != may change the order in which the sub-bytes are
+  // being compared.  Start with the high 16 bits so we can use SBIW.
+
+  if (n_bytes == 4
+      && AVR_HAVE_ADIW
+      && REGNO (xreg) >= REG_22
+      && (xval == const0_rtx
+	  || (IN_RANGE (avr_int16 (xval, 2), 0, 63)
+	      && reg_unused_after (insn, xreg))))
+    {
+      xop[2] = avr_word (xval, 2);
+      avr_asm_len ("sbiw %C0,%2"      CR_TAB
+		   "sbci %B0,hi8(%1)" CR_TAB
+		   "sbci %A0,lo8(%1)", xop, plen, 3);
+      return true;
+    }
+
+  // Similarly, we may reorder the bytes when byte 0 compares against 0.
+  // Just use CPC 0 so that the CPI is not wasted on 0.
+
+  if (n_bytes >= 2
+      && END_REGNO (xreg) > REG_16
+      && INTVAL (xval) != 0
+      && avr_uint8 (xval, 0) == 0
+      // Only do this when we may /not/ clobber xreg, since in
+      // the clobber case we have SBCI at our disposal.
+      && !reg_unused_after (insn, xreg))
+    {
+      int n = 0;
+      rtx yop[8 /*n_bytes*/][3];
+
+      // First do the xval8[i] that are != 0.
+      // Start with the MSB to cover cases like SI:14.
+      for (int i = n_bytes - 1; i >= 0; --i)
+	if (avr_uint8 (xval, i) != 0)
+	  {
+	    rtx xval8 = avr_byte (xval, i);
+	    yop[n][0] = avr_byte (xreg, i);
+	    yop[n][1] = xval8;
+	    yop[n][2] = NULL_RTX;
+
+	    if (n == 0)
+	      {
+		if (REGNO (yop[n][0]) < REG_16)
+		  return false;
+		avr_asm_len ("cpi %0,%1", yop[n], plen, 1);
+	      }
+	    else
+	      {
+		rtx &v8reg = yop[n][2];
+		// When we already saw xval8, we can use the respective
+		// reg instead.  This works as we are comparing EQ / NE.
+		for (int k = 0; k < n && !v8reg; ++k)
+		  if (INTVAL (xval8) == INTVAL (yop[k][1]))
+		    v8reg = yop[k][0];
+
+		// If we see xval8 for the 1st time, we must use the scratch.
+		if (!v8reg)
+		  {
+		    v8reg = xop[2];
+		    avr_asm_len ("ldi %2,%1", yop[n], plen, 1);
+		  }
+
+		avr_asm_len ("cpc %0,%2", yop[n], plen, 1);
+	      }
+	    n += 1;
+	  }
+
+      gcc_assert (IN_RANGE (n, 1, n_bytes - 1));
+
+      // Finally do the remaining xval[i] that are 0.
+      for (int i = 0; i < n_bytes; ++i)
+	if (avr_uint8 (xval, i) == 0)
+	  avr_asm_len ("cpc %0,__zero_reg__",
+		       &all_regs_rtx[REGNO (xreg) + i], plen, 1);
+      return true;
+    }
+
+  return false;
+}
+
+
 /* Output compare instruction
 
       compare (XOP[0], XOP[1])
@@ -6617,22 +6737,10 @@ avr_out_compare (rtx_insn *insn, rtx *xop, int *plen)
 	}
     }
 
-  /* Comparisons == and != may change the order in which the sub-bytes are
-     being compared.  Start with the high 16 bits so we can use SBIW.  */
-
-  if (n_bytes == 4
-      && eqne_p
-      && AVR_HAVE_ADIW
-      && REGNO (xreg) >= REG_22
-      && (xval == const0_rtx
-	  || (IN_RANGE (avr_int16 (xval, 2), 0, 63)
-	      && reg_unused_after (insn, xreg))))
-    {
-      xop[2] = avr_word (xval, 2);
-      return avr_asm_len ("sbiw %C0,%2"      CR_TAB
-			  "sbci %B0,hi8(%1)" CR_TAB
-			  "sbci %A0,lo8(%1)", xop, plen, 3);
-    }
+  if (eqne_p
+      // Comparisons == and != may change the order of the sub-bytes.
+      && avr_out_perm_compare_eqne (insn, xop, plen, xreg, xval))
+    return "";
 
   bool changed[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 
@@ -9758,7 +9866,7 @@ avr_out_bitop (rtx xinsn, rtx *xop, int *plen)
   /* Number of bytes to operate on.  */
   int n_bytes = GET_MODE_SIZE (mode);
 
-  /* Value of T-flag (0 or 1) or -1 if unknow.  */
+  /* Value of T-flag (0 or 1) or -1 if unknown.  */
   int set_t = -1;
 
   /* Value (0..0xff) held in clobber register op[3] or -1 if unknown.  */
@@ -12704,6 +12812,41 @@ avr_file_start (void)
 }
 
 
+/* Scan TYP for the occurence of [long] double, and set `avr_uses_double_p'
+   and `avr_uses_long_double_p' accordingly.  This is used by avr_file_end()
+   and also by the avr_pass_has gimple pass.
+   walk_tree() doesn't quite fit the puropse, so cook our own.  */
+
+void
+avr_find_double (tree typ, hash_set<tree> *pset)
+{
+  if (typ == NULL_TREE
+      || typ == error_mark_node
+      || pset->add (typ))
+    return;
+
+  if (POINTER_TYPE_P (typ))
+    return avr_find_double (TREE_TYPE (typ), pset);
+
+  if (TREE_CODE (typ) == ARRAY_TYPE)
+    return avr_find_double (strip_array_types (typ), pset);
+
+  if (RECORD_OR_UNION_TYPE_P (typ))
+    {
+      for (tree fld = TYPE_FIELDS (typ); fld; fld = DECL_CHAIN (fld))
+	if (TREE_CODE (fld) == FIELD_DECL)
+	  avr_find_double (TREE_TYPE (fld), pset);
+      return;
+    }
+
+  if (VECTOR_FLOAT_TYPE_P (typ) || COMPLEX_FLOAT_TYPE_P (typ))
+    typ = TREE_TYPE (typ);
+
+  avr_uses_double_p |= TYPE_MAIN_VARIANT (typ) == double_type_node;
+  avr_uses_long_double_p |= TYPE_MAIN_VARIANT (typ) == long_double_type_node;
+}
+
+
 /* Implement `TARGET_ASM_FILE_END'.  */
 /* Outputs to the stdio stream FILE some
    appropriate text to go at the end of an assembler file.  */
@@ -12723,6 +12866,39 @@ avr_file_end (void)
 
   if (avr_need_clear_bss_p)
     fputs (".global __do_clear_bss\n", asm_out_file);
+
+#ifdef HAVE_AS_AVR_GNU_ATTRIBUTE
+  /* Output .gnu_attribute to tag object files with aspects of the ABI. */
+
+  hash_set<tree> hset;
+  varpool_node *vnode;
+
+  FOR_EACH_VARIABLE (vnode)
+    {
+      const char *id = IDENTIFIER_POINTER (DECL_NAME (vnode->decl));
+      avr_uses_vtable_p |= startswith (id, "_ZTV"); // vtable
+      avr_uses_vtable_p |= startswith (id, "_ZTT"); // vtable table
+
+      avr_find_double (TREE_TYPE (vnode->decl), &hset);
+    }
+
+  // .gnu_attribute 4: The named address space for C++ virtual tables.
+  if (avr_uses_vtable_p)
+    fprintf (asm_out_file, ".gnu_attribute %d,%d\n",
+	     Tag_GNU_AVR_VTABLE_AS, Val_GNU_AVR_VTABLE_RAM);
+
+  // .gnu_attribute 8: The bitsize of double, or 0 if not used.
+  if (avr_uses_double_p)
+    fprintf (asm_out_file, ".gnu_attribute %d,%d\n",
+	     Tag_GNU_AVR_BITS_DOUBLE,
+	     (int) (CHAR_BIT * int_size_in_bytes (double_type_node)));
+
+  // .gnu_attribute 12: The bitsize of long double, or 0 if not used.
+  if (avr_uses_long_double_p)
+    fprintf (asm_out_file, ".gnu_attribute %d,%d\n",
+	     Tag_GNU_AVR_BITS_LONG_DOUBLE,
+	     (int) (CHAR_BIT * int_size_in_bytes (long_double_type_node)));
+#endif // HAVE_AS_AVR_GNU_ATTRIBUTE
 }
 
 
@@ -15322,18 +15498,7 @@ avr_addr_space_convert (rtx src, tree type_old, tree type_new)
 }
 
 
-/* Implement `TARGET_ADDR_SPACE_SUBSET_P'.  */
-
-static bool
-avr_addr_space_subset_p (addr_space_t /*subset*/, addr_space_t /*superset*/)
-{
-  /* Allow any kind of pointer mess.  */
-
-  return true;
-}
-
-
-/* Helps the next function.  */
+/* Helps the next two functions.  */
 
 static bool
 avr_addr_space_contains (addr_space_t super, addr_space_t sub)
@@ -15342,6 +15507,17 @@ avr_addr_space_contains (addr_space_t super, addr_space_t sub)
 	  || super == ADDR_SPACE_MEMX
 	  || (super == ADDR_SPACE_FLASHX
 	      && sub != ADDR_SPACE_MEMX && ! ADDR_SPACE_GENERIC_P (sub)));
+}
+
+
+/* Implement `TARGET_ADDR_SPACE_SUBSET_P'.  */
+
+static bool
+avr_addr_space_subset_p (addr_space_t subset, addr_space_t superset)
+{
+  // Allow any kind of pointer casts with -mno-strict-addr-space-subsets.
+  return (!avropt_strict_addr_space_subsets
+	  || avr_addr_space_contains (superset, subset));
 }
 
 
@@ -15818,7 +15994,7 @@ avr_expand_delay_cycles (rtx operands0)
   //
   // where loop_count denotes the start value of the N-byte loop counter.
   // The maximum value that can be loaded into loop_count is  2^{8 * N},
-  // where the maxmium value is realized by loop_count = 0.
+  // where the maximum value is realized by loop_count = 0.
   // Up to  N + 2 - 1  cycles can be added by trailing NOPs without
   // impeding the loop_count calculation, so that we arrive at a
   // condition of

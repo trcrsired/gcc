@@ -500,7 +500,6 @@ AC_SUBST(PICFLAG_FOR_TARGET)
 AC_USE_SYSTEM_EXTENSIONS
 
 AC_PROG_CPP
-AC_C_INLINE
 
 AC_SYS_LARGEFILE
 AC_CHECK_SIZEOF(ino_t)
@@ -902,18 +901,32 @@ fi
 
 AC_SUBST(DEFAULT_MATCHPD_PARTITIONS)
 
-# Specify the number of splits of insn-emit.cc and insn-recog.cc to generate.
+# Specify the number of output partitions used by the machine-description
+# generators.  Select and validate the effective value after config.gcc has
+# supplied the target default.
+md_generator_partitions_set=no
+md_generator_partitions_legacy=no
+AC_ARG_WITH(md-generator-partitions,
+[AS_HELP_STRING([--with-md-generator-partitions=num|emit:recog:attrtab],
+[Set the partition counts used by genemit, genrecog and genattrtab.
+A single number sets all three counts. [default=target dependent]])],
+[md_generator_partitions=$with_md_generator_partitions
+md_generator_partitions_set=yes])
 AC_ARG_WITH(insnemit-partitions,
-[AS_HELP_STRING([--with-insnemit-partitions=num],
-[Set the number of partitions of insn-emit.cc for genemit and genrecog to create. [default=10]])],
-[DEFAULT_INSNEMIT_PARTITIONS="$with_insnemit_partitions"], [DEFAULT_INSNEMIT_PARTITIONS=10])
-if (test $DEFAULT_INSNEMIT_PARTITIONS -lt 1); then
+[AS_HELP_STRING([--with-insnemit-partitions=num|emit:recog:attrtab],
+[Deprecated alias for --with-md-generator-partitions.])],
+[if test "$md_generator_partitions_set" = yes; then
   AC_MSG_ERROR(m4_normalize([
-		Invalid value $DEFAULT_INSNEMIT_PARTITIONS for --with-insnemit-partitions. \
-		Cannot be negative.]))
+		--with-md-generator-partitions and --with-insnemit-partitions \
+		cannot be used together.]))
 fi
+md_generator_partitions=$with_insnemit_partitions
+md_generator_partitions_set=yes
+md_generator_partitions_legacy=yes])
 
 AC_SUBST(DEFAULT_INSNEMIT_PARTITIONS)
+AC_SUBST(DEFAULT_INSNRECOG_PARTITIONS)
+AC_SUBST(DEFAULT_INSNATTRTAB_PARTITIONS)
 
 # Enable __cxa_atexit for C++.
 AC_ARG_ENABLE(__cxa_atexit,
@@ -1334,21 +1347,19 @@ AC_CHECK_PROG(doc_build_sys, sphinx-build, sphinx, texinfo)
 # works later. *sigh*  This needs to come before all header checks.
 AC_PROG_CPP_WERROR
 
-AC_HEADER_STDC
 AC_HEADER_TIME
 ACX_HEADER_STRING
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIOCGWINSZ
-AC_CHECK_HEADERS(limits.h stddef.h string.h strings.h stdlib.h time.h iconv.h \
+AC_CHECK_HEADERS(stddef.h string.h strings.h time.h iconv.h \
 		 fcntl.h ftw.h unistd.h sys/auxv.h sys/file.h sys/time.h sys/mman.h \
 		 sys/resource.h sys/param.h sys/times.h sys/stat.h sys/locking.h \
-		 direct.h malloc.h langinfo.h ldfcn.h locale.h wchar.h libgen.h)
+		 direct.h malloc.h langinfo.h ldfcn.h wchar.h libgen.h)
 
 # Check for thread headers.
 AC_CHECK_HEADER(thread.h, [have_thread_h=yes], [have_thread_h=])
 AC_CHECK_HEADER(pthread.h, [have_pthread_h=yes], [have_pthread_h=])
 
-# These tests can't be done till we know if we have limits.h.
 gcc_AC_C_CHAR_BIT
 AC_C_BIGENDIAN
 
@@ -1925,6 +1936,57 @@ target_gtfiles=
 
 # Collect target-machine-specific information.
 . ${srcdir}/config.gcc || exit 1
+
+# Use the target default unless the user specified an option.
+if test "$md_generator_partitions_set" = no; then
+  md_generator_partitions=$default_md_generator_partitions
+fi
+
+# Set all three counts here and let the loop below reject anything that is
+# empty, not a number, or out of range.  A value with too many fields leaves
+# its remainder in the last count, where the colon fails the same check.
+case "$md_generator_partitions" in
+  *:*:*)
+    IFS=: read -r DEFAULT_INSNEMIT_PARTITIONS DEFAULT_INSNRECOG_PARTITIONS \
+      DEFAULT_INSNATTRTAB_PARTITIONS <<EOF
+$md_generator_partitions
+EOF
+    ;;
+  *)
+    DEFAULT_INSNEMIT_PARTITIONS=$md_generator_partitions
+    DEFAULT_INSNRECOG_PARTITIONS=$md_generator_partitions
+    DEFAULT_INSNATTRTAB_PARTITIONS=$md_generator_partitions
+    ;;
+esac
+
+for generator_partitions in \
+  "$DEFAULT_INSNEMIT_PARTITIONS" \
+  "$DEFAULT_INSNRECOG_PARTITIONS" \
+  "$DEFAULT_INSNATTRTAB_PARTITIONS"; do
+  case "$generator_partitions" in
+    '' | *[[!0-9]]*) generator_partitions= ;;
+    *)
+      while test "${generator_partitions#0}" != "$generator_partitions"; do
+        generator_partitions=${generator_partitions#0}
+      done
+      case "$generator_partitions" in
+        '' | ?????*) generator_partitions= ;;
+      esac
+      ;;
+  esac
+  if test -z "$generator_partitions"; then
+    AC_MSG_ERROR(m4_normalize([
+		Invalid machine-description generator partition value \
+		$md_generator_partitions. \
+		Use N or E:R:A, with each number between 1 and 9999.]))
+  fi
+done
+
+if test "$md_generator_partitions_legacy" = yes; then
+  AC_MSG_WARN(m4_normalize([
+		--with-insnemit-partitions is deprecated. \
+		Use --with-md-generator-partitions instead.]))
+fi
 
 extra_objs="${host_extra_objs} ${extra_objs}"
 extra_gcc_objs="${host_extra_gcc_objs} ${extra_gcc_objs}"
@@ -3223,9 +3285,10 @@ Valid choices are 'yes' and 'no'.]) ;;
   esac],
  [enable_gnu_indirect_function="$default_gnu_indirect_function"])
 
+gcc_cv_irelative_reloc=
 case "${target}" in
   riscv*-*-linux*)
-    AC_MSG_CHECKING(linker ifunc IRELATIVE support)
+    gcc_cv_irelative_reloc=R_RISCV_IRELATIVE
     cat > conftest.s <<EOF
 	.text
 	.type	foo_resolver, @function
@@ -3244,19 +3307,46 @@ bar:
 	ret
 	.size	bar, .-bar
 EOF
-    if test x"$gcc_cv_as" != x \
-       && test x"$gcc_cv_ld" != x \
-       && test x"$gcc_cv_readelf" != x \
-       && $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
-       && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
-       && $gcc_cv_readelf --relocs --wide conftest \
-	  | grep R_RISCV_IRELATIVE > /dev/null 2>&1; then
-      enable_gnu_indirect_function=yes
-    fi
-    rm -f conftest conftest.o conftest.s
-    AC_MSG_RESULT($enable_gnu_indirect_function)
+    ;;
+  alpha*-*-linux*)
+    # Alpha gas reserves .set for setting assembler modes, so the alias is
+    # spelled with '=' instead, matching the target's ASM_OUTPUT_DEF.
+    gcc_cv_irelative_reloc=R_ALPHA_IRELATIVE
+    cat > conftest.s <<EOF
+	.text
+	.type	foo_resolver, @function
+foo_resolver:
+	ret
+	.size	foo_resolver, .-foo_resolver
+
+	.globl	foo
+	.type	foo, %gnu_indirect_function
+	foo = foo_resolver
+
+	.globl	bar
+	.type	bar, @function
+bar:
+	jsr	\$26, foo
+	ret
+	.size	bar, .-bar
+EOF
     ;;
 esac
+
+if test x"$gcc_cv_irelative_reloc" != x; then
+  AC_MSG_CHECKING(linker ifunc IRELATIVE support)
+  if test x"$gcc_cv_as" != x \
+     && test x"$gcc_cv_ld" != x \
+     && test x"$gcc_cv_readelf" != x \
+     && $gcc_cv_as -o conftest.o conftest.s > /dev/null 2>&1 \
+     && $gcc_cv_ld -o conftest conftest.o > /dev/null 2>&1 \
+     && $gcc_cv_readelf --relocs --wide conftest \
+	| grep $gcc_cv_irelative_reloc > /dev/null 2>&1; then
+    enable_gnu_indirect_function=yes
+  fi
+  rm -f conftest conftest.o conftest.s
+  AC_MSG_RESULT($enable_gnu_indirect_function)
+fi
 
 gif=`if test x$enable_gnu_indirect_function = xyes; then echo 1; else echo 0; fi`
 AC_DEFINE_UNQUOTED(HAVE_GNU_INDIRECT_FUNCTION, $gif,
@@ -4722,6 +4812,11 @@ AS_HELP_STRING([--disable-fix-cortex-a53-843419],
       [AC_DEFINE(HAVE_AS_AVR_MGCCISR_OPTION, 1,
 		[Define if your avr assembler supports -mgcc-isr option.])])
 
+    gcc_GAS_CHECK_FEATURE([.gnu_attribute], gcc_cv_as_avr_gnu_attribute,
+      [], [.gnu_attribute 4,1],,
+      [AC_DEFINE(HAVE_AS_AVR_GNU_ATTRIBUTE, 1,
+		[Define if your avr assembler supports .gnu_attribute.])])
+
     avr_ld_ver="`$gcc_cv_ld -v | sed -e 's:^.* ::'`"
     # Check how default linker description file implements .rodata for
     # avrxmega3 (PR21472).  avr-gcc assumes .rodata is *not* loaded to
@@ -4793,6 +4888,16 @@ EOF
 	AC_MSG_WARN([[see `config.log' for details]])
     fi
     rm -f conftest.s conftest.o conftest.elf
+
+    # Check for linker --prune-vectab.
+    gcc_cv_ld_avr_prune_vectab=no
+    AC_MSG_CHECKING(linker for --prune-vectab support)
+    if $gcc_cv_ld --help 2>&1 | grep -- '--prune-vectab' > /dev/null; then
+       gcc_cv_ld_avr_prune_vectab=yes
+       AC_DEFINE(HAVE_LD_AVR_PRUNE_VECTAB, 1,
+		 [Define if your linker supports --prune-vectab.])
+    fi
+    AC_MSG_RESULT($gcc_cv_ld_avr_prune_vectab)
     ;;
 
   cris-*-*)
@@ -5923,7 +6028,7 @@ foo:
 	.file 1 \"foo.c\"
 	$insn
 	.file 2 \"foo.h\"
-	ret
+	$insn
 "
    dwarf4_success=no
    gcc_GAS_CHECK_FEATURE([--gdwarf-4 with the APP marker],

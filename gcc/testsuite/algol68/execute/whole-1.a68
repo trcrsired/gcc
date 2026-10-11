@@ -1,3 +1,5 @@
+{ This test takes more than 20s on several platforms. }
+{ dg-timeout-factor 2 }
 begin
 
       { RR standard proc whole replaced; test it }

@@ -41,6 +41,7 @@ with Ghost;          use Ghost;
 with Inline;         use Inline;
 with Itypes;         use Itypes;
 with Lib;            use Lib;
+with Mutably_Tagged; use Mutably_Tagged;
 with Nlists;         use Nlists;
 with Nmake;          use Nmake;
 with Opt;            use Opt;
@@ -6302,7 +6303,8 @@ package body Exp_Util is
 
    function Finalize_Address (Typ : Entity_Id) return Entity_Id is
       Btyp : constant Entity_Id := Base_Type (Typ);
-      Utyp : Entity_Id := Typ;
+      Utyp : Entity_Id :=
+               Get_Corresponding_Mutably_Tagged_Type_If_Present (Typ);
 
    begin
       --  Handle protected class-wide or task class-wide types
@@ -7216,15 +7218,6 @@ package body Exp_Util is
    begin
       if Is_Concurrent_Type (Typ) then
          Typ := Corresponding_Record_Type (Typ);
-      end if;
-
-      --  Since restriction violations are not considered serious errors, the
-      --  expander remains active, but may leave the corresponding record type
-      --  malformed. In such cases, component _object is not available so do
-      --  not look for it.
-
-      if not Analyzed (Typ) then
-         return Empty;
       end if;
 
       Comp := First_Component (Typ);
@@ -10730,10 +10723,10 @@ package body Exp_Util is
       end if;
 
       --  Set Is_Class_Wide_Equivalent_Type very early to trigger the special
-      --  treatment for this type. In particular, even though _parent's type
+      --  treatment for this type. In particular, even though _Parent's type
       --  is a controlled type or contains controlled components, we do not
-      --  want to set Has_Controlled_Component on it to avoid making it gain
-      --  an unwanted _controller component.
+      --  want to set Has_Controlled_Component on the equivalent type because
+      --  we do not want to build internal controlled primitives for it.
 
       Set_Is_Class_Wide_Equivalent_Type (Equiv_Type);
 

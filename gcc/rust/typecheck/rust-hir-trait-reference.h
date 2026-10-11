@@ -104,6 +104,8 @@ public:
   // the trait will not be stored in its own map yet
   void on_resolved (const TraitReference *tref);
 
+  void resolve_default_function_body (const TraitReference *tref);
+
   bool is_object_safe () const;
 
 private:
@@ -209,6 +211,8 @@ public:
 
   void on_resolved ();
 
+  void resolve_default_function_bodies ();
+
   bool is_equal (const TraitReference &other) const;
 
   std::vector<TyTy::TypeBoundPredicate> get_super_traits () const;
@@ -253,7 +257,8 @@ public:
 
   TyTy::SubstitutionArgumentMappings
   bind_impl_for_bound (TyTy::BaseType *receiver,
-		       const TyTy::TypeBoundPredicate &bound, location_t locus);
+		       const TyTy::TypeBoundPredicate &bound, location_t locus,
+		       bool emit_error = false);
 
 private:
   TraitReference *trait;

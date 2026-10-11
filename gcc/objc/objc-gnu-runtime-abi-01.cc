@@ -924,7 +924,7 @@ gnu_runtime_abi_01_build_const_string_constructor (location_t loc, tree string,
 
   /* GNU:    (NXConstantString *) & ((__builtin_ObjCString) { NULL, string, length })  */
   fields = first_type_field (internal_const_str_type);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, 0));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, 0));
 
   fields = next_type_field (fields);
   TREE_ADDRESSABLE (string) = true;
@@ -932,7 +932,7 @@ gnu_runtime_abi_01_build_const_string_constructor (location_t loc, tree string,
 						     ADDR_EXPR, string, 1));
 
   fields = next_type_field (fields);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, length));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, length));
   constructor = objc_build_constructor (internal_const_str_type, v);
 
   constructor = objc_add_static_instance (constructor, constant_string_type);
@@ -1163,7 +1163,7 @@ generate_protocol_list (tree i_or_p, tree klass_ctxt)
   vec<constructor_elt, va_gc> *v = NULL;
   unsigned n = 0;
   tree idx = size_int (n++);
-  CONSTRUCTOR_APPEND_ELT (v, idx, build_int_cst (NULL_TREE, 0));
+  CONSTRUCTOR_APPEND_ELT (v, idx, build_int_cst (integer_type_node, 0));
   tree e = build_int_cst (build_pointer_type (objc_protocol_template), size);
   idx = size_int (n++);
   CONSTRUCTOR_APPEND_ELT (v, idx, e);
@@ -1233,7 +1233,7 @@ generate_v1_meth_descriptor_table (tree chain, tree protocol, const char *prefix
   tree decl = start_meta_decl (method_list_template, buf);
   vec<constructor_elt, va_gc> *v = NULL;
   tree fields = first_type_field (method_list_template);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, size));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, size));
   tree initlist
     = build_descriptor_table_initializer (objc_method_prototype_template,
 					  chain);
@@ -1557,15 +1557,15 @@ build_shared_structure_initializer (tree type, tree isa, tree super,
 
   /* dtable = */
   fields = next_type_field (fields);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, 0));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, 0));
 
   /* subclass_list = */
   fields = next_type_field (fields);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, 0));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, 0));
 
   /* sibling_class = */
   fields = next_type_field (fields);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, 0));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, 0));
 
   /* protocol_list = */
   tree ltyp = build_pointer_type (build_pointer_type (objc_protocol_template));
@@ -1605,7 +1605,7 @@ generate_ivars_list (tree chain, const char *name)
   tree decl = start_meta_decl (ivar_list_template, name);
   vec<constructor_elt, va_gc> *inits = NULL;
   tree fields = first_type_field (ivar_list_template);
-  CONSTRUCTOR_APPEND_ELT (inits, fields, build_int_cst (NULL_TREE, size));
+  CONSTRUCTOR_APPEND_ELT (inits, fields, build_int_cst (integer_type_node, size));
   fields = next_type_field (fields);
   CONSTRUCTOR_APPEND_ELT (inits, fields, initlist);
 
@@ -1798,7 +1798,7 @@ get_proto_encoding (tree proto)
       return add_objc_string (encoding, meth_var_types);
     }
   else
-    return build_int_cst (NULL_TREE, 0);
+    return build_int_cst (integer_type_node, 0);
 }
 
 static void

@@ -914,20 +914,23 @@ package body Sem_Attr is
               ("prefix of % attribute cannot be enumeration literal");
          end if;
 
-         --  Preserve relevant elaboration-related attributes of the context
-         --  which are no longer available or very expensive to recompute once
-         --  analysis, resolution, and expansion are over.
+         if Nkind (N) not in N_Raise_xxx_Error then
 
-         Mark_Elaboration_Attributes
-           (N_Id     => N,
-            Checks   => True,
-            Modes    => True,
-            Warnings => True);
+            --  Preserve relevant elaboration-related attributes of the context
+            --  which are no longer available or very expensive to recompute
+            --  once analysis, resolution, and expansion are over.
 
-         --  Save the scenario for later examination by the ABE Processing
-         --  phase.
+            Mark_Elaboration_Attributes
+              (N_Id     => N,
+               Checks   => True,
+               Modes    => True,
+               Warnings => True);
 
-         Record_Elaboration_Scenario (N);
+            --  Save the scenario for later examination by the ABE Processing
+            --  phase.
+
+            Record_Elaboration_Scenario (N);
+         end if;
 
          --  Case of access to subprogram
 
@@ -12208,11 +12211,12 @@ package body Sem_Attr is
                     and then
                       (Ekind (Btyp) = E_Access_Subprogram_Type
                         or else Is_Local_Anonymous_Access (Btyp))
-                    and then Subprogram_Access_Level (Entity (P)) >
-                               Type_Access_Level (Btyp)
+                    and then Static_Subprogram_Access_Level (Entity (P))
+                               > Static_Type_Access_Level (Btyp)
                   then
                      Error_Msg_F
-                       ("subprogram must not be deeper than access type", P);
+                       ("nonlocal access value cannot designate local"
+                        & " subprogram (RM 3.10.2(32))", P);
 
                   --  Check the restriction of 3.10.2(32) that disallows the
                   --  access attribute within a generic body when the ultimate
@@ -12266,8 +12270,8 @@ package body Sem_Attr is
                     and then Enclosing_Generic_Body (N) /=
                                Enclosing_Generic_Body
                                  (Enclosing_Generic_Unit (Entity (P)))
-                    and then Subprogram_Access_Level (Entity (P)) =
-                               Type_Access_Level (Btyp)
+                    and then Static_Subprogram_Access_Level (Entity (P)) =
+                               Static_Type_Access_Level (Btyp)
                     and then Ekind (Btyp) /=
                                E_Anonymous_Access_Subprogram_Type
                     and then Ekind (Btyp) /=
@@ -12667,8 +12671,8 @@ package body Sem_Attr is
                           or else No_Dynamic_Acc_Checks)
 
                        and then
-                         Static_Accessibility_Level (P, Zero_On_Dynamic_Level)
-                           > Deepest_Type_Access_Level (Btyp)
+                         Static_Accessibility_Level (P)
+                           > Static_Type_Access_Level (Btyp, Deepest => True)
                      then
                         Accessibility_Message (N, Typ);
                      end if;
@@ -12688,8 +12692,8 @@ package body Sem_Attr is
                --  anonymous_access_to_protected, there are no accessibility
                --  checks either. Omit check entirely for Unrestricted_Access.
 
-               elsif Static_Accessibility_Level (P, Zero_On_Dynamic_Level)
-                       > Deepest_Type_Access_Level (Btyp)
+               elsif Static_Accessibility_Level (P)
+                       > Static_Type_Access_Level (Btyp, Deepest => True)
                  and then Comes_From_Source (N)
                  and then Ekind (Btyp) = E_Access_Protected_Subprogram_Type
                  and then Attr_Id /= Attribute_Unrestricted_Access
@@ -13326,7 +13330,7 @@ package body Sem_Attr is
                   Copy_Reducer_N : constant Node_Id :=
                                      Copy_Separate_Tree (Reducer_N);
 
-                  Copy_Aggr_Expr : Node_Id;
+                  Expr           : Node_Id;
                   Loop_Var       : Entity_Id;
                   Reducer_Call   : Node_Id;
 
@@ -13377,7 +13381,6 @@ package body Sem_Attr is
                      Init_Var : constant Entity_Id :=
                                   Make_Temporary (Loc, 'B');
 
-                     Aggr_Expr  : Node_Id;
                      Dummy_Loop : Node_Id;
                      Init_Nam   : Node_Id;
                      Iter_Spec  : Node_Id;
@@ -13398,39 +13401,40 @@ package body Sem_Attr is
 
                      if Nkind (P) = N_Aggregate then
                         declare
-                           Stream, Stream_It : Node_Id;
+                           Assoc, Spec : Node_Id;
+
                         begin
-                           Stream := First (Component_Associations (P));
-                           Stream_It := Iterator_Specification (Stream);
-                           Aggr_Expr := Expression (Stream);
+                           Assoc := First (Component_Associations (P));
+                           Spec := Iterator_Specification (Assoc);
+                           Expr := Copy_Separate_Tree (Expression (Assoc));
 
-                           --  Case [for I of It => Aggr_Expr]
+                           --  Case [for I of It => Expr]
 
-                           if Nkind (Stream) = N_Iterated_Component_Association
-                             and then Present (Stream_It)
-                             and then Of_Present (Stream_It)
+                           if Nkind (Assoc) = N_Iterated_Component_Association
+                             and then Present (Spec)
+                             and then Of_Present (Spec)
                            then
                               Iter_Spec :=
                                 Make_Iteration_Scheme (Loc,
                                   Iterator_Specification =>
-                                    Relocate_Node (Stream_It));
+                                    Copy_Separate_Tree (Spec));
                               Loop_Var :=
                                 Defining_Identifier
                                   (Iterator_Specification (Iter_Spec));
 
-                           --  Case [for I in Range => Aggr_Expr]
+                           --  Case [for I in Range => Expr]
 
                            else
+                              Assoc := Copy_Separate_Tree (Assoc);
                               Iter_Spec :=
                                 Make_Iteration_Scheme (Loc,
                                   Loop_Parameter_Specification =>
                                     Make_Loop_Parameter_Specification  (Loc,
                                       Defining_Identifier =>
-                                        Defining_Identifier
-                                          (Copy_Separate_Tree (Stream)),
+                                        Defining_Identifier (Assoc),
                                       Discrete_Subtype_Definition =>
-                                        Relocate_Node (First (Discrete_Choices
-                                                               (Stream)))));
+                                        Relocate_Node
+                                          (First (Discrete_Choices (Assoc)))));
                               Loop_Var :=
                                 Defining_Identifier
                                   (Loop_Parameter_Specification (Iter_Spec));
@@ -13441,7 +13445,7 @@ package body Sem_Attr is
 
                      else
                         Loop_Var := Make_Temporary (Loc, 'I');
-                        Aggr_Expr := Make_Identifier (Loc, Chars (Loop_Var));
+                        Expr := Make_Identifier (Loc, Chars (Loop_Var));
                         Iter_Spec := Make_Iteration_Scheme (Loc,
                           Iterator_Specification =>
                             Make_Iterator_Specification (Loc,
@@ -13465,22 +13469,20 @@ package body Sem_Attr is
                      pragma Assert (Present (Etype (Loop_Var)));
                      pragma Assert (Etype (Loop_Var) /= Any_Type);
 
-                     Copy_Aggr_Expr := Copy_Separate_Tree (Aggr_Expr);
-
                      case Reducer_Call_Statement_Kind is
                         when E_Procedure =>
                            Reducer_Call :=
                              Make_Procedure_Call_Statement (Sloc (Reducer_N),
                                Name => Copy_Reducer_N,
                                Parameter_Associations =>
-                                 New_List (Init_Nam, Copy_Aggr_Expr));
+                                 New_List (Init_Nam, Expr));
 
                         when E_Function | E_Operator =>
                            Reducer_Call :=
                              Make_Function_Call (Sloc (Reducer_N),
                                Name => Copy_Reducer_N,
                                Parameter_Associations =>
-                                 New_List (Init_Nam, Copy_Aggr_Expr));
+                                 New_List (Init_Nam, Expr));
                            Set_Etype (Reducer_Call, Accum_Typ);
 
                         when others =>
@@ -13520,13 +13522,13 @@ package body Sem_Attr is
 
                   elsif not Is_Overloaded (Reducer_Call) then
                      pragma Assert (Present (Entity (Copy_Reducer_N)));
-                     pragma Assert (Present (Etype (Copy_Aggr_Expr)));
+                     pragma Assert (Present (Etype (Expr)));
 
                      --  Set the correct reducer entity and then return the
                      --  value subtype.
 
                      Set_Entity (Reducer_N, Entity (Copy_Reducer_N));
-                     return Etype (Copy_Aggr_Expr);
+                     return Etype (Expr);
                   end if;
 
                   return Empty;

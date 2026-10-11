@@ -25,6 +25,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "target.h"
 #include "rtl.h"
 #include "tree.h"
+#include "tree-eh.h"
 #include "gimple.h"
 #include "predict.h"
 #include "stringpool.h"
@@ -40,7 +41,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "stor-layout.h"
 #include "dojump.h"
 #include "expr.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "asan.h"
 #include "ubsan.h"
@@ -1750,7 +1750,7 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
 		     tree *datap)
 {
   rtx res, op0, op1;
-  tree fn, type;
+  tree fn, type, orig_arg0 = arg0, orig_arg1 = arg1;
   rtx_code_label *done_label, *do_error;
   rtx target = NULL_RTX;
   signop sign;
@@ -1764,10 +1764,26 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
   do_error = gen_label_rtx ();
 
   do_pending_stack_adjust ();
+
+  scalar_int_mode mode = SCALAR_INT_TYPE_MODE (TREE_TYPE (arg0));
+  /* If the operand types don't have mode precision, extend them
+     to mode precision.  */
+  if (TYPE_PRECISION (TREE_TYPE (arg0)) < GET_MODE_PRECISION (mode))
+    {
+      tree type = build_nonstandard_integer_type (GET_MODE_PRECISION (mode),
+						  uns0_p);
+      arg0 = fold_convert_loc (loc, type, arg0);
+    }
+  if (TYPE_PRECISION (TREE_TYPE (arg1)) < GET_MODE_PRECISION (mode))
+    {
+      tree type = build_nonstandard_integer_type (GET_MODE_PRECISION (mode),
+						  uns1_p);
+      arg1 = fold_convert_loc (loc, type, arg1);
+    }
+
   op0 = expand_normal (arg0);
   op1 = expand_normal (arg1);
 
-  scalar_int_mode mode = SCALAR_INT_TYPE_MODE (TREE_TYPE (arg0));
   bool uns = unsr_p;
   if (lhs)
     {
@@ -1829,12 +1845,6 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
 
   int pos_neg0 = get_range_pos_neg (arg0, currently_expanding_gimple_stmt);
   int pos_neg1 = get_range_pos_neg (arg1, currently_expanding_gimple_stmt);
-  /* Unsigned types with smaller than mode precision, even if they have most
-     significant bit set, are still zero-extended.  */
-  if (uns0_p && TYPE_PRECISION (TREE_TYPE (arg0)) < GET_MODE_PRECISION (mode))
-    pos_neg0 = 1;
-  if (uns1_p && TYPE_PRECISION (TREE_TYPE (arg1)) < GET_MODE_PRECISION (mode))
-    pos_neg1 = 1;
 
   /* s1 * u2 -> ur  */
   if (!uns0_p && uns1_p && unsr_p)
@@ -2559,8 +2569,8 @@ expand_mul_overflow (location_t loc, tree lhs, tree arg0, tree arg1,
     {
       /* Expand the ubsan builtin call.  */
       push_temp_slots ();
-      fn = ubsan_build_overflow_builtin (MULT_EXPR, loc, TREE_TYPE (arg0),
-					 arg0, arg1, datap);
+      fn = ubsan_build_overflow_builtin (MULT_EXPR, loc, TREE_TYPE (orig_arg0),
+					 orig_arg0, orig_arg1, datap);
       expand_normal (fn);
       pop_temp_slots ();
       do_pending_stack_adjust ();
@@ -3144,8 +3154,9 @@ expand_partial_load_optab_fn (internal_fn ifn, gcall *stmt, convert_optab optab)
     icode = convert_optab_handler (optab, TYPE_MODE (type),
 				   TYPE_MODE (TREE_TYPE (maskt)));
 
-  mem = expand_expr (rhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
+  mem = expand_expr (rhs, NULL_RTX, VOIDmode, EXPAND_MEMORY);
   gcc_assert (MEM_P (mem));
+  MEM_NOTRAP_P (mem) = !tree_could_trap_p (rhs);
   /* The built MEM_REF does not accurately reflect that the load
      is only partial.  Clear it.  */
   set_mem_expr (mem, NULL_TREE);
@@ -3404,7 +3415,7 @@ expand_RAWMEMCHR (internal_fn, gcall *stmt)
   create_call_lhs_operand (&ops[0], lhs_rtx, lhs_mode);
 
   tree mem = gimple_call_arg (stmt, 0);
-  rtx mem_rtx = get_memory_rtx (mem, NULL);
+  rtx mem_rtx = get_memory_rtx (mem, NULL, false);
   create_fixed_operand (&ops[1], mem_rtx);
 
   tree pattern = gimple_call_arg (stmt, 1);
@@ -3526,7 +3537,7 @@ expand_DEFERRED_INIT (internal_fn, gcall *stmt)
       mark_addressable (lhs);
       tree var_addr = build_fold_addr_expr (lhs);
 
-      tree value = (init_type == AUTO_INIT_PATTERN)
+      tree value = ((init_type & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN)
 		    ? build_int_cst (integer_type_node,
 				     INIT_PATTERN_VALUE)
 		    : integer_zero_node;
@@ -3543,7 +3554,7 @@ expand_DEFERRED_INIT (internal_fn, gcall *stmt)
       scalar_int_mode var_mode;
       if (TREE_CODE (TREE_TYPE (lhs)) != BOOLEAN_TYPE
 	  && tree_fits_uhwi_p (var_size)
-	  && (init_type == AUTO_INIT_PATTERN
+	  && ((init_type & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN
 	      || !is_gimple_reg_type (var_type))
 	  && int_mode_for_size (tree_to_uhwi (var_size) * BITS_PER_UNIT,
 				0).exists (&var_mode)
@@ -3551,10 +3562,10 @@ expand_DEFERRED_INIT (internal_fn, gcall *stmt)
 	{
 	  unsigned HOST_WIDE_INT total_bytes = tree_to_uhwi (var_size);
 	  unsigned char *buf = XALLOCAVEC (unsigned char, total_bytes);
-	  memset (buf, (init_type == AUTO_INIT_PATTERN
+	  memset (buf, ((init_type & ~AUTO_INIT_CXX26) == AUTO_INIT_PATTERN
 			? INIT_PATTERN_VALUE : 0), total_bytes);
-	  tree itype = build_nonstandard_integer_type
-			 (total_bytes * BITS_PER_UNIT, 1);
+	  tree itype
+	    = build_nonstandard_integer_type (total_bytes * BITS_PER_UNIT, 1);
 	  wide_int w = wi::from_buffer (buf, total_bytes);
 	  init = wide_int_to_tree (itype, w);
 	  /* Pun the LHS to make sure its type has constant size
@@ -5722,32 +5733,7 @@ expand_FLOATTOBITINT (internal_fn, gcall *stmt)
   rtx arg0 = expand_normal (gimple_call_arg (stmt, 0));
   rtx arg1 = expand_normal (gimple_call_arg (stmt, 1));
   rtx arg2 = expand_normal (gimple_call_arg (stmt, 2));
-  const char *mname = GET_MODE_NAME (mode);
-  unsigned mname_len = strlen (mname);
-  int len = 12 + mname_len;
-  if (DECIMAL_FLOAT_MODE_P (mode))
-    len += 4;
-  char *libfunc_name = XALLOCAVEC (char, len);
-  char *p = libfunc_name;
-  const char *q;
-  if (DECIMAL_FLOAT_MODE_P (mode))
-    {
-#if ENABLE_DECIMAL_BID_FORMAT
-      memcpy (p, "__bid_fix", 9);
-#else
-      memcpy (p, "__dpd_fix", 9);
-#endif
-      p += 9;
-    }
-  else
-    {
-      memcpy (p, "__fix", 5);
-      p += 5;
-    }
-  for (q = mname; *q; q++)
-    *p++ = TOLOWER (*q);
-  memcpy (p, "bitint", 7);
-  rtx fun = init_one_libfunc (libfunc_name);
+  rtx fun = optab_libfunc (bitintfromfp_optab, mode);
   emit_library_call (fun, LCT_NORMAL, VOIDmode, arg0, ptr_mode, arg1,
 		     SImode, arg2, mode);
 }
@@ -5761,32 +5747,7 @@ expand_BITINTTOFLOAT (internal_fn, gcall *stmt)
   machine_mode mode = TYPE_MODE (TREE_TYPE (lhs));
   rtx arg0 = expand_normal (gimple_call_arg (stmt, 0));
   rtx arg1 = expand_normal (gimple_call_arg (stmt, 1));
-  const char *mname = GET_MODE_NAME (mode);
-  unsigned mname_len = strlen (mname);
-  int len = 14 + mname_len;
-  if (DECIMAL_FLOAT_MODE_P (mode))
-    len += 4;
-  char *libfunc_name = XALLOCAVEC (char, len);
-  char *p = libfunc_name;
-  const char *q;
-  if (DECIMAL_FLOAT_MODE_P (mode))
-    {
-#if ENABLE_DECIMAL_BID_FORMAT
-      memcpy (p, "__bid_floatbitint", 17);
-#else
-      memcpy (p, "__dpd_floatbitint", 17);
-#endif
-      p += 17;
-    }
-  else
-    {
-      memcpy (p, "__floatbitint", 13);
-      p += 13;
-    }
-  for (q = mname; *q; q++)
-    *p++ = TOLOWER (*q);
-  *p = '\0';
-  rtx fun = init_one_libfunc (libfunc_name);
+  rtx fun = optab_libfunc (bitinttofp_optab, mode);
   rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
   rtx val = emit_library_call_value (fun, target, LCT_PURE, mode,
 				     arg0, ptr_mode, arg1, SImode);

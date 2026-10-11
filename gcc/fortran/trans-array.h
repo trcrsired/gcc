@@ -148,6 +148,11 @@ void gfc_conv_tmp_array_ref (gfc_se * se);
 void gfc_get_dataptr_offset (stmtblock_t*, tree, tree, tree, bool, gfc_expr*);
 /* Obtain the span of an array.  */
 tree gfc_get_array_span (tree, gfc_expr *);
+/* Whether the element spacing of a span addressed dummy can be folded into
+   the strides of its descriptor.  */
+bool gfc_span_folds_into_stride (gfc_symbol *);
+/* Test that the elements of an array are not subobjects of larger ones.  */
+void gfc_conv_span_is_elem_len (gfc_se *, gfc_expr *);
 /* Evaluate an array expression.  */
 void gfc_conv_expr_descriptor (gfc_se *, gfc_expr *);
 /* Convert an array for passing as an actual function parameter.  */

@@ -3059,6 +3059,18 @@ dr_may_alias_p (const struct data_reference *a, const struct data_reference *b,
 	return false;
     }
 
+  /* Try the points-to information recorded for the base pointers the
+     references were originally analyzed from.  DR_BASE_OBJECT can be less
+     precise, rooting at another SSA name or at one created after points-to
+     information was computed and thus without SSA_NAME_PTR_INFO.  A
+     recorded solution is not revalidated.  It covers every dynamic value
+     of its SSA name, so it holds for cross-iteration queries as well.  */
+  struct ptr_info_def *pi_a = DR_PTR_INFO (a);
+  struct ptr_info_def *pi_b = DR_PTR_INFO (b);
+  if (pi_a && pi_b
+      && !pt_solutions_intersect (&pi_a->pt, &pi_b->pt))
+    return false;
+
   if ((TREE_CODE (addr_a) == MEM_REF || TREE_CODE (addr_a) == TARGET_MEM_REF)
       && (TREE_CODE (addr_b) == MEM_REF || TREE_CODE (addr_b) == TARGET_MEM_REF)
       /* For cross-iteration dependences the cliques must be valid for the
@@ -4161,16 +4173,16 @@ compute_overlap_steps_for_affine_univar (HOST_WIDE_INT niter,
 	  tau2 = FLOOR_DIV (niter, step_overlaps_a);
 	  tau2 = MIN (tau2, FLOOR_DIV (niter, step_overlaps_b));
 	  last_conflict = tau2;
-	  *last_conflicts = build_int_cst (NULL_TREE, last_conflict);
+	  *last_conflicts = build_int_cst (integer_type_node, last_conflict);
 	}
       else
 	*last_conflicts = chrec_dont_know;
 
       *overlaps_a = affine_fn_univar (integer_zero_node, dim,
-				      build_int_cst (NULL_TREE,
+				      build_int_cst (integer_type_node,
 						     step_overlaps_a));
       *overlaps_b = affine_fn_univar (integer_zero_node, dim,
-				      build_int_cst (NULL_TREE,
+				      build_int_cst (integer_type_node,
 						     step_overlaps_b));
     }
 
@@ -4722,14 +4734,14 @@ analyze_subscript_affine_affine (tree chrec_a,
 
 	      *overlaps_a
 		= conflict_fn (1,
-			       affine_fn_univar (build_int_cst (NULL_TREE, x1),
+			       affine_fn_univar (build_int_cst (integer_type_node, x1),
 						 1,
-						 build_int_cst (NULL_TREE, i1)));
+						 build_int_cst (integer_type_node, i1)));
 	      *overlaps_b
 		= conflict_fn (1,
-			       affine_fn_univar (build_int_cst (NULL_TREE, y1),
+			       affine_fn_univar (build_int_cst (integer_type_node, y1),
 						 1,
-						 build_int_cst (NULL_TREE, j1)));
+						 build_int_cst (integer_type_node, j1)));
 	    }
 	  else
 	    {

@@ -2019,9 +2019,16 @@ private:
        #define NAME 42
      and other bases but not negative numbers, parentheses or e.g.
        #define NAME 1 << 7
-     as doing so would require a parser.  */
-  tree consider_macro (cpp_macro *macro) const
+     as doing so would require a parser.
+     Also handle the case where MACRO's definition is a single identifier
+     that is itself a macro name (e.g. "#define O_CREAT _FCREAT"), by
+     following the chain of aliases.  */
+  tree consider_macro (cpp_macro *macro, int depth = 0) const
   {
+    /* UInteger option variables are stored as int, so "depth" must be signed
+       to avoid a signed/unsigned comparison here. */
+    gcc_assert (depth >= 0);
+
     if (macro->paramc > 0)
       return NULL_TREE;
     if (macro->kind != cmk_macro)
@@ -2029,7 +2036,20 @@ private:
     if (macro->count != 1)
       return NULL_TREE;
     const cpp_token &tok = macro->exp.tokens[0];
-    if (tok.type != CPP_NUMBER)
+    if (tok.type == CPP_NAME)
+      {
+	/* Limit recursion.  */
+	if (depth >= param_analyzer_max_macro_alias_depth)
+	  return NULL_TREE;
+
+	cpp_hashnode *alias = tok.val.node.node;
+	if (cpp_macro_p (alias))
+	  return consider_macro (alias->value.macro, depth + 1);
+
+	/* Not a simple alias.  */
+	return NULL_TREE;
+      }
+    else if (tok.type != CPP_NUMBER)
       return NULL_TREE;
 
     cpp_reader *old_parse_in = parse_in;
@@ -16592,6 +16612,8 @@ c_parser_omp_clause_name (c_parser *parser)
 	    result = PRAGMA_OMP_CLAUSE_LINEAR;
 	  else if (!strcmp ("link", p))
 	    result = PRAGMA_OMP_CLAUSE_LINK;
+	  else if (!strcmp ("local", p))
+	    result = PRAGMA_OMP_CLAUSE_LOCAL;
 	  break;
 	case 'm':
 	  if (!strcmp ("map", p))
@@ -20176,40 +20198,93 @@ c_parser_omp_clause_safelen (c_parser *parser, tree list)
 }
 
 /* OpenMP 4.0:
-   simdlen ( constant-expression ) */
+   simdlen ( constant-expression )
+
+   OpenMP 6.1:
+   simdlen ([scaled(type[, constant-expression]):] constant-expression )  */
 
 static tree
 c_parser_omp_clause_simdlen (c_parser *parser, tree list)
 {
   location_t clause_loc = c_parser_peek_token (parser)->location;
-  tree c, t;
+  tree c, t = NULL_TREE, type = NULL_TREE, divisor = NULL_TREE;
 
   matching_parens parens;
   if (!parens.require_open (parser))
     return list;
 
-  location_t expr_loc = c_parser_peek_token (parser)->location;
-  c_expr expr = c_parser_expr_no_commas (parser, NULL);
-  expr = convert_lvalue_to_rvalue (expr_loc, expr, false, true);
-  t = expr.value;
-  t = c_fully_fold (t, false, NULL);
-  if (TREE_CODE (t) != INTEGER_CST
-      || !INTEGRAL_TYPE_P (TREE_TYPE (t))
-      || tree_int_cst_sgn (t) != 1)
+  unsigned pos = 3;
+  if (c_parser_next_token_is (parser, CPP_NAME)
+      && c_parser_peek_2nd_token (parser)->type == CPP_OPEN_PAREN
+      && strcmp (IDENTIFIER_POINTER (c_parser_peek_token (parser)->value),
+		 "scaled") == 0
+      && c_parser_check_balanced_raw_token_sequence (parser, &pos)
+      && c_parser_peek_nth_token_raw (parser, ++pos)->type == CPP_COLON)
     {
-      error_at (clause_loc, "%<simdlen%> clause expression must "
-			    "be positive constant integer expression");
-      t = NULL_TREE;
+      c_parser_consume_token (parser);
+      matching_parens parens2;
+      parens2.require_open (parser);
+
+      location_t loc = c_parser_peek_token (parser)->location;
+      struct c_type_name *ctype = c_parser_type_name (parser);
+      if (ctype == NULL
+	  || (type = groktypename (ctype, NULL, NULL)) == NULL
+	  || (!INTEGRAL_TYPE_P (type)
+	      && !SCALAR_FLOAT_TYPE_P (type)
+	      && TREE_CODE (type) != COMPLEX_TYPE))
+	{
+	  error_at (loc, "expected arithmetic type name as argument to the "
+			 "%<scaled%> modifier");
+	  type = error_mark_node;
+	}
+      else if (c_parser_next_token_is (parser, CPP_COMMA))
+	{
+	  c_parser_consume_token (parser);
+	  loc = c_parser_peek_token (parser)->location;
+	  c_expr expr = c_parser_expr_no_commas (parser, NULL);
+	  expr = convert_lvalue_to_rvalue (loc, expr, false, true);
+	  divisor = expr.value;
+	  divisor = c_fully_fold (divisor, false, NULL);
+	  if (TREE_CODE (divisor) != INTEGER_CST
+	      || !INTEGRAL_TYPE_P (TREE_TYPE (divisor))
+	      || tree_int_cst_sgn (divisor) != 1)
+	    {
+	      error_at (loc, "divisor expression of the %<scaled%> modifier "
+			     "must a be positive constant integer expression");
+	      type = error_mark_node;
+	    }
+	}
+      parens2.skip_until_found_close (parser);
+      c_parser_require (parser, CPP_COLON, "expected %<:%>");
+    }
+
+  if (type != error_mark_node)
+    {
+      location_t expr_loc = c_parser_peek_token (parser)->location;
+      c_expr expr = c_parser_expr_no_commas (parser, NULL);
+      expr = convert_lvalue_to_rvalue (expr_loc, expr, false, true);
+      t = expr.value;
+      t = c_fully_fold (t, false, NULL);
+      if (TREE_CODE (t) != INTEGER_CST
+	  || !INTEGRAL_TYPE_P (TREE_TYPE (t))
+	  || tree_int_cst_sgn (t) != 1)
+	{
+	  error_at (clause_loc, "%<simdlen%> clause expression must "
+				"be positive constant integer expression");
+	  t = NULL_TREE;
+	}
     }
 
   parens.skip_until_found_close (parser);
-  if (t == NULL_TREE || t == error_mark_node)
+  if (type == error_mark_node || t == NULL_TREE || t == error_mark_node)
     return list;
 
   check_no_duplicate_clause (list, OMP_CLAUSE_SIMDLEN, "simdlen");
 
   c = build_omp_clause (clause_loc, OMP_CLAUSE_SIMDLEN);
   OMP_CLAUSE_SIMDLEN_EXPR (c) = t;
+  OMP_CLAUSE_SIMDLEN_TYPE (c) = type;
+  OMP_CLAUSE_SIMDLEN_DIVISOR (c) = divisor;
   OMP_CLAUSE_CHAIN (c) = list;
   return c;
 }
@@ -22529,6 +22604,11 @@ c_parser_omp_all_clauses (c_parser *parser, omp_clause_mask mask,
 	  clauses
 	    = c_parser_omp_var_list_parens (parser, OMP_CLAUSE_LINK, clauses);
 	  c_name = "link";
+	  break;
+	case PRAGMA_OMP_CLAUSE_LOCAL:
+	  clauses
+	    = c_parser_omp_var_list_parens (parser, OMP_CLAUSE_LOCAL, clauses);
+	  c_name = "local";
 	  break;
 	case PRAGMA_OMP_CLAUSE_TO:
 	  if ((mask & (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_LINK)) != 0)
@@ -25592,7 +25672,7 @@ c_parser_omp_for_loop (location_t loc, c_parser *parser, enum tree_code code,
       error_at (OMP_CLAUSE_LOCATION (ordered_cl),
 		"%<ordered%> clause parameter is less than %<collapse%>");
       OMP_CLAUSE_ORDERED_EXPR (ordered_cl)
-	= build_int_cst (NULL_TREE, collapse);
+	= build_int_cst (integer_type_node, collapse);
       ordered = collapse;
     }
 
@@ -28877,6 +28957,7 @@ c_maybe_parse_omp_decl (tree decl, tree d)
 	( (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_TO)		\
 	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_ENTER)	\
 	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_LINK)		\
+	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_LOCAL)	\
 	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_DEVICE_TYPE)	\
 	| (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_INDIRECT))
 
@@ -28946,6 +29027,11 @@ c_parser_omp_declare_target (c_parser *parser)
 	    error_at (OMP_CLAUSE_LOCATION (c),
 		      "%qD specified both in declare target %<link%> and %qs"
 		      " clauses", t, OMP_CLAUSE_ENTER_TO (c) ? "to" : "enter");
+	  else if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_LOCAL
+		   || value_member (get_identifier ("local"), TREE_VALUE (at2)))
+	    error_at (OMP_CLAUSE_LOCATION (c),
+		      "%qD specified both in declare target %<link%> and "
+		      "%<local%> clauses", t);
 	  else
 	    error_at (OMP_CLAUSE_LOCATION (c),
 		      "%qD specified both in declare target %<link%> and "
@@ -28955,6 +29041,11 @@ c_parser_omp_declare_target (c_parser *parser)
       if (!at1)
 	{
 	  DECL_ATTRIBUTES (t) = tree_cons (id, NULL_TREE, DECL_ATTRIBUTES (t));
+	  if (OMP_CLAUSE_CODE (c) == OMP_CLAUSE_LOCAL)
+	    TREE_VALUE (DECL_ATTRIBUTES (t))
+	      = tree_cons (NULL_TREE, get_identifier ("local"),
+			   TREE_VALUE (DECL_ATTRIBUTES (t)));
+
 	  if (TREE_CODE (t) != FUNCTION_DECL && !is_global_var (t))
 	    continue;
 
@@ -28965,9 +29056,30 @@ c_parser_omp_declare_target (c_parser *parser)
 	      if (ENABLE_OFFLOADING)
 		{
 		  g->have_offload = true;
-		  if (is_a <varpool_node *> (node))
+		  if (is_a <varpool_node *> (node)
+		      && OMP_CLAUSE_CODE (c) != OMP_CLAUSE_LOCAL)
 		    vec_safe_push (offload_vars, t);
 		}
+	    }
+	}
+      else
+	{
+	  bool saw_local = value_member (get_identifier ("local"),
+					 TREE_VALUE (at1));
+	  if (saw_local && OMP_CLAUSE_CODE (c) == OMP_CLAUSE_ENTER)
+	    {
+	      error_at (OMP_CLAUSE_LOCATION (c),
+			"%qD specified both in declare target %<local%> and "
+			"%qs clauses", t,
+			OMP_CLAUSE_ENTER_TO (c) ? "to" : "enter");
+	      continue;
+	    }
+	  else if (!saw_local && OMP_CLAUSE_CODE (c) == OMP_CLAUSE_LOCAL)
+	    {
+	      error_at (OMP_CLAUSE_LOCATION (c),
+			"%qD specified both in declare target %<local%> and "
+			"%<to%> or %<enter%> clauses", t);
+	      continue;
 	    }
 	}
       if (TREE_CODE (t) != FUNCTION_DECL)

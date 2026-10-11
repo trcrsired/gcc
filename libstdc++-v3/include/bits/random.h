@@ -31,6 +31,7 @@
 #ifndef _RANDOM_H
 #define _RANDOM_H 1
 
+#include <bit>     // std::__bit_width
 #include <vector>
 #include <bits/ios_base.h>
 #include <bits/uniform_int_dist.h>
@@ -68,13 +69,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 #endif
 
   /// @cond undocumented
-  // Implementation-space details.
-  namespace __detail
-  {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wc++17-extensions"
 
 #ifndef __SIZEOF_INT128__
+  // Implementation-space details.
+  namespace __detail
+  {
     // Emulate 128-bit integer type, for the arithmetic ops used in <random>.
     // The __detail::__mod function needs: (type(a) * x + c) % m.
     // std::philox_engine needs multiplication and bitwise ops.
@@ -522,8 +523,42 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       uint64_t _M_hi = 0;
       uint64_t _M_lo = 0;
     };
-#endif // ! __SIZEOF_INT128__
+  } // namespace __detail
 
+  template<>
+    constexpr int
+    __countl_zero(__detail::__rand_uint128 __val) noexcept
+    {
+      return __val._M_hi ? std::__countl_zero(__val._M_hi)
+			 : std::__countl_zero(__val._M_lo) + 64;
+    }
+
+  template<>
+    constexpr int
+    __countr_zero(__detail::__rand_uint128 __val) noexcept
+    {
+      return __val._M_lo ? std::__countr_zero(__val._M_lo)
+			 : std::__countr_zero(__val._M_hi) + 64;
+    }
+
+  template<>
+    constexpr int
+    __popcount(__detail::__rand_uint128 __val) noexcept
+    {
+      return std::__popcount(__val._M_hi) + std::__popcount(__val._M_lo);
+    }
+
+  template<>
+    constexpr int
+    __bit_width(__detail::__rand_uint128 __val) noexcept
+    {
+      return __val._M_hi ? std::__bit_width(__val._M_hi) + 64
+			 : std::__bit_width(__val._M_lo);
+    }
+
+#endif // ! __SIZEOF_INT128__
+  namespace __detail
+  {
     template<typename _UIntType, size_t __w,
 	     bool = __w < static_cast<size_t>
 			  (std::numeric_limits<_UIntType>::digits)>
@@ -534,36 +569,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       struct _Shift<_UIntType, __w, true>
       { static constexpr _UIntType __value = _UIntType(1) << __w; };
 
-    template<int __s,
-	     int __which = ((__s <= __CHAR_BIT__ * sizeof (int))
-			    + (__s <= __CHAR_BIT__ * sizeof (long))
-			    + (__s <= __CHAR_BIT__ * sizeof (long long))
-			    /* assume long long no bigger than __int128 */
-			    + (__s <= 128))>
-      struct _Select_uint_least_t
-      {
-	static_assert(__which < 0, /* needs to be dependent */
-		      "sorry, would be too much trouble for a slow result");
-      };
-
-    template<int __s>
-      struct _Select_uint_least_t<__s, 4>
-      { using type = unsigned int; };
-
-    template<int __s>
-      struct _Select_uint_least_t<__s, 3>
-      { using type = unsigned long; };
-
-    template<int __s>
-      struct _Select_uint_least_t<__s, 2>
-      { using type = unsigned long long; };
-
-#if __SIZEOF_INT128__ > __SIZEOF_LONG_LONG__
-    template<int __s>
-      struct _Select_uint_least_t<__s, 1>
-      { __extension__ using type = unsigned __int128; };
-#elif __has_builtin(__builtin_add_overflow) \
-    && __has_builtin(__builtin_sub_overflow) \
+// Primary template and other specializtions are defined in bits/uniform_int_dist.h.
+#if __SIZEOF_INT128__ <= __SIZEOF_LONG_LONG__ \
+    && __has_builtin(__builtin_add_overflow)  \
+    && __has_builtin(__builtin_sub_overflow)  \
     && defined __UINT64_TYPE__
     template<int __s>
       struct _Select_uint_least_t<__s, 1>
@@ -3524,9 +3533,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       param(const param_type& __param)
       {
 	_M_param = __param;
-	typedef typename std::gamma_distribution<result_type>::param_type
-	  param_type;
-	_M_gd.param(param_type{__param.n() / 2});
+
+	using param_type
+	  = typename std::gamma_distribution<result_type>::param_type;
+	_M_gd.param(param_type(__param.n() / 2));
       }
 
       /**
@@ -3980,7 +3990,14 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
        */
       void
       param(const param_type& __param)
-      { _M_param = __param; }
+     {
+	_M_param = __param;
+
+	using param_type
+	  = typename std::gamma_distribution<result_type>::param_type;
+	_M_gd_x.param(param_type(__param.m() / 2));
+	_M_gd_y.param(param_type(__param.n() / 2));
+      }
 
       /**
        * @brief Returns the greatest lower bound value of the distribution.
@@ -4209,7 +4226,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
        */
       void
       param(const param_type& __param)
-      { _M_param = __param; }
+      {
+	_M_param = __param;
+
+	using param_type
+	  = typename std::gamma_distribution<result_type>::param_type;
+	_M_gd.param(param_type(__param.n() / 2, 2));
+      }
 
       /**
        * @brief Returns the greatest lower bound value of the distribution.
@@ -5140,7 +5163,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
        */
       void
       param(const param_type& __param)
-      { _M_param = __param; }
+      {
+	_M_param = __param;
+
+	using param_type
+	  = typename std::gamma_distribution<double>::param_type;
+	_M_gd.param(param_type(__param.k(), (1.0 - __param.p()) / __param.p()));
+      }
 
       /**
        * @brief Returns the greatest lower bound value of the distribution.
@@ -6411,10 +6440,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 
   namespace __detail
   {
-#if defined(_GLIBCXX_USE_OLD_PIECEWISE_DISTRIBUTIONS)
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS == 0
     template<typename _Tp>
       using __piecewise_distributions_storage_t = double;
-#elif defined(_GLIBCXX_USE_RESULT_TYPE_FOR_PIECEWISE_DENSITIES)
+#elif _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS == 2
     template<typename _Tp>
       using __piecewise_distributions_storage_t = _Tp;
 #else
@@ -6470,10 +6499,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 
       using _StorageType
 	= __detail::__piecewise_distributions_storage_t<_RealType>;
-#ifdef _GLIBCXX_USE_OLD_PIECEWISE_DISTRIBUTIONS
-      using _CalcType = double;
-#else
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
       using _CalcType = _RealType;
+#else
+      using _CalcType = double;
 #endif
 
     public:
@@ -6519,11 +6548,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	    return _M_int;
 	}
 
-#ifdef _GLIBCXX_USE_OLD_PIECEWISE_DISTRIBUTIONS
-	std::vector<double>
-	densities() const
-	{ return _M_den.empty() ? std::vector<double>(1, 1.0) : _M_den; }
-#else
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
 	// _GLIBCXX_RESOLVE_LIB_DEFECTS
 	// 1439. Return from densities() functions?
 	[[__gnu__::__abi_tag__("__rt")]]
@@ -6540,6 +6565,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	    return std::vector<_RealType>(_M_den.begin(), _M_den.end());
 #pragma GCC diagnostic pop
 	}
+#else
+	std::vector<double>
+	densities() const
+	{ return _M_den.empty() ? std::vector<double>(1, 1.0) : _M_den; }
 #endif
 
 	friend bool
@@ -6615,13 +6644,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
       /**
        * @brief Returns a vector of the probability densities.
        */
-#ifdef _GLIBCXX_USE_OLD_PIECEWISE_DISTRIBUTIONS
-      std::vector<double>
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
+      [[__gnu__::__always_inline__]]
+      std::vector<result_type>
       densities() const
       { return _M_param.densities(); }
 #else
-      [[__gnu__::__always_inline__]]
-      std::vector<result_type>
+      std::vector<double>
       densities() const
       { return _M_param.densities(); }
 #endif
@@ -6785,10 +6814,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 
       using _StorageType
 	= __detail::__piecewise_distributions_storage_t<_RealType>;
-#ifdef _GLIBCXX_USE_OLD_PIECEWISE_DISTRIBUTIONS
-      using _CalcType = double;
-#else
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
       using _CalcType = _RealType;
+#else
+      using _CalcType = double;
 #endif
 
     public:
@@ -6834,11 +6863,7 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	    return _M_int;
 	}
 
-#ifdef _GLIBCXX_USE_OLD_PIECEWISE_DISTRIBUTIONS
-	std::vector<double>
-	densities() const
-	{ return _M_den.empty() ? std::vector<double>(2, 1.0) : _M_den; }
-#else
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
 	// _GLIBCXX_RESOLVE_LIB_DEFECTS
 	// 1439. Return from densities() functions?
 	[[__gnu__::__abi_tag__("__rt")]]
@@ -6855,6 +6880,10 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
 	    return std::vector<_RealType>(_M_den.begin(), _M_den.end());
 #pragma GCC diagnostic pop
 	}
+#else
+	std::vector<double>
+	densities() const
+	{ return _M_den.empty() ? std::vector<double>(2, 1.0) : _M_den; }
 #endif
 
 	friend bool
@@ -6932,13 +6961,13 @@ _GLIBCXX_END_INLINE_ABI_NAMESPACE(_V2)
        * @brief Return a vector of the probability densities of the
        *        distribution.
        */
-#ifdef _GLIBCXX_USE_OLD_PIECEWISE_DISTRIBUTIONS
-      std::vector<double>
+#if _GLIBCXX_USE_NEW_PIECEWISE_DISTRIBUTIONS
+      [[__gnu__::__always_inline__]]
+      std::vector<result_type>
       densities() const
       { return _M_param.densities(); }
 #else
-      [[__gnu__::__always_inline__]]
-      std::vector<result_type>
+      std::vector<double>
       densities() const
       { return _M_param.densities(); }
 #endif

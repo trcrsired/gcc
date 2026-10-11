@@ -1943,7 +1943,7 @@ next_runtime_abi_02_build_const_string_constructor (location_t loc, tree string,
 
   /* ??? check if this should be long.  */
   fields = next_type_field (fields);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, length));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, length));
   constructor = objc_build_constructor (internal_const_str_type, v);
 
   var = objc_build_decl (input_location, CONST_DECL, NULL, TREE_TYPE (constructor));
@@ -2511,9 +2511,9 @@ generate_v2_meth_descriptor_table (tree chain, tree protocol,
   vec<constructor_elt, va_gc> *v = NULL;
   int entsize = TREE_INT_CST_LOW (TYPE_SIZE_UNIT (objc_method_template));
   tree fields = first_type_field (method_list_template);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, entsize));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, entsize));
   fields = next_type_field (fields);
-  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (NULL_TREE, size));
+  CONSTRUCTOR_APPEND_ELT (v, fields, build_int_cst (integer_type_node, size));
   tree initlist =
 	build_v2_descriptor_table_initializer (objc_method_template,
 					    chain);
@@ -2843,7 +2843,7 @@ generate_v2_protocols (void)
 	refs_expr = convert (build_pointer_type (objc_v2_protocol_template),
 			     build_unary_op (loc, ADDR_EXPR, refs_decl, 0));
       else
-	refs_expr = build_int_cst (NULL_TREE, 0);
+	refs_expr = build_int_cst (integer_type_node, 0);
 
       props = generate_v2_property_table (p, NULL_TREE);
 

@@ -1,3 +1,132 @@
+2026-10-08  Zhongteng Gui  <dragon-archer@outlook.com>
+
+	PR target/127137
+	* config-list.mk (LIST): Remove i686-mingw32crt.
+
+2026-10-08  Arthur Cohen  <arthur.cohen@opensrcsec.com>
+
+	* mklog.py: Add "enum class" as a type starter to the struct regex.
+
+2026-09-30  Jakub Jelinek  <jakub@redhat.com>
+
+	* gcc-changelog/git_update_version.py (ignored_commits): Add two new
+	hashes.
+
+2026-09-18  Jakub Jelinek  <jakub@redhat.com>
+
+	* unicode/README: Replace Unicode 17 version with 18.
+	* unicode/gen_libstdcxx_unicode_data.py: Use 180000 instead of
+	160000 in _GLIBCXX_GET_UNICODE_DATA test.
+	* unicode/DerivedCoreProperties.txt: Updated from Unicode 18.0.
+	* unicode/emoji-data.txt: Likewise.
+	* unicode/PropList.txt: Likewise.
+	* unicode/HangulSyllableType.txt: Likewise.
+	* unicode/DerivedNormalizationProps.txt: Likewise.
+	* unicode/NameAliases.txt: Likewise.
+	* unicode/UnicodeData.txt: Likewise.
+	* unicode/EastAsianWidth.txt: Likewise.
+
+2026-09-15  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	* filter-clang-warnings.py (skip_warning): Match numbered attribute
+	files.
+
+2026-09-11  Richard Biener  <rguenther@suse.de>
+
+	* gcc-changelog/git_update_version.py: Remove gcc-13 branch
+	from active branches.
+
+2026-09-09  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	* filter-clang-warnings.py (skip_warning): Match insn-emit rather
+	than insn-emit.cc.
+
+2026-09-04  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR middle-end/125507
+	* filter_params.py (filter_src): Remove ENUM_BITFIELD.
+	(FilteringTests): Ditto.
+
+2026-09-04  Pedro Alves  <pedro@palves.net>
+
+	* dg-extract-results.py: Handle new "-f list-file" option.
+	* dg-extract-results.sh: Ditto.
+
+2026-09-03  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* gen_autofdo_event.py: Add missed updates for passing "--inherit" and
+	"-o $perf_file" to perf.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (maintainer_schema): Set the minimum array
+	size to 1 for email, inactive_email and aliases.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (_unilower): New function.
+	(sort_users): Likewise.
+	(verify): Check the sort order of the user data.
+	(store): Sort the user data before writing it.
+	* add-write-after.py (unilower): Delete
+	(main): No need to sort the user data here now.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (maintainer_schema): Allow inactive_DCO
+	for retired DCO addresses.
+	(_check_dco): Validate inactive_DCO entries as well.
+	(validate): Check inactive_DCO data.
+	* gen-MAINTAINERS.py (format_output): Combine inactive_DCO with
+	DCO entries.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (maintainer_schema): Move the DCO data
+	to a top-level user list.  Ensure that each user entry has at
+	least one of roles and DCO.
+	(_check_dco): New function.
+	(validate): Use it.  Handle roles being absent.
+	* gen-MAINTAINERS.py (format_output):  Scan the list of DCO
+	entries if generating the DCO table.  Split the overflowing
+	field logic into ...
+	(paginate): ... here.
+	* add-write-after.py (getuserdata): Write DCO data to new field.
+	Check that DCO email address is known and add to inactive_email
+	if not.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (maintainer_schema): Fix size validation
+	checks.
+
+2026-09-02  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py(store): New function.
+	* add-write-after.py(main): Use it.
+
+2026-09-01  Jason Merrill  <jason@redhat.com>
+
+	* gcc-changelog/git_commit.py (dr_regex): Add CWG|LWG and [DP]NNNN.
+
+2026-08-19  Richard Earnshaw  <rearnsha@arm.com>
+
+	* add-write-after.py (getuserdata): Also capture an optional
+	forge ID.
+
+2026-08-18  Richard Earnshaw  <rearnsha@arm.com>
+
+	* forge_teams.py: New file.
+
+2026-08-18  Richard Earnshaw  <rearnsha@arm.com>
+
+	* maintainer_utils.py (schema): Permit 'forgeid' on users
+	entries and 'teams' on subsystem entries.
+
+2026-08-18  Claudio Bantaloukas  <claudio.bantaloukas@arm.com>
+
+	* maintainer_utils.py: Add inactive_email property.
+
 2026-08-06  Jakub Jelinek  <jakub@redhat.com>
 
 	* unicode/README: Add another argument to makeucnid

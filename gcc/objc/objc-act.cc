@@ -10032,7 +10032,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
       t = build2 (MODIFY_EXPR, void_type_node,
 		  build_array_ref (location, objc_build_component_ref (objc_foreach_enum_state_decl,
 								       get_identifier ("extra")),
-				   build_int_cst (NULL_TREE, i)),
+				   build_int_cst (integer_type_node, i)),
 		  build_int_cst (long_unsigned_type_node, 0));
       SET_EXPR_LOCATION (t, location);
       append_to_statement_list (t, &BIND_EXPR_BODY (bind));
@@ -10048,7 +10048,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
 				 tree_cons   /* __objc_foreach_items  */
 				 (NULL_TREE, objc_foreach_items_decl,
 				  tree_cons  /* 16 */
-				  (NULL_TREE, build_int_cst (NULL_TREE, 16), NULL_TREE))), NULL);
+				  (NULL_TREE, build_int_cst (integer_type_node, 16), NULL_TREE))), NULL);
 #else
   /* In C, we need to decay the __objc_foreach_items array that we are passing.  */
   {
@@ -10061,7 +10061,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
 				   tree_cons   /* __objc_foreach_items  */
 				   (NULL_TREE, default_function_array_conversion (location, array).value,
 				    tree_cons  /* 16 */
-				    (NULL_TREE, build_int_cst (NULL_TREE, 16), NULL_TREE))), NULL);
+				    (NULL_TREE, build_int_cst (integer_type_node, 16), NULL_TREE))), NULL);
   }
 #endif
   t = build2 (MODIFY_EXPR, void_type_node, objc_foreach_batchsize_decl,
@@ -10222,7 +10222,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
 				 tree_cons   /* __objc_foreach_items  */
 				 (NULL_TREE, objc_foreach_items_decl,
 				  tree_cons  /* 16 */
-				  (NULL_TREE, build_int_cst (NULL_TREE, 16), NULL_TREE))), NULL);
+				  (NULL_TREE, build_int_cst (integer_type_node, 16), NULL_TREE))), NULL);
 #else
   /* In C, we need to decay the __objc_foreach_items array that we are passing.  */
   {
@@ -10235,7 +10235,7 @@ objc_finish_foreach_loop (location_t location, tree object_expression, tree coll
 				   tree_cons   /* __objc_foreach_items  */
 				   (NULL_TREE, default_function_array_conversion (location, array).value,
 				    tree_cons  /* 16 */
-				    (NULL_TREE, build_int_cst (NULL_TREE, 16), NULL_TREE))), NULL);
+				    (NULL_TREE, build_int_cst (integer_type_node, 16), NULL_TREE))), NULL);
   }
 #endif
   t = build2 (MODIFY_EXPR, void_type_node, objc_foreach_batchsize_decl,

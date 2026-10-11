@@ -756,6 +756,7 @@ reduce_declarers (NODE_T *p, enum a68_attribute expect)
   for (q = p; q != NO_NODE; FORWARD (q))
     {
       siga = true;
+      reduce (q, NO_NOTE, NO_TICK, FIXETY, WORD_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, LONGETY, LONG_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, SHORTETY, SHORT_SYMBOL, STOP);
       while (siga)
@@ -773,7 +774,6 @@ reduce_declarers (NODE_T *p, enum a68_attribute expect)
       reduce (q, NO_NOTE, NO_TICK, INDICANT, REAL_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, BITS_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, BYTES_SYMBOL, STOP);
-      reduce (q, NO_NOTE, NO_TICK, INDICANT, COMPLEX_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, COMPL_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, BOOL_SYMBOL, STOP);
       reduce (q, NO_NOTE, NO_TICK, INDICANT, CHAR_SYMBOL, STOP);
@@ -801,8 +801,7 @@ reduce_declarers (NODE_T *p, enum a68_attribute expect)
 	      a = ATTRIBUTE (SUB_NEXT (q));
 
 	      if (a == INT_SYMBOL || a == REAL_SYMBOL || a == BITS_SYMBOL
-		  || a == BYTES_SYMBOL || a == COMPLEX_SYMBOL
-		  || a == COMPL_SYMBOL)
+		  || a == BYTES_SYMBOL || a == COMPL_SYMBOL)
 		{
 		  reduce (q, NO_NOTE, NO_TICK, DECLARER, LONGETY, INDICANT, STOP);
 		}
@@ -826,14 +825,38 @@ reduce_declarers (NODE_T *p, enum a68_attribute expect)
 	    {
 	      a = ATTRIBUTE (SUB_NEXT (q));
 	      if (a == INT_SYMBOL || a == REAL_SYMBOL || a == BITS_SYMBOL
-		  || a == BYTES_SYMBOL || a == COMPLEX_SYMBOL || a == COMPL_SYMBOL)
+		  || a == BYTES_SYMBOL || a == COMPL_SYMBOL)
 		{
 		  reduce (q, NO_NOTE, NO_TICK, DECLARER, SHORTETY, INDICANT, STOP);
 		}
 	      else
 		{
 		  a68_error (NEXT (q), "appropriate declarer expected");
-		  reduce (q, NO_NOTE, NO_TICK, DECLARER, LONGETY, INDICANT, STOP);
+		  reduce (q, NO_NOTE, NO_TICK, DECLARER, SHORTETY, INDICANT, STOP);
+		}
+	    }
+	}
+      else if (a68_whether (q, FIXETY, INDICANT, STOP))
+	{
+	  int a;
+
+	  if (SUB_NEXT (q) == NO_NODE)
+	    {
+	      a68_error (NEXT (q), "appropriate declarer expected");
+	      reduce (q, NO_NOTE, NO_TICK, DECLARER, FIXETY, INDICANT, STOP);
+	    }
+	  else
+	    {
+	      a = ATTRIBUTE (SUB_NEXT (q));
+	      if (a == INT_SYMBOL || a == REAL_SYMBOL || a == BITS_SYMBOL
+		  || a == BYTES_SYMBOL || a == COMPL_SYMBOL)
+		{
+		  reduce (q, NO_NOTE, NO_TICK, DECLARER, FIXETY, INDICANT, STOP);
+		}
+	      else
+		{
+		  a68_error (NEXT (q), "appropriate declarer expected");
+		  reduce (q, NO_NOTE, NO_TICK, DECLARER, FIXETY, INDICANT, STOP);
 		}
 	    }
 	}
@@ -1210,6 +1233,9 @@ reduce_primary_parts (NODE_T *p, enum a68_attribute expect)
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, SHORTETY, INT_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, SHORTETY, REAL_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, SHORTETY, BITS_DENOTATION, STOP);
+      reduce (q, NO_NOTE, NO_TICK, DENOTATION, FIXETY, INT_DENOTATION, STOP);
+      reduce (q, NO_NOTE, NO_TICK, DENOTATION, FIXETY, REAL_DENOTATION, STOP);
+      reduce (q, NO_NOTE, NO_TICK, DENOTATION, FIXETY, BITS_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, INT_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, REAL_DENOTATION, STOP);
       reduce (q, NO_NOTE, NO_TICK, DENOTATION, BITS_DENOTATION, STOP);
@@ -2416,6 +2442,7 @@ reduce_enquiry_clauses (NODE_T *p)
 		      ENQUIRY_CLAUSE, ENQUIRY_CLAUSE, SEMI_SYMBOL, UNIT, STOP);
 	      reduce (q, NO_NOTE, &siga,
 		      INITIALISER_SERIES, ENQUIRY_CLAUSE, SEMI_SYMBOL, DECLARATION_LIST, STOP);
+	      /* Errors  */
 	      reduce (q, strange_separator, &siga,
 		      ENQUIRY_CLAUSE, ENQUIRY_CLAUSE, COMMA_SYMBOL, UNIT, STOP);
 	      reduce (q, strange_separator, &siga,
@@ -2435,6 +2462,7 @@ reduce_enquiry_clauses (NODE_T *p)
 		      ENQUIRY_CLAUSE, INITIALISER_SERIES, SEMI_SYMBOL, UNIT, STOP);
 	      reduce (q, NO_NOTE, &siga,
 		      INITIALISER_SERIES, INITIALISER_SERIES, SEMI_SYMBOL, DECLARATION_LIST, STOP);
+	      /* Errors  */
 	      reduce (q, strange_separator, &siga,
 		      ENQUIRY_CLAUSE, INITIALISER_SERIES, COMMA_SYMBOL, UNIT, STOP);
 	      reduce (q, strange_separator, &siga,

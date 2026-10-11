@@ -113,6 +113,23 @@
    (GASISR_Done     0)
    ])
 
+;; Repeat values for .gnu_attribute from Binutils include/elf/avr.h.
+(define_constants
+ [(Tag_GNU_AVR_VTABLE_AS 4)
+  (Val_GNU_AVR_VTABLE_NONE   0)
+  (Val_GNU_AVR_VTABLE_RAM    1)
+  (Val_GNU_AVR_VTABLE_FLASH  2)
+  (Val_GNU_AVR_VTABLE_FLASH1 3)
+  (Val_GNU_AVR_VTABLE_FLASH2 4)
+  (Val_GNU_AVR_VTABLE_FLASH3 5)
+  (Val_GNU_AVR_VTABLE_FLASH4 6)
+  (Val_GNU_AVR_VTABLE_FLASH5 7)
+  (Val_GNU_AVR_VTABLE_FLASHX 8)
+
+  (Tag_GNU_AVR_BITS_DOUBLE       8)
+  (Tag_GNU_AVR_BITS_LONG_DOUBLE 12)
+  ])
+
 (include "predicates.md")
 (include "constraints.md")
 
@@ -382,7 +399,7 @@
 
 ;; Map RTX code to its standard insn name
 (define_code_attr code_stdname
-  [(ashift   "ashl")
+  [(ashift   "ashl")  (ss_ashift "ssashl")  (us_ashift "usashl")
    (ashiftrt "ashr")
    (lshiftrt "lshr")
    (ior      "ior")
@@ -478,7 +495,7 @@
    HI CHI HA UHA HQ UHQ
    SI CSI SA USA SQ USQ
    DI CDI DA UDA DQ UDQ
-   TA UTA
+   TA UTA TI
    SF DF SC DC
    PSI])
 
@@ -1060,7 +1077,7 @@
 
     // Splitting multi-byte load / stores into 1-byte such insns
     // provided non-volatile, addr-space = generic, no reg-overlap
-    // and the resulting addressings are natively supported.
+    // and the resulting addressing modes are natively supported.
     if (avropt_split_ldst
         // Splitting too early may obfuscate some PRE_DEC / POST_INC
         // opportunities, thus only split after avr-fuse-add.
@@ -2310,6 +2327,7 @@
   }
   [(set_attr "adjust_len" "add_<code>0")])
 
+;; Also emit by the muluqq3_nomul expander.
 (define_insn_and_split "*umulqihi3.call_split"
   [(set (reg:HI 24)
         (mult:HI (zero_extend:HI (reg:QI 22))
@@ -4540,6 +4558,17 @@
   [(set_attr "length" "4,8,8,8")
    (set_attr "adjust_len" "*,out_bitop,out_bitop,out_bitop")])
 
+;; aop (any_or_plus) a.k.a. pixop.  Always use IOR.
+(define_expand "aop<mode>3"
+  [(set (match_operand:QISI 0 "register_operand")
+	(ior:QISI (match_operand:QISI 1 "register_operand")
+		  (match_operand:QISI 2 "nonmemory_operand")))]
+  ""
+  {
+    emit_insn (gen_ior<mode>3 (operands[0], operands[1], operands[2]));
+    DONE;
+  }
+)
 
 (define_split
   [(set (match_operand:SPLIT34 0 "register_operand")

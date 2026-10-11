@@ -1418,7 +1418,17 @@ add_method (tree type, tree method, bool via_using)
 	  if (losem || losef)
 	    win = losem - losef;
 	  else
-	    win = more_constrained (fn, method);
+	    {
+	      win = more_constrained (fn, method);
+	      if (win)
+		{
+		  /* The winner can't be more explicit.  */
+		  int ex = (DECL_NONCONVERTING_P (method)
+			    - DECL_NONCONVERTING_P (fn));
+		  if (ex && ex != win)
+		    win = 0;
+		}
+	    }
 	  if (win > 0)
 	    /* Leave FN in the method vec, discard METHOD.  */
 	    return false;
@@ -8113,7 +8123,7 @@ finish_struct_1 (tree t)
 	       thunk base function.  */
 	    DECL_VINDEX (fndecl) = NULL_TREE;
 	  else if (TREE_CODE (DECL_VINDEX (fndecl)) != INTEGER_CST)
-	    DECL_VINDEX (fndecl) = build_int_cst (NULL_TREE, vindex);
+	    DECL_VINDEX (fndecl) = build_int_cst (integer_type_node, vindex);
 	}
     }
 
@@ -10752,7 +10762,7 @@ build_vtbl_initializer (tree binfo,
 	    for (i = 0; i < TARGET_VTABLE_USES_DESCRIPTORS; ++i)
 	      {
 		tree fdesc = build2 (FDESC_EXPR, vfunc_ptr_type_node,
-				     fn, build_int_cst (NULL_TREE, i));
+				     fn, build_int_cst (integer_type_node, i));
 		TREE_CONSTANT (fdesc) = 1;
 
 		CONSTRUCTOR_APPEND_ELT (*inits, NULL_TREE, fdesc);

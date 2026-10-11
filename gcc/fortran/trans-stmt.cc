@@ -2273,9 +2273,13 @@ trans_associate_var (gfc_symbol *sym, gfc_wrapped_block *block)
 		   descriptor to get the target_expr.  */
 		target_expr =
 		    GFC_DECL_SAVED_DESCRIPTOR (e->symtree->n.sym->backend_decl);
-	      else
+	      else if (TREE_CODE (target_expr) == COMPONENT_REF)
 		/* Strip the _data component from the target_expr.  */
 		target_expr = TREE_OPERAND (target_expr, 0);
+	      else
+		/* An array section selector yields a bare descriptor; get the
+		   class container from the selector expression.  */
+		target_expr = gfc_get_class_from_gfc_expr (e);
 	      /* Add a reference to the _len comp to the target expr.  */
 	      tmp = gfc_class_len_get (target_expr);
 	      /* Get the component-ref for the temp structure's _len comp.  */

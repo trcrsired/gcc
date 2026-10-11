@@ -129,7 +129,7 @@ Free Documentation License}''.
 @c ***Installing GCC**********************************************************
 @ifnothtml
 @comment node-name,     next,          previous, up
-@node    Installing GCC, Binaries, , Top
+@node    Installing GCC, Specific, , Top
 @end ifnothtml
 @ifset indexhtml
 @ifnothtml
@@ -628,7 +628,7 @@ building the documentation without error, but you may still want to
 install a newer release to get the best appearance and usability of
 the generated manuals.
 
-Also note that Texinfo older than version 7.1 may throw incorrect build
+Also note that Texinfo older than version 7.1.1 may throw incorrect build
 warnings, though the generated documentation is correct.
 
 @item @TeX{} (any working version)
@@ -690,11 +690,7 @@ The source distribution includes the Ada, C, C++, Objective-C, COBOL
 (GCC 15 and later), D (GCC 9 and later), Fortran, Go, Modula-2 (GCC 13
 and later) and Algol 68 (GCC 16 and later, experimental) compilers, as
 well as runtime libraries for C++, Objective-C, COBOL, Fortran and
-Algol 68.  For previous versions these were downloadable as separate
-components such as the core GCC distribution, which included the C
-language front end and shared components, and language-specific
-distributions including the language front end and the language
-runtime (where appropriate).
+Algol 68.
 
 If you also intend to build Binutils (either to upgrade an existing
 installation or for use in place of the corresponding tools of your
@@ -890,7 +886,7 @@ aix@var{version}, amdhsa, aout, cygwin, darwin@var{version},
 eabi, eabialtivec, eabisim, eabisimaltivec, elf, elf32,
 elfbare, elfoabi, freebsd@var{version}, gnu, hpux, hpux@var{version},
 kfreebsd-gnu, kopensolaris-gnu, linux-androideabi, linux-gnu,
-linux-gnu_altivec, linux-musl, linux-uclibc, lynxos, mingw32, mingw32crt,
+linux-gnu_altivec, linux-musl, linux-uclibc, lynxos, mingw32,
 mmixware, msdosdjgpp, netbsd, netbsdelf@var{version}, nto-qnx, openbsd,
 rtems, solaris@var{version}, symbianelf, tpf, uclinux, uclinux_eabi, vms,
 vxworks, vxworksae, vxworksmils
@@ -1269,10 +1265,10 @@ GCC's diagnostics capabilities via a C API, and a C++ wrapper API adding
 This option requires @option{--enable-host-shared} on non-Windows hosts.
 
 This option also enables @code{sarif-replay}, a command-line tool for
-viewing @uref{https://sarif.info/,,SARIF files}.  @code{sarif-replay} takes
-one or more @code{.sarif} files as input and attempts to replay any
-diagnostics within them to stderr (via @code{libgdiagnostics}) in the style
-of GCC's diagnostics.
+viewing @uref{https://sarifweb.azurewebsites.net/,,SARIF files}.
+@code{sarif-replay} takes one or more @code{.sarif} files as input and
+attempts to replay any diagnostics within them to stderr (via
+@code{libgdiagnostics}) in the style of GCC's diagnostics.
 
 @item --disable-gcov
 Specify that the run-time library used for coverage analysis
@@ -1967,6 +1963,19 @@ dependencies and thus with parallel make potentially link different
 compilers concurrently.  If the argument is a positive integer, allow
 that number of concurrent link processes for the large binaries.
 
+@item --with-md-generator-partitions=@var{num}
+@itemx --with-md-generator-partitions=@var{counts}
+Set the number of C++ source partitions produced by the internal build-time
+tools @command{genemit}, @command{genrecog} and @command{genattrtab}.  More
+partitions give a parallel build more files to compile at once, and each
+of them is smaller, at the cost of repeating the per-file preamble.  A
+single @var{num} sets all three counts.  The @var{counts} form is
+@code{@var{emit}:@var{recog}:@var{attrtab}}.  Each count must be between
+1 and 9999.  The default is @code{6:6:1} for AArch64 and 10 for each
+generator on other targets.  A target can set a different default in
+@file{config.gcc}.  @option{--with-insnemit-partitions} is a deprecated
+alias.
+
 @item --enable-maintainer-mode
 The build rules that regenerate the Autoconf and Automake output files as
 well as the GCC master message catalog @file{gcc.pot} are normally
@@ -2500,7 +2509,7 @@ Linux systems and on big endian 64-bit systems where the default CPU
 is at least power7 (i.e.@: @option{--with-cpu=power7},
 @option{--with-cpu=power8}, or @option{--with-cpu=power9} is used).
 
-If you use the @option{--with-long-double-64} configuration option,
+If you use the @option{--without-long-double-128} configuration option,
 the @option{--with-long-double-format=ibm} and
 @option{--with-long-double-format=ieee} options are ignored.
 
@@ -3864,75 +3873,10 @@ If you find a bug, please report it following the
 @end ifhtml
 @end ifset
 
-@c ***Binaries****************************************************************
-@ifnothtml
-@comment node-name,     next,          previous, up
-@node    Binaries, Specific, Installing GCC, Top
-@end ifnothtml
-@ifset binarieshtml
-@ifnothtml
-@chapter Installing GCC: Binaries
-@end ifnothtml
-@cindex Binaries
-@cindex Installing GCC: Binaries
-
-We are often asked about pre-compiled versions of GCC@.  While we cannot
-provide these for all platforms, below you'll find links to binaries for
-various platforms where creating them by yourself is not easy due to various
-reasons.
-
-Please note that we did not create these binaries, nor do we
-support them.  If you have any problems installing them, please
-contact their makers.
-
-@itemize
-@item
-AIX:
-@itemize
-@item
-@uref{http://www.perzl.org/aix/,,AIX Open Source Packages (AIX5L AIX 6.1
-AIX 7.1)}.
-@end itemize
-
-@item
-DOS---@uref{https://www.delorie.com/djgpp/,,DJGPP}.
-
-@item
-macOS:
-@itemize
-@item
-The @uref{https://brew.sh,,Homebrew} package manager;
-@item
-@uref{https://www.macports.org,,MacPorts}.
-@end itemize
-
-@item
-Microsoft Windows:
-@itemize
-@item
-The @uref{https://sourceware.org/cygwin/,,Cygwin} project;
-@item
-the @uref{https://www.mingw-w64.org/,,mingw-w64} project.
-@end itemize
-
-@item
-The @uref{https://gcc.gnu.org/wiki/GFortranBinaries,,GFortran Wiki} has
-links to GNU Fortran binaries for several platforms.
-@end itemize
-
-@html
-<hr />
-<p>
-@end html
-@ifhtml
-@uref{./index.html,,Return to the GCC Installation page}
-@end ifhtml
-@end ifset
-
 @c ***Specific****************************************************************
 @ifnothtml
 @comment node-name,     next,          previous, up
-@node    Specific, GNU Free Documentation License, Binaries, Top
+@node    Specific, Binaries, Installing GCC, Top
 @end ifnothtml
 @ifset specifichtml
 @ifnothtml
@@ -5212,13 +5156,7 @@ GCC contains support for x86-64 using the mingw-w64
 runtime library, available from @uref{https://www.mingw-w64.org/downloads/}.
 This library should be used with the target triple x86_64-pc-mingw32.
 
-@subheading Windows CE
-Windows CE is supported as a target only on Hitachi
-SuperH (sh-wince-pe), and MIPS (mips-wince-pe).
-
 @subheading Other Windows Platforms
-GCC no longer supports Windows NT on the Alpha or PowerPC.
-
 GCC no longer supports the Windows POSIX subsystem.
 
 Old target names including *-*-winnt and *-*-windowsnt are no longer used.
@@ -5303,6 +5241,70 @@ GNU linker; duplicate copies of
 inlines, vtables and template instantiations will be discarded
 automatically.
 
+@html
+<hr />
+<p>
+@end html
+@ifhtml
+@uref{./index.html,,Return to the GCC Installation page}
+@end ifhtml
+@end ifset
+
+@c ***Binaries****************************************************************
+@ifnothtml
+@comment node-name,     next,          previous, up
+@node    Binaries, GNU Free Documentation License, Specific, Top
+@end ifnothtml
+@ifset binarieshtml
+@ifnothtml
+@chapter Installing GCC: Binaries
+@end ifnothtml
+@cindex Binaries
+@cindex Installing GCC: Binaries
+
+We are often asked about pre-compiled versions of GCC@.  While we cannot
+provide these for all platforms, below you'll find links to binaries for
+various platforms where creating them by yourself is not easy due to various
+reasons.
+
+Please note that we did not create these binaries, nor do we
+support them.  If you have any problems installing them, please
+contact their makers.
+
+@itemize
+@item
+AIX:
+@itemize
+@item
+@uref{http://www.perzl.org/aix/,,AIX Open Source Packages (AIX5L AIX 6.1
+AIX 7.1)}.
+@end itemize
+
+@item
+DOS---@uref{https://www.delorie.com/djgpp/,,DJGPP}.
+
+@item
+macOS:
+@itemize
+@item
+The @uref{https://brew.sh,,Homebrew} package manager;
+@item
+@uref{https://www.macports.org,,MacPorts}.
+@end itemize
+
+@item
+Microsoft Windows:
+@itemize
+@item
+The @uref{https://sourceware.org/cygwin/,,Cygwin} project;
+@item
+the @uref{https://www.mingw-w64.org/,,mingw-w64} project.
+@end itemize
+
+@item
+The @uref{https://gcc.gnu.org/wiki/GFortranBinaries,,GFortran Wiki} has
+links to GNU Fortran binaries for several platforms.
+@end itemize
 
 @html
 <hr />

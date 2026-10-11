@@ -580,7 +580,15 @@ force_rvalue (tree expr, tsubst_flags_t complain)
 tree
 force_lvalue (tree expr, tsubst_flags_t complain)
 {
-  if (!lvalue_p (expr))
+  if (lvalue_p (expr))
+    return expr;
+
+  /* If we build up *&TARGET_EXPR, we have an lvalue, but it could be
+     folded back to a prvalue by removing the *&.  */
+  if (TREE_CODE (expr) == TARGET_EXPR)
+    expr = build2 (COMPOUND_EXPR, TREE_TYPE (expr), expr,
+		   TARGET_EXPR_SLOT (expr));
+  else
     {
       expr = cp_build_addr_expr (expr, complain);
       expr = cp_build_indirect_ref (input_location, expr, RO_ARROW, complain);
@@ -1069,7 +1077,7 @@ cp_get_fndecl_from_callee (tree fn, bool fold /* = true */)
   if (type == NULL_TREE || !INDIRECT_TYPE_P (type))
     return NULL_TREE;
   if (fold)
-    fn = maybe_constant_init (fn);
+    fn = fold_non_dependent_expr (fn);
   STRIP_NOPS (fn);
   if (TREE_CODE (fn) == ADDR_EXPR
       || TREE_CODE (fn) == FDESC_EXPR)
@@ -1233,14 +1241,6 @@ convert_to_void (tree expr, impl_conv_void implicit, tsubst_flags_t complain)
      satisfaction may produce ill-formed programs.  */
    if (concept_check_p (expr) && !cp_unevaluated_operand)
      expr = evaluate_concept_check (expr);
-
-  /* Detect using expressions of consteval-only types outside manifestly
-     constant-evaluated contexts.  We are going to discard this expression,
-     so we can't wait till cp_fold_immediate_r.  FIXME This is too early;
-     code like "int i = (^^i, 42);" is OK.  We should stop discarding
-     expressions here (PR124249).  */
-  if (stmts_are_full_exprs_p () && check_out_of_consteval_use (expr))
-    return error_mark_node;
 
   if (VOID_TYPE_P (TREE_TYPE (expr)))
     return expr;
@@ -1739,10 +1739,8 @@ convert_to_void (tree expr, impl_conv_void implicit, tsubst_flags_t complain)
 		warn_if_unused_value (e, loc);
 	    }
 	}
-      expr = build1 (CONVERT_EXPR, void_type_node, expr);
+      expr = build1_loc (loc, CONVERT_EXPR, void_type_node, expr);
     }
-  if (! TREE_SIDE_EFFECTS (expr))
-    expr = void_node;
   return expr;
 }
 

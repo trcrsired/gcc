@@ -44,7 +44,7 @@ AC_SUBST(target_alias)
 
 if test "$build" != "$host"; then
   # We are being configured with some form of cross compiler.
-  GLIBCXX_IS_NATIVE=false
+  GLIBGM2_IS_NATIVE=false
   case "$host","$target" in
     # Darwin crosses can use the host system's libraries and headers,
     # because of the fat library support.  Of course, it must be the
@@ -55,7 +55,7 @@ if test "$build" != "$host"; then
 	hostos=`echo $host | sed 's/.*-darwin/darwin/'`
 	targetos=`echo $target | sed 's/.*-darwin/darwin/'`
 	if test $hostos = $targetos || test $targetos = darwin ; then
-	  GLIBCXX_IS_NATIVE=true
+	  GLIBGM2_IS_NATIVE=true
 	fi
 	;;
 
@@ -64,18 +64,18 @@ if test "$build" != "$host"; then
 	;;
   esac
 else
-  GLIBCXX_IS_NATIVE=true
+  GLIBGM2_IS_NATIVE=true
 fi
 
 # Runs configure.host, and assorted other critical bits.  Sets
 # up critical shell variables.
-GLIBCXX_CONFIGURE
+GLIBGM2_CONFIGURE
 
 # For gettimeofday support.
-GLIBCXX_CHECK_GETTIMEOFDAY
+GLIBGM2_CHECK_GETTIMEOFDAY
 
 # For clock_gettime, nanosleep and sched_yield support.
-GLIBCXX_ENABLE_LIBSTDCXX_TIME
+GLIBGM2_ENABLE_LIBSTDCXX_TIME
 
 AM_INIT_AUTOMAKE([1.15.1 no-define foreign no-dist -Wall -Wno-portability])
 
@@ -86,7 +86,6 @@ AC_ARG_WITH(cross-host,
 [  --with-cross-host=HOST           Configuring with a cross compiler])
 
 # Checks for header files.
-AC_HEADER_STDC
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIME
 
@@ -259,7 +258,8 @@ LT_INIT
 AC_LIBTOOL_DLOPEN
 
 AM_CONDITIONAL([ENABLE_DARWIN_AT_RPATH], [test x$enable_darwin_at_rpath = xyes])
-
+AC_PYTHON_INTERPRETER([>= '3.0'])
+AM_CONDITIONAL([HAVE_PYTHON_INTERPRETER], [test x$ax_python_interpreter_found = xyes])
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)
 
@@ -302,6 +302,8 @@ AC_PROG_CC
 m4_rename_force([real_PRECIOUS],[_AC_ARG_VAR_PRECIOUS])
 
 AC_SUBST(CFLAGS)
+GCC_PICFLAG
+AC_SUBST([PICFLAG])
 
 AC_DEFUN([GM2_UNDEF],[
   $as_echo "#undef HAVE_$1" >>confdefs.h

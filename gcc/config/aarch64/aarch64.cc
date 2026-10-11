@@ -2456,6 +2456,7 @@ aarch64_hard_regno_nregs (unsigned regno, machine_mode mode)
     case FP_REGS:
     case FP_LO_REGS:
     case FP_LO8_REGS:
+    case FP_HI_REGS:
       {
 	unsigned int vec_flags = aarch64_classify_vector_mode (mode);
 	if (vec_flags & VEC_SVE_DATA)
@@ -2995,20 +2996,19 @@ aarch64_regmode_natural_size (machine_mode mode)
   /* The natural size for SVE data modes is one SVE data vector,
      and similarly for predicates.  We can't independently modify
      anything smaller than that.  */
-  /* ??? For now, only do this for variable-width SVE registers.
-     Doing it for constant-sized registers breaks lower-subreg.cc.  */
-  /* ??? And once that's fixed, we should probably have similar
-     code for Advanced SIMD.  */
-  if (!aarch64_sve_vg.is_constant ())
+  if (VECTOR_MODE_P (mode))
     {
-      /* REGMODE_NATURAL_SIZE influences general subreg validity rules,
-	 so we need to handle memory-only modes as well.  */
       unsigned int vec_flags = aarch64_classify_vector_memory_mode (mode);
       if (vec_flags & VEC_SVE_PRED)
 	return BYTES_PER_SVE_PRED;
       if (vec_flags & VEC_SVE_DATA)
 	return BYTES_PER_SVE_VECTOR;
+      if (vec_flags & VEC_ADVSIMD)
+	return MAX (exact_div (GET_MODE_SIZE (mode),
+			       aarch64_ldn_stn_vectors (mode)).to_constant (),
+		    UNITS_PER_WORD);
     }
+
   return UNITS_PER_WORD;
 }
 
@@ -12717,40 +12717,49 @@ aarch64_emit_call_insn (rtx pat)
   return as_a<rtx_call_insn *> (insn);
 }
 
+/* Return the condition code mode for comparison CODE of MODE floating-point
+   operands.  FCMP and FCMPE set the same flags, but FCMPE also raises Invalid
+   for a quiet NaN.  Use CCFPE only when that exception is observable.  */
+
+static machine_mode
+aarch64_fp_cc_mode (rtx_code code, machine_mode mode)
+{
+  if (!HONOR_NANS (mode) || !flag_trapping_math)
+    return CCFPmode;
+
+  switch (code)
+    {
+    case EQ:
+    case NE:
+    case UNORDERED:
+    case ORDERED:
+    case UNLT:
+    case UNLE:
+    case UNGT:
+    case UNGE:
+    case UNEQ:
+      return CCFPmode;
+
+    case LT:
+    case LE:
+    case GT:
+    case GE:
+    case LTGT:
+      return CCFPEmode;
+
+    default:
+      gcc_unreachable ();
+    }
+}
+
 machine_mode
 aarch64_select_cc_mode (RTX_CODE code, rtx x, rtx y)
 {
   machine_mode mode_x = GET_MODE (x);
   rtx_code code_x = GET_CODE (x);
 
-  /* All floating point compares return CCFP if it is an equality
-     comparison, and CCFPE otherwise.  */
   if (GET_MODE_CLASS (mode_x) == MODE_FLOAT)
-    {
-      switch (code)
-	{
-	case EQ:
-	case NE:
-	case UNORDERED:
-	case ORDERED:
-	case UNLT:
-	case UNLE:
-	case UNGT:
-	case UNGE:
-	case UNEQ:
-	  return CCFPmode;
-
-	case LT:
-	case LE:
-	case GT:
-	case GE:
-	case LTGT:
-	  return CCFPEmode;
-
-	default:
-	  gcc_unreachable ();
-	}
-    }
+    return aarch64_fp_cc_mode (code, mode_x);
 
   /* Equality comparisons of short modes against zero can be performed
      using the TST instruction with the appropriate bitmask.  */
@@ -12825,11 +12834,13 @@ aarch64_select_cc_mode (RTX_CODE code, rtx x, rtx y)
 	      << (GET_MODE_BITSIZE (mode_x).to_constant () / 2))))
     return CC_ADCmode;
 
-  /* A test for signed overflow.  */
+  /* Tests for signed overflow.  */
   if ((mode_x == DImode || mode_x == TImode)
-      && code == NE
-      && code_x == PLUS
-      && GET_CODE (y) == SIGN_EXTEND)
+      && (code == NE || code == EQ)
+      && (code_x == PLUS || code_x == MINUS || code_x == NEG)
+      && GET_CODE (XEXP (x, 0)) == SIGN_EXTEND
+      && GET_CODE (y) == SIGN_EXTEND
+      && GET_CODE (XEXP (y, 0)) == code_x)
     return CC_Vmode;
 
   /* For everything else, return CCmode.  */
@@ -14336,6 +14347,7 @@ aarch64_class_max_nregs (reg_class_t regclass, machine_mode mode)
     case FP_REGS:
     case FP_LO_REGS:
     case FP_LO8_REGS:
+    case FP_HI_REGS:
       vec_flags = aarch64_classify_vector_mode (mode);
       if ((vec_flags & VEC_SVE_DATA)
 	  && constant_multiple_p (GET_MODE_SIZE (mode),
@@ -15099,7 +15111,9 @@ aarch64_extr_rtx_p (rtx x, rtx *res_op0, rtx *res_op1)
   *res_op0 = NULL_RTX;
   *res_op1 = NULL_RTX;
 
-  if (GET_CODE (x) != IOR)
+  if (GET_CODE (x) != IOR
+      && GET_CODE (x) != XOR
+      && GET_CODE (x) != PLUS)
     return false;
 
   op0 = XEXP (x, 0);
@@ -18478,6 +18492,75 @@ aarch64_sve_adjust_stmt_cost (class vec_info *vinfo, vect_cost_for_stmt kind,
   return stmt_cost;
 }
 
+/* Return > 0 if STMT_INFO is the instruction requires additional costing.  The
+   instruction is evaluated as being vectorized as VECTYPE and the return value
+   should be the additional number of instructions that need to be costed.  */
+static unsigned int
+aarch64_ifn_vect_stmt_p (stmt_vec_info stmt_info, tree vectype)
+{
+  stmt_info = vect_stmt_to_vectorize (stmt_info);
+  gcall *call = dyn_cast<gcall *> (STMT_VINFO_STMT (stmt_info));
+  if (!vectype)
+    return 0;
+
+  gassign *assign = dyn_cast <gassign *> (STMT_VINFO_STMT (stmt_info));
+  if (!call && !assign)
+    return 0;
+
+  auto vec_flags = aarch64_classify_vector_mode (TYPE_MODE (vectype));
+  bool advsimd_p = vec_flags & VEC_ADVSIMD;
+  bool is_128bit_p = known_eq (GET_MODE_BITSIZE (TYPE_MODE (vectype)), 128);
+  if (assign)
+    {
+      switch (gimple_assign_rhs_code (assign))
+      {
+	/* SAD for Adv. SIMD is emulated using two instuctions per 64-bit
+	   quantities.  So 128-bit ADB requires 4 INSN.  Account for that.  */
+	case SAD_EXPR:
+	  return advsimd_p && is_128bit_p ? 2 : 0;
+	case WIDEN_SUM_EXPR:
+	  {
+	    tree rhs = gimple_assign_rhs1 (assign);
+	    if (!advsimd_p
+		|| TARGET_DOTPROD
+		|| !vect_is_reduction (stmt_info)
+		|| TREE_CODE (rhs) != SSA_NAME)
+	      return 0;
+
+	    gimple *def_stmt = SSA_NAME_DEF_STMT (rhs);
+	    gassign *def_assign = dyn_cast<gassign *> (def_stmt);
+	    if (def_assign
+		&& CONVERT_EXPR_CODE_P (gimple_assign_rhs_code (def_assign))
+		&& TREE_CODE (gimple_assign_rhs1 (def_assign)) == SSA_NAME)
+	      def_stmt = SSA_NAME_DEF_STMT (gimple_assign_rhs1 (def_assign));
+
+	    gcall *def = dyn_cast<gcall *> (def_stmt);
+	    if (!def || gimple_call_combined_fn (def) != CFN_ABD)
+	      return 0;
+
+	    for (unsigned int i = 0; i < 2; ++i)
+	      {
+		tree arg = gimple_call_arg (def, i);
+		if (TREE_CODE (arg) != SSA_NAME
+		    || !gimple_assign_load_p (SSA_NAME_DEF_STMT (arg)))
+		  return 0;
+	      }
+	    return 2;
+	  }
+	default:
+	  break;
+      }
+      return 0;
+    }
+
+  switch (gimple_call_combined_fn (call))
+  {
+    default:
+      break;
+    }
+  return 0;
+}
+
 /* STMT_COST is the cost calculated for STMT_INFO, which has cost kind KIND
    and which when vectorized would operate on vector type VECTYPE.  Add the
    cost of any embedded operations.  */
@@ -18602,6 +18685,13 @@ aarch64_vector_costs::count_ops (unsigned int count, vect_cost_for_stmt kind,
       if (aarch64_bool_compound_p (m_vinfo, stmt_info, node, m_vec_flags))
 	return;
     }
+
+  unsigned int n_insn = 0;
+  if (stmt_info
+      && kind == vector_stmt
+      && (n_insn = aarch64_ifn_vect_stmt_p (stmt_info,
+					    STMT_VINFO_VECTYPE (stmt_info))))
+    ops->general_ops += n_insn * count;
 
   /* Detect the case where we are using an emulated gather/scatter.  When a
      target does not support gathers and scatters directly the vectorizer
@@ -19017,6 +19107,29 @@ aarch64_external_adjust_stmt_cost (vect_cost_for_stmt kind, slp_tree node,
   return stmt_cost;
 }
 
+/* Get the effecive VF to use for the loop in LOOP_VINFO.  This is the VF that
+   should be used for costing purposes only.  */
+static inline unsigned int
+aarch64_vect_vf_for_cost (loop_vec_info loop_vinfo)
+{
+  unsigned int estimated_vf = vect_vf_for_cost (loop_vinfo);
+
+  /* If we know we have a single partial vector iteration, cap the VF
+     to the number of scalar iterations for costing purposes.  */
+  if (LOOP_VINFO_NITERS_KNOWN_P (loop_vinfo))
+    {
+      auto niters = LOOP_VINFO_INT_NITERS (loop_vinfo);
+      if (niters < estimated_vf && dump_enabled_p ())
+	dump_printf_loc (MSG_NOTE, vect_location,
+			 "Scalar loop iterates at most %wd times.  Capping VF "
+			 " from %d to %wd\n", niters, estimated_vf, niters);
+
+      estimated_vf = MIN (estimated_vf, niters);
+    }
+
+  return estimated_vf;
+}
+
 unsigned
 aarch64_vector_costs::add_stmt_cost (int count, vect_cost_for_stmt kind,
 				     stmt_vec_info stmt_info, slp_tree node,
@@ -19161,6 +19274,14 @@ aarch64_vector_costs::add_stmt_cost (int count, vect_cost_for_stmt kind,
 	 to the base cost calculated above.  */
       stmt_cost = aarch64_adjust_stmt_cost (m_vinfo, kind, stmt_info, node,
 					    vectype, m_vec_flags, stmt_cost);
+      unsigned int n_insn = 0;
+      if (vectype
+	  && kind == vector_stmt
+	  && (n_insn = aarch64_ifn_vect_stmt_p (stmt_info, vectype)))
+	{
+	  const simd_vec_cost *simd_costs = aarch64_simd_vec_costs (vectype);
+	  stmt_cost += count * n_insn * simd_costs->int_stmt_cost;
+	}
 
       /* If we're applying the SVE vs. Advanced SIMD unrolling heuristic,
 	 estimate the number of statements in the unrolled Advanced SIMD
@@ -19380,26 +19501,13 @@ adjust_body_cost (loop_vec_info loop_vinfo,
 
   const auto &scalar_ops = scalar_costs->m_ops[0];
   const auto &vector_ops = m_ops[0];
-  unsigned int estimated_vf = vect_vf_for_cost (loop_vinfo);
+  unsigned int estimated_vf = aarch64_vect_vf_for_cost (loop_vinfo);
   unsigned int orig_body_cost = body_cost;
   bool should_disparage = false;
 
   if (dump_enabled_p ())
     dump_printf_loc (MSG_NOTE, vect_location,
 		     "Original vector body cost = %d\n", body_cost);
-
-  /* If we know we have a single partial vector iteration, cap the VF
-     to the number of scalar iterations for costing purposes.  */
-  if (LOOP_VINFO_NITERS_KNOWN_P (loop_vinfo))
-    {
-      auto niters = LOOP_VINFO_INT_NITERS (loop_vinfo);
-      if (niters < estimated_vf && dump_enabled_p ())
-	dump_printf_loc (MSG_NOTE, vect_location,
-			 "Scalar loop iterates at most %wd times.  Capping VF "
-			 " from %d to %wd\n", niters, estimated_vf, niters);
-
-      estimated_vf = MIN (estimated_vf, niters);
-    }
 
   fractional_cost scalar_cycles_per_iter
     = scalar_ops.min_cycles_per_iter () * estimated_vf;
@@ -19592,14 +19700,16 @@ better_main_loop_than_p (const vector_costs *uncast_other) const
 
   auto this_loop_vinfo = as_a<loop_vec_info> (this->m_vinfo);
   auto other_loop_vinfo = as_a<loop_vec_info> (other->m_vinfo);
+  auto this_loop_vf = aarch64_vect_vf_for_cost (this_loop_vinfo);
+  auto other_loop_vf = aarch64_vect_vf_for_cost (other_loop_vinfo);
 
   if (dump_enabled_p ())
     dump_printf_loc (MSG_NOTE, vect_location,
 		     "Comparing two main loops (%s at VF %d vs %s at VF %d)\n",
 		     GET_MODE_NAME (this_loop_vinfo->vector_mode),
-		     vect_vf_for_cost (this_loop_vinfo),
+		     this_loop_vf,
 		     GET_MODE_NAME (other_loop_vinfo->vector_mode),
-		     vect_vf_for_cost (other_loop_vinfo));
+		     other_loop_vf);
 
   /* Apply the unrolling heuristic described above
      m_unrolled_advsimd_niters.  */
@@ -19635,10 +19745,8 @@ better_main_loop_than_p (const vector_costs *uncast_other) const
 	  other->m_ops[i].dump ();
 	}
 
-      auto this_estimated_vf = (vect_vf_for_cost (this_loop_vinfo)
-				* this->m_ops[i].vf_factor ());
-      auto other_estimated_vf = (vect_vf_for_cost (other_loop_vinfo)
-				 * other->m_ops[i].vf_factor ());
+      auto this_estimated_vf = (this_loop_vf * this->m_ops[i].vf_factor ());
+      auto other_estimated_vf = (other_loop_vf * other->m_ops[i].vf_factor ());
 
       /* If it appears that one loop could process the same amount of data
 	 in fewer cycles, prefer that loop over the other one.  */
@@ -20018,6 +20126,15 @@ aarch64_override_options_after_change_1 (struct gcc_options *opts)
      intermediary step for the former.  */
   if (flag_mlow_precision_sqrt)
     flag_mrecip_low_precision_sqrt = true;
+
+  /* Turn off outline atomics with -mcmodel=large.  */
+  if (aarch64_cmodel == AARCH64_CMODEL_LARGE)
+    {
+      if (!TARGET_LSE && opts->x_aarch64_flag_outline_atomics == 1)
+	warning (OPT_moutline_atomics,
+		 "%<-mcmodel=large%> implies %<-mno-outline-atomics%>");
+      opts->x_aarch64_flag_outline_atomics = 0;
+    }
 }
 
 /* 'Unpack' up the internal tuning structs and update the options
@@ -24115,6 +24232,12 @@ aarch64_autovectorize_vector_modes (vector_modes *modes, bool)
     V2SImode
   };
 
+  if (aarch64_force_autovec_mode != VOIDmode)
+    {
+      modes->safe_push (aarch64_force_autovec_mode);
+      return 0;
+    }
+
   /* Try using N-byte SVE modes only after trying N-byte Advanced SIMD mode.
      This is because:
 
@@ -26370,6 +26493,69 @@ aarch64_expand_vector_init (rtx target, rtx vals)
   emit_insn (seq_total_cost < fallback_seq_cost ? seq : fallback_seq);
 }
 
+/* Expand the widening sum reduction DEST = ACC + (WIDE) SRC, where the
+   Advanced SIMD vector SRC holds an even multiple of the number of lanes
+   of the accumulator ACC and of the result DEST.  EXTEND_CODE is
+   SIGN_EXTEND or ZERO_EXTEND and selects the signed or unsigned form.
+   Quarter the lane count of a vector of bytes with a [SU]DOT against a
+   vector of ones where that is available, halve it with [SU]ADDLP until a
+   single pairwise step is left, then accumulate into ACC with [SU]ADALP.  */
+
+void
+aarch64_expand_reduc_widen_sum (rtx dest, rtx acc, rtx src,
+				rtx_code extend_code)
+{
+  unsigned int dest_nunits = GET_MODE_NUNITS (GET_MODE (dest)).to_constant ();
+  machine_mode mode = GET_MODE (src);
+  unsigned int nunits = GET_MODE_NUNITS (mode).to_constant ();
+  gcc_assert (nunits % (dest_nunits * 2) == 0);
+
+  /* [SU]DOT against a vector of ones turns += a into += (a * 1), which
+     sums four bytes into each 32-bit element and so covers two halving
+     steps in one operation.  The widest intermediate is 4 * 255, so no
+     product sum can overflow.  Only a step from bytes to words qualifies,
+     and only if the accumulator is at least that wide.  */
+  if (TARGET_DOTPROD
+      && GET_MODE_INNER (mode) == QImode
+      && nunits >= dest_nunits * 4)
+    {
+      machine_mode sum_mode
+	= related_vector_mode (mode, SImode, nunits / 4).require ();
+      convert_optab dot = (extend_code == SIGN_EXTEND
+			   ? sdot_prod_optab : udot_prod_optab);
+      insn_code icode = convert_optab_handler (dot, sum_mode, mode);
+      rtx ones = force_reg (mode, CONST1_RTX (mode));
+
+      /* A dot product that already reaches the element width of DEST
+	 accumulates into ACC itself, otherwise it starts from zero and the
+	 remaining steps carry its result into ACC.  */
+      if (sum_mode == GET_MODE (dest))
+	{
+	  emit_insn (GEN_FCN (icode) (dest, src, ones, acc));
+	  return;
+	}
+
+      rtx tmp = gen_reg_rtx (sum_mode);
+      emit_insn (GEN_FCN (icode) (tmp, src, ones,
+				  force_reg (sum_mode,
+					     CONST0_RTX (sum_mode))));
+      src = tmp;
+      mode = sum_mode;
+    }
+
+  while (GET_MODE_NUNITS (mode).to_constant () > dest_nunits * 2)
+    {
+      insn_code icode = code_for_aarch64_addlp (extend_code, mode);
+      mode = insn_data[icode].operand[0].mode;
+      rtx tmp = gen_reg_rtx (mode);
+      emit_insn (GEN_FCN (icode) (tmp, src));
+      src = tmp;
+    }
+
+  emit_insn (GEN_FCN (code_for_aarch64_adalp (extend_code, mode)) (dest, acc,
+								   src));
+}
+
 /* Emit RTL corresponding to:
    insr TARGET, ELEM.  */
 
@@ -28246,6 +28432,46 @@ aarch64_evpc_ext (struct expand_vec_perm_d *d)
   return true;
 }
 
+/* Return true if D describes a scalable-vector permutation that takes the
+   last DIST elements from the first input and the remaining elements from
+   the second input.  */
+
+static bool
+aarch64_evpc_splice (struct expand_vec_perm_d *d)
+{
+  poly_int64 nelt = d->perm.length ();
+  HOST_WIDE_INT dist;
+
+  if (d->vec_flags != VEC_SVE_DATA
+      || d->one_vector_p
+      || nelt.is_constant ()
+      || !(nelt - d->perm[0]).is_constant (&dist)
+      || !IN_RANGE (dist, 1, INT_MAX)
+      || !d->perm.series_p (0, 1, nelt - dist, 1))
+    return false;
+
+  machine_mode pred_mode = aarch64_sve_pred_mode (d->vmode);
+  if (aarch64_svpattern_for_vl (pred_mode, dist)
+      == AARCH64_NUM_SVPATTERNS)
+    return false;
+
+  if (d->testing_p)
+    return true;
+
+  rtx_vector_builder builder (pred_mode, dist, 2);
+  for (HOST_WIDE_INT i = 0; i < dist; ++i)
+    builder.quick_push (CONST1_RTX (BImode));
+  for (HOST_WIDE_INT i = 0; i < dist; ++i)
+    builder.quick_push (CONST0_RTX (BImode));
+
+  rtx head = force_reg (pred_mode, builder.build ());
+  rtx pred = gen_reg_rtx (pred_mode);
+  emit_insn (gen_aarch64_sve_rev (pred_mode, pred, head));
+  emit_insn (gen_aarch64_sve_splice (d->vmode, d->target, pred,
+				     d->op0, d->op1));
+  return true;
+}
+
 /* Recognize patterns for the REV{64,32,16} insns, which reverse elements
    within each 64-bit, 32-bit or 16-bit granule.  */
 
@@ -28325,6 +28551,45 @@ aarch64_evpc_rev_global (struct expand_vec_perm_d *d)
 
   rtx src = gen_rtx_UNSPEC (d->vmode, gen_rtvec (1, d->op0), UNSPEC_REV);
   emit_set_insn (d->target, src);
+  return true;
+}
+
+inline static bool
+is_bb_in_loop (basic_block bb)
+{
+  return bb && bb_loop_depth (bb) > 0;
+}
+
+/* Recognize patterns for the Advanced SIMD REV64 + EXT insns, which reverse
+   elements within a full vector.  */
+
+static bool
+aarch64_evpc_rev64_ext (struct expand_vec_perm_d *d)
+{
+  poly_uint64 nelt = d->perm.length ();
+
+  if (!d->one_vector_p || d->vec_flags != VEC_ADVSIMD)
+    return false;
+
+  if (!d->perm.series_p (0, 1, nelt - 1, -1))
+    return false;
+
+  if (d->testing_p)
+    return true;
+
+  if (is_bb_in_loop (gimple_bb (currently_expanding_gimple_stmt)))
+    return false;
+
+  rtx tmp1 = gen_reg_rtx (d->vmode);
+  rtx tmp2 = gen_reg_rtx (V16QImode);
+  rtx unspec_rev64
+      = gen_rtx_UNSPEC (d->vmode, gen_rtvec (1, d->op0), UNSPEC_REV64);
+  emit_set_insn (tmp1, unspec_rev64);
+  rtvec vec = gen_rtvec (3, gen_lowpart (V16QImode, tmp1),
+			 gen_lowpart (V16QImode, tmp1), GEN_INT (8));
+  rtx unspec_ext = gen_rtx_UNSPEC (V16QImode, vec, UNSPEC_EXT);
+  emit_set_insn (tmp2, unspec_ext);
+  emit_set_insn (d->target, gen_lowpart (d->vmode, tmp2));
   return true;
 }
 
@@ -28757,6 +29022,7 @@ aarch64_expand_vec_perm_const_1 (struct expand_vec_perm_d *d)
     {
       d->perm.rotate_inputs (1);
       std::swap (d->op0, d->op1);
+      std::swap (d->zero_op0_p, d->zero_op1_p);
     }
 
   if (((d->vec_flags == VEC_ADVSIMD && TARGET_SIMD)
@@ -28770,6 +29036,8 @@ aarch64_expand_vec_perm_const_1 (struct expand_vec_perm_d *d)
 	  if (aarch64_evpc_rev_local (d))
 	    return true;
 	  else if (aarch64_evpc_rev_global (d))
+	    return true;
+	  else if (aarch64_evpc_splice (d))
 	    return true;
 	  else if (aarch64_evpc_ext (d))
 	    return true;
@@ -28788,6 +29056,8 @@ aarch64_expand_vec_perm_const_1 (struct expand_vec_perm_d *d)
 	  else if (aarch64_evpc_ins (d))
 	    return true;
 	  else if (aarch64_evpc_hvla (d))
+	    return true;
+	  else if (aarch64_evpc_rev64_ext (d))
 	    return true;
 	  else if (aarch64_evpc_reencode (d))
 	    return true;
@@ -29669,6 +29939,17 @@ aarch64_gen_ccmp_first (rtx_insn **prep_seq, rtx_insn **gen_seq,
       icode = CODE_FOR_cmpdi;
       break;
 
+    case E_HFmode:
+      if (!TARGET_FP_F16INST)
+	{
+	  end_sequence ();
+	  return NULL_RTX;
+	}
+      cmp_mode = HFmode;
+      cc_mode = aarch64_select_cc_mode (code, op0, op1);
+      icode = cc_mode == CCFPEmode ? CODE_FOR_fcmpehf : CODE_FOR_fcmphf;
+      break;
+
     case E_SFmode:
       cmp_mode = SFmode;
       cc_mode = aarch64_select_cc_mode (code, op0, op1);
@@ -29725,8 +30006,19 @@ aarch64_gen_ccmp_next (rtx_insn **prep_seq, rtx_insn **gen_seq, rtx prev,
   /* Exit early for modes that are ot handled to avoid O(n^2) part of expand_operands. */
   op_mode = TYPE_MODE (TREE_TYPE (treeop0));
   if (!(op_mode == QImode || op_mode == HImode || op_mode == SImode || op_mode == DImode
+	|| (op_mode == HFmode && TARGET_FP_F16INST)
 	|| op_mode == SFmode || op_mode == DFmode))
    return NULL_RTX;
+
+  /* A conditional comparison does not compare its operands when the preceding
+     condition is false, so it cannot raise the exception that the comparison
+     it replaces would raise.  CCFPE marks a comparison that raises Invalid for
+     a quiet NaN, and every comparison raises it for a signalling NaN.  Reject
+     it here, before the operands are expanded.  */
+  if (FLOAT_MODE_P (op_mode)
+      && (aarch64_fp_cc_mode (cmp_code, op_mode) == CCFPEmode
+	  || HONOR_SNANS (op_mode)))
+    return NULL_RTX;
 
   push_to_sequence (*prep_seq);
   expand_operands (treeop0, treeop1, NULL_RTX, &op0, &op1, EXPAND_NORMAL);
@@ -29750,13 +30042,10 @@ aarch64_gen_ccmp_next (rtx_insn **prep_seq, rtx_insn **gen_seq, rtx prev,
       cmp_mode = DImode;
       break;
 
+    case E_HFmode:
     case E_SFmode:
-      cmp_mode = SFmode;
-      cc_mode = aarch64_select_cc_mode (cmp_code, op0, op1);
-      break;
-
     case E_DFmode:
-      cmp_mode = DFmode;
+      cmp_mode = op_mode;
       cc_mode = aarch64_select_cc_mode (cmp_code, op0, op1);
       break;
 
@@ -31266,6 +31555,14 @@ aarch64_estimated_poly_value (poly_int64 val,
   /* If the core provides width information, use that.  */
   HOST_WIDE_INT over_128 = width_source - 128;
   return val.coeffs[0] + val.coeffs[1] * over_128 / 128;
+}
+
+/* Implement TARGET_POLY_INT_INDETERMINATE_BOUND.  */
+
+static poly_uint64
+aarch64_poly_int_indeterminate_bound ()
+{
+  return poly_uint64 (0, 15);
 }
 
 
@@ -34589,6 +34886,9 @@ aarch64_libgcc_floating_mode_supported_p
 
 #undef TARGET_ESTIMATED_POLY_VALUE
 #define TARGET_ESTIMATED_POLY_VALUE aarch64_estimated_poly_value
+
+#undef TARGET_POLY_INT_INDETERMINATE_BOUND
+#define TARGET_POLY_INT_INDETERMINATE_BOUND aarch64_poly_int_indeterminate_bound
 
 #undef TARGET_ATTRIBUTE_TABLE
 #define TARGET_ATTRIBUTE_TABLE aarch64_attribute_table

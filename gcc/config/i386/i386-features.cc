@@ -1677,8 +1677,8 @@ timode_scalar_chain::compute_convert_gain ()
 	case REG:
 	  if (GENERAL_REGNO_P (REGNO (src)))
 	    {
-	      if (TARGET_AVX)
-		/* vmovq + vpinsrq */
+	      if (TARGET_SSE4_1)
+		/* movq + pinsrq */
 		igain = speed_p ? -ix86_cost->integer_to_sse
 				  - COSTS_N_INSNS (1)
 				: -COSTS_N_BYTES (11);
@@ -1690,8 +1690,8 @@ timode_scalar_chain::compute_convert_gain ()
 	    }
 	  else if (GENERAL_REG_P (dst))
 	    {
-	      if (TARGET_AVX)
-		/* vpextrq + vmovq */
+	      if (TARGET_SSE4_1)
+		/* pextrq + movq */
 		igain = speed_p ? -ix86_cost->sse_to_integer
 				  - COSTS_N_INSNS (1)
 				: -COSTS_N_BYTES (11);
@@ -1730,7 +1730,12 @@ timode_scalar_chain::compute_convert_gain ()
 
 	case AND:
 	  if (!MEM_P (dst))
-	    igain = COSTS_N_INSNS (1);
+	    {
+	      igain = COSTS_N_INSNS (1);
+	      if (MEM_P (XEXP (src, 0)) || MEM_P (XEXP (src, 1)))
+		/* One less load.  */
+		igain += COSTS_N_INSNS (1);
+	    }
 	  if (CONST_SCALAR_INT_P (XEXP (src, 1)))
 	    igain += timode_immed_const_gain (XEXP (src, 1), bb);
 	  break;
@@ -1745,7 +1750,12 @@ timode_scalar_chain::compute_convert_gain ()
 	      break;
 	    }
 	  if (!MEM_P (dst))
-	    igain = COSTS_N_INSNS (1);
+	    {
+	      igain = COSTS_N_INSNS (1);
+	      if (MEM_P (XEXP (src, 0)) || MEM_P (XEXP (src, 1)))
+		/* One less load.  */
+		igain += COSTS_N_INSNS (1);
+	    }
 	  if (CONST_SCALAR_INT_P (XEXP (src, 1)))
 	    igain += timode_immed_const_gain (XEXP (src, 1), bb);
 	  break;
@@ -3264,6 +3274,14 @@ rest_of_insert_endbr_and_patchable_area (bool need_endbr,
 		  dest_blk = e->dest;
 		  insn = BB_HEAD (dest_blk);
 		  gcc_assert (LABEL_P (insn));
+
+		  /* Reuse existing ENDBR.  */
+		  rtx_insn *next = next_nonnote_nondebug_insn (insn);
+		  if (next && NONJUMP_INSN_P (next)
+		      && GET_CODE (PATTERN (next)) == UNSPEC_VOLATILE
+		      && XINT (PATTERN (next), 1) == UNSPECV_NOP_ENDBR)
+		    continue;
+
 		  endbr = gen_nop_endbr ();
 		  emit_insn_after (endbr, insn);
 		}

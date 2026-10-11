@@ -17,15 +17,99 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "rust-hir-trait-resolve.h"
+#include "rich-location.h"
 #include "rust-hir-trait-reference.h"
 #include "rust-hir-type-check-expr.h"
 #include "rust-rib.h"
 #include "rust-substitution-mapper.h"
+#include "text-range-label.h"
 #include "rust-type-util.h"
 #include "rust-finalized-name-resolution-context.h"
 
 namespace Rust {
 namespace Resolver {
+
+static bool
+validate_impl_substitution_bounds (
+  const std::vector<TyTy::SubstitutionArg> &resolved_args, location_t locus,
+  bool emit_error)
+{
+  auto &mctx = Analysis::Mappings::get ();
+
+  std::vector<TyTy::SubstitutionArg> args;
+  for (const auto &arg : resolved_args)
+    args.push_back (arg);
+
+  TyTy::SubstitutionArgumentMappings mappings (std::move (args),
+					       {} /*binding_args*/,
+					       TyTy::RegionParamList (0),
+					       locus);
+
+  for (const auto &arg : resolved_args)
+    {
+      TyTy::BaseGeneric *param
+	= const_cast<TyTy::BaseGeneric *> (arg.get_param_ty ());
+      if (param == nullptr)
+	continue;
+
+      TyTy::BaseType *resolved_arg = arg.get_tyty ();
+      if (resolved_arg->get_kind () == TyTy::TypeKind::PARAM)
+	resolved_arg
+	  = static_cast<TyTy::ParamType *> (resolved_arg)->resolve ();
+
+      if (resolved_arg->get_kind () == TyTy::TypeKind::PARAM
+	  || resolved_arg->get_kind () == TyTy::TypeKind::INFER)
+	continue;
+
+      auto arg_type_locus
+	= mctx.lookup_location (arg.get_tyty ()->get_ty_ref ());
+      for (auto bound : param->get_specified_bounds ())
+	{
+	  auto bound_locus = bound.get_locus ();
+	  auto trait_locus = bound.get ()->get_locus ();
+	  bound.apply_argument_mappings (mappings, false /*is_super_trait*/);
+
+	  if (!resolved_arg->satisfies_bound (bound, false /*emit_error*/))
+	    {
+	      if (emit_error)
+		{
+		  rich_location r (line_table, locus);
+
+		  std::string arg_label_text = "the trait " + bound.get_name ()
+					       + " is not implemented for "
+					       + resolved_arg->get_name ();
+
+		  text_range_label arg_label (arg_label_text.c_str ());
+		  r.add_range (arg_type_locus, SHOW_RANGE_WITHOUT_CARET,
+			       &arg_label);
+
+		  bool ambiguous = false;
+		  auto *trait_impl
+		    = lookup_associated_impl_block (bound, resolved_arg,
+						    &ambiguous);
+		  text_range_label trait_label (
+		    "this trait has no implementations, consider adding one");
+		  if (trait_impl == nullptr)
+		    r.add_range (trait_locus, SHOW_RANGE_WITHOUT_CARET,
+				 &trait_label);
+
+		  text_range_label bound_label (
+		    "unsatisfied trait bound introduced here");
+		  r.add_range (bound_locus, SHOW_RANGE_WITHOUT_CARET,
+			       &bound_label);
+
+		  rust_error_at (r, ErrorCode::E0277,
+				 "the trait bound %<%s: %s%> is not satisfied",
+				 resolved_arg->get_name ().c_str (),
+				 bound.get_name ().c_str ());
+		}
+	      return false;
+	    }
+	}
+    }
+
+  return true;
+}
 
 TraitItemReference
 ResolveTraitItemToRef::Resolve (
@@ -353,12 +437,35 @@ TraitItemReference::on_resolved (const TraitReference *tref)
       break;
 
     case FN:
-      resolve_item (tref, static_cast<HIR::TraitItemFunc &> (*hir_trait_item));
+      {
+	TyTy::BaseType *fn_type = get_tyty ();
+	if (is_optional () && fn_type->get_kind () == TyTy::TypeKind::FNDEF)
+	  context->mark_function_body_pending (
+	    static_cast<TyTy::FnType *> (fn_type)->get_id ());
+      }
       break;
 
     default:
       break;
     }
+}
+
+void
+TraitItemReference::resolve_default_function_body (const TraitReference *tref)
+{
+  if (type != FN || !is_optional ())
+    return;
+
+  auto &func = static_cast<HIR::TraitItemFunc &> (*hir_trait_item);
+  TyTy::BaseType *item_tyty = get_tyty ();
+  if (item_tyty->get_kind () != TyTy::TypeKind::FNDEF)
+    return;
+
+  auto fn_type = static_cast<TyTy::FnType *> (item_tyty);
+  if (!context->function_body_pending (fn_type->get_id ()))
+    return;
+
+  resolve_item (tref, func);
 }
 
 void
@@ -382,6 +489,8 @@ TraitItemReference::resolve_item (const TraitReference *tref,
 				substitutions, self,
 				TyTy::SubstitutionArgumentMappings::error (),
 				{}, {}, inherited_count);
+
+  context->insert_type (type.get_mappings (), projection);
 
   // Attach the bounds declared on the associated type itself:
   //
@@ -407,8 +516,6 @@ TraitItemReference::resolve_item (const TraitReference *tref,
       if (!trait_item_bounds.empty ())
 	projection->inherit_bounds (trait_item_bounds);
     }
-
-  context->insert_type (type.get_mappings (), projection);
 }
 
 void
@@ -453,6 +560,7 @@ TraitItemReference::resolve_item (const TraitReference *tref,
 
   // need to get the return type from this
   TyTy::FnType *resolved_fn_type = static_cast<TyTy::FnType *> (item_tyty);
+  context->clear_function_body_pending (resolved_fn_type->get_id ());
   auto expected_ret_tyty = resolved_fn_type->get_return_type ();
   context->push_return_type (TypeCheckContextItem (&func), expected_ret_tyty);
 
@@ -477,17 +585,26 @@ AssociatedImplTrait::bind_impl_for_projection (TyTy::ProjectionType &proj,
   std::vector<TyTy::SubstitutionParamMapping> impl_substitutions;
   for (auto &generic_param : impl->get_generic_params ())
     {
-      if (generic_param->get_kind () != HIR::GenericParam::GenericKind::TYPE)
+      if (generic_param->get_kind () != HIR::GenericParam::GenericKind::TYPE
+	  && generic_param->get_kind ()
+	       != HIR::GenericParam::GenericKind::CONST)
 	continue;
       TyTy::BaseType *l = nullptr;
       bool ok
 	= context->lookup_type (generic_param->get_mappings ().get_hirid (),
 				&l);
-      if (!ok || l->get_kind () != TyTy::TypeKind::PARAM)
+      if (!ok)
 	continue;
-      impl_substitutions.emplace_back (static_cast<HIR::TypeParam &> (
-					 *generic_param),
-				       static_cast<TyTy::ParamType *> (l));
+
+      TyTy::BaseGeneric *param = nullptr;
+      if (l->get_kind () == TyTy::TypeKind::PARAM)
+	param = static_cast<TyTy::ParamType *> (l);
+      else if (l->get_kind () == TyTy::TypeKind::CONST
+	       && l->as_const_type ()->const_kind ()
+		    == TyTy::BaseConstType::ConstKind::Decl)
+	param = static_cast<TyTy::ConstParamType *> (l);
+      if (param != nullptr)
+	impl_substitutions.emplace_back (*generic_param, param);
     }
 
   // Build infer args for each impl param so we dont mutate the impls own
@@ -499,7 +616,11 @@ AssociatedImplTrait::bind_impl_for_projection (TyTy::ProjectionType &proj,
   for (auto &p : impl_substitutions)
     {
       const std::string &symbol = p.get_param_ty ()->get_symbol ();
-      TyTy::TyVar infer_var = TyTy::TyVar::get_implicit_infer_var (locus);
+      TyTy::TyVar infer_var
+	= p.get_generic_param ().get_kind ()
+	      == HIR::GenericParam::GenericKind::CONST
+	    ? TyTy::TyVar::get_implicit_const_infer_var (locus)
+	    : TyTy::TyVar::get_implicit_infer_var (locus);
       TyTy::BaseType *resolved = infer_var.get_tyty ();
       infer_arg_vec.emplace_back (&p, resolved);
       param_mappings[symbol] = resolved->get_ref ();
@@ -598,6 +719,10 @@ AssociatedImplTrait::bind_impl_for_projection (TyTy::ProjectionType &proj,
       resolved_args.emplace_back (&p, r);
     }
 
+  if (!validate_impl_substitution_bounds (resolved_args, locus,
+					  false /*emit_error*/))
+    return TyTy::SubstitutionArgumentMappings::error ();
+
   return TyTy::SubstitutionArgumentMappings (std::move (resolved_args),
 					     {} /*binding_args*/,
 					     TyTy::RegionParamList (0)
@@ -608,24 +733,33 @@ AssociatedImplTrait::bind_impl_for_projection (TyTy::ProjectionType &proj,
 TyTy::SubstitutionArgumentMappings
 AssociatedImplTrait::bind_impl_for_bound (TyTy::BaseType *receiver,
 					  const TyTy::TypeBoundPredicate &bound,
-					  location_t locus)
+					  location_t locus, bool emit_error)
 {
   // Same shape as bind_impl_for_projection but the receiver/trait-args are
   // taken from the (binding, bound) pair instead of a ProjectionType.
   std::vector<TyTy::SubstitutionParamMapping> impl_substitutions;
   for (auto &generic_param : impl->get_generic_params ())
     {
-      if (generic_param->get_kind () != HIR::GenericParam::GenericKind::TYPE)
+      if (generic_param->get_kind () != HIR::GenericParam::GenericKind::TYPE
+	  && generic_param->get_kind ()
+	       != HIR::GenericParam::GenericKind::CONST)
 	continue;
       TyTy::BaseType *l = nullptr;
       bool ok
 	= context->lookup_type (generic_param->get_mappings ().get_hirid (),
 				&l);
-      if (!ok || l->get_kind () != TyTy::TypeKind::PARAM)
+      if (!ok)
 	continue;
-      impl_substitutions.emplace_back (static_cast<HIR::TypeParam &> (
-					 *generic_param),
-				       static_cast<TyTy::ParamType *> (l));
+
+      TyTy::BaseGeneric *param = nullptr;
+      if (l->get_kind () == TyTy::TypeKind::PARAM)
+	param = static_cast<TyTy::ParamType *> (l);
+      else if (l->get_kind () == TyTy::TypeKind::CONST
+	       && l->as_const_type ()->const_kind ()
+		    == TyTy::BaseConstType::ConstKind::Decl)
+	param = static_cast<TyTy::ConstParamType *> (l);
+      if (param != nullptr)
+	impl_substitutions.emplace_back (*generic_param, param);
     }
 
   std::vector<TyTy::SubstitutionArg> infer_arg_vec;
@@ -633,7 +767,11 @@ AssociatedImplTrait::bind_impl_for_bound (TyTy::BaseType *receiver,
   for (auto &p : impl_substitutions)
     {
       const std::string &symbol = p.get_param_ty ()->get_symbol ();
-      TyTy::TyVar infer_var = TyTy::TyVar::get_implicit_infer_var (locus);
+      TyTy::TyVar infer_var
+	= p.get_generic_param ().get_kind ()
+	      == HIR::GenericParam::GenericKind::CONST
+	    ? TyTy::TyVar::get_implicit_const_infer_var (locus)
+	    : TyTy::TyVar::get_implicit_infer_var (locus);
       TyTy::BaseType *resolved = infer_var.get_tyty ();
       infer_arg_vec.emplace_back (&p, resolved);
       param_mappings[symbol] = resolved->get_ref ();
@@ -710,6 +848,9 @@ AssociatedImplTrait::bind_impl_for_bound (TyTy::BaseType *receiver,
 	continue;
       resolved_args.emplace_back (&p, r);
     }
+
+  if (!validate_impl_substitution_bounds (resolved_args, locus, emit_error))
+    return TyTy::SubstitutionArgumentMappings::error ();
 
   return TyTy::SubstitutionArgumentMappings (std::move (resolved_args),
 					     {} /*binding_args*/,

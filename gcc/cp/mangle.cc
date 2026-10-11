@@ -2739,11 +2739,6 @@ write_type (tree type)
 		++is_builtin_type;
 	      break;
 
-	    case META_TYPE:
-	      write_string ("Dm");
-	      ++is_builtin_type;
-	      break;
-
 	    case SPLICE_SCOPE:
 	      write_splice (type);
 	      break;
@@ -2776,6 +2771,12 @@ write_type (tree type)
 	      break;
 
 	    case LANG_TYPE:
+	      if (REFLECTION_TYPE_P (type))
+		{
+		  write_string ("Dm");
+		  ++is_builtin_type;
+		  break;
+		}
 	      /* fall through.  */
 
 	    default:
@@ -3214,15 +3215,23 @@ write_requirement (tree req)
   switch (tree_code code = TREE_CODE (req))
     {
       /* # simple-requirement or compound-requirement
-	 <requirement> ::= X <expression> [ N ] [ R <type-constraint> ] */
+	 <requirement> ::= X <expression> [ N ] [ R <type-constraint> ]
+			   X <expression> C <expression>
+			     [ R <type-constraint> ]  */
     case SIMPLE_REQ:
     case COMPOUND_REQ:
       write_char ('X');
       write_expression (op);
       if (code == SIMPLE_REQ)
 	break;
-      if (COMPOUND_REQ_NOEXCEPT_P (req))
+      if (operand_equal_p (TREE_OPERAND (req, 2), boolean_true_node))
 	write_char ('N');
+      else if (TREE_OPERAND (req, 2) != error_mark_node
+	       && !operand_equal_p (TREE_OPERAND (req, 2), boolean_false_node))
+	{
+	  write_char ('C');
+	  write_expression (TREE_OPERAND (req, 2));
+	}
       if (tree constr = TREE_OPERAND (req, 1))
 	{
 	  write_char ('R');
@@ -3888,8 +3897,14 @@ write_expression (tree expr)
 				if (field == ce->index)
 				  break;
 				if (abi_check (21))
-				  write_expression (build_zero_cst
-						    (TREE_TYPE (field)));
+				  {
+				    tree type = TREE_TYPE (field), expr;
+				    if (REFLECTION_TYPE_P (type))
+				      expr = get_null_reflection ();
+				    else
+				      expr = build_zero_cst (type);
+				    write_expression (expr);
+				  }
 				field = DECL_CHAIN (field);
 			      }
 			  }
@@ -4063,6 +4078,10 @@ write_expression (tree expr)
 		     "use library traits instead", expr);
 	      break;
 
+	    case ERROR_MARK:
+	      if (seen_error ())
+		break;
+	      /* FALLTHROUGH */
 	    default:
 	      sorry ("mangling %C", code);
 	      break;
@@ -4075,20 +4094,35 @@ write_expression (tree expr)
       switch (code)
 	{
 	case CALL_EXPR:
-	  {
-	    tree fn = CALL_EXPR_FN (expr);
+	  if (tree fn = CALL_EXPR_FN (expr))
+	    {
+	      if (TREE_CODE (fn) == ADDR_EXPR)
+		fn = TREE_OPERAND (fn, 0);
 
-	    if (TREE_CODE (fn) == ADDR_EXPR)
-	      fn = TREE_OPERAND (fn, 0);
+	      /* Mangle a dependent name as the name, not whatever happens to
+		 be the first function in the overload set.  */
+	      if (OVL_P (fn)
+		  && type_dependent_expression_p_push (expr))
+		fn = OVL_NAME (fn);
 
-	    /* Mangle a dependent name as the name, not whatever happens to
-	       be the first function in the overload set.  */
-	    if (OVL_P (fn)
-		&& type_dependent_expression_p_push (expr))
-	      fn = OVL_NAME (fn);
-
-	    write_expression (fn);
-	  }
+	      write_expression (fn);
+	    }
+	  else
+	    switch (CALL_EXPR_IFN (expr))
+	      {
+	      /* Calls to __builtin_bswapg/__builtin_bitreverseg are parsed
+		 as IFN_BSWAP/IFN_BITREVERSE calls because we don't have
+		 those builtins but instead keywords.  Pretend they are
+		 builtin function template.  */
+	      case IFN_BSWAP:
+		write_source_name (get_identifier ("__builtin_bswapg"));
+		break;
+	      case IFN_BITREVERSE:
+		write_source_name (get_identifier ("__builtin_bitreverseg"));
+		break;
+	      default:
+		gcc_unreachable ();
+	      }
 
 	  for (i = 0; i < call_expr_nargs (expr); ++i)
 	    write_expression (CALL_EXPR_ARG (expr, i));
@@ -4302,7 +4336,7 @@ write_reflection (tree refl)
 	   || strcmp (prefix, "ns") == 0)
     {
       write_prefix (decl_mangling_context (arg));
-      write_unqualified_name (arg);
+      write_unqualified_name (STRIP_TEMPLATE (arg));
     }
   else if (strcmp (prefix, "ba") == 0)
     {

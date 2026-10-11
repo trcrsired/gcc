@@ -235,11 +235,21 @@ INSNEMIT_SEQ_SRC = $(patsubst %, insn-emit-%.cc, $(INSNEMIT_SPLITS_SEQ))
 INSNEMIT_SEQ_TMP = $(patsubst %, tmp-emit-%.cc, $(INSNEMIT_SPLITS_SEQ))
 INSNEMIT_SEQ_O = $(patsubst %, insn-emit-%.o, $(INSNEMIT_SPLITS_SEQ))
 
-# Re-use the split number for insn-recog as well.
-INSNRECOG_SPLITS_SEQ = $(wordlist 1,$(NUM_INSNEMIT_SPLITS),$(one_to_9999))
+# The number of splits to be made for the insn-recog files.
+NUM_INSNRECOG_SPLITS = @DEFAULT_INSNRECOG_PARTITIONS@
+INSNRECOG_SPLITS_SEQ = $(wordlist 1,$(NUM_INSNRECOG_SPLITS),$(one_to_9999))
 INSNRECOG_SEQ_SRC = $(patsubst %, insn-recog-%.cc, $(INSNRECOG_SPLITS_SEQ))
 INSNRECOG_SEQ_TMP = $(patsubst %, tmp-recog-%.cc, $(INSNRECOG_SPLITS_SEQ))
 INSNRECOG_SEQ_O = $(patsubst %, insn-recog-%.o, $(INSNRECOG_SPLITS_SEQ))
+
+# The number of splits to be made for the insn-attrtab files.
+NUM_INSNATTRTAB_SPLITS = @DEFAULT_INSNATTRTAB_PARTITIONS@
+INSNATTRTAB_SPLITS_SEQ = $(wordlist 1,$(NUM_INSNATTRTAB_SPLITS),$(one_to_9999))
+INSNATTRTAB_SEQ_SRC = $(patsubst %, insn-attrtab-%.cc, \
+	$(INSNATTRTAB_SPLITS_SEQ))
+INSNATTRTAB_SEQ_TMP = $(patsubst %, tmp-attrtab-%.cc, \
+	$(INSNATTRTAB_SPLITS_SEQ))
+INSNATTRTAB_SEQ_O = $(patsubst %, insn-attrtab-%.o, $(INSNATTRTAB_SPLITS_SEQ))
 
 # These files are to have specific diagnostics suppressed, or are not to
 # be subject to -Werror:
@@ -1329,7 +1339,7 @@ C_COMMON_OBJS = c-family/c-common.o c-family/c-cppbuiltin.o c-family/c-dump.o \
   c-family/c-semantics.o c-family/c-ada-spec.o \
   c-family/c-ubsan.o c-family/known-headers.o \
   c-family/c-attribs.o c-family/c-warn.o c-family/c-spellcheck.o \
-  c-family/c-type-mismatch.o
+  c-family/c-type-mismatch.o attr-handlers.o
 
 # Analyzer object files
 ANALYZER_OBJS = \
@@ -1405,7 +1415,7 @@ OBJS = \
 	$(GIMPLE_MATCH_PD_SEQ_O) \
 	gimple-match-exports.o \
 	$(GENERIC_MATCH_PD_SEQ_O) \
-	insn-attrtab.o \
+	$(INSNATTRTAB_SEQ_O) \
 	insn-automata.o \
 	insn-dfatab.o \
 	$(INSNEMIT_SEQ_O) \
@@ -1868,6 +1878,7 @@ OBJS = \
 	wide-int.o \
 	wide-int-print.o \
 	attr-callback.o \
+	callback-info.o \
 	$(out_object_file) \
 	$(ANALYZER_OBJS) \
 	$(EXTRA_OBJS) \
@@ -1984,10 +1995,12 @@ TREECHECKING = @TREECHECKING@
 FULL_DRIVER_NAME=$(target_noncanonical)-gcc-$(version)$(exeext)
 
 MOSTLYCLEANFILES = insn-flags.h insn-config.h insn-codes.h \
- insn-output.cc $(INSNRECOG_SEQ_SRC) insn-recog.h \
- $(INSNEMIT_SEQ_SRC) insn-extract.cc insn-peep.cc \
- insn-attr.h insn-attr-common.h insn-attrtab.cc insn-dfatab.cc \
- insn-latencytab.cc insn-opinit.cc insn-opinit.h insn-preds.cc insn-constants.h \
+ insn-output.cc insn-recog-*.cc insn-recog.h \
+ insn-emit-*.cc insn-extract.cc insn-peep.cc \
+ insn-attr.h insn-attr-common.h insn-attrtab-*.cc insn-attrtab.cc \
+ insn-dfatab.cc insn-latencytab.cc insn-opinit.cc \
+ insn-opinit.h insn-preds.cc \
+ insn-constants.h \
  tm-preds.h tm-constrs.h checksum-options $(GIMPLE_MATCH_PD_SEQ_SRC) \
  $(GENERIC_MATCH_PD_SEQ_SRC) gimple-match-auto.h generic-match-auto.h \
  tree-check.h min-insn-modes.cc insn-modes.cc insn-modes.h insn-modes-inline.h \
@@ -2763,7 +2776,7 @@ $(common_out_object_file): $(common_out_file)
 .PRECIOUS: insn-config.h insn-flags.h insn-codes.h insn-constants.h \
   $(INSNEMIT_SEQ_SRC) insn-recog.h $(INSNRECOG_SEQ_SRC) \
   insn-extract.cc insn-output.cc \
-  insn-peep.cc insn-attr.h insn-attr-common.h insn-attrtab.cc \
+  insn-peep.cc insn-attr.h insn-attr-common.h $(INSNATTRTAB_SEQ_SRC) \
   insn-dfatab.cc insn-latencytab.cc insn-preds.cc \
   $(GIMPLE_MATCH_PD_SEQ_SRC) $(GENERIC_MATCH_PD_SEQ_SRC) \
   gimple-match-auto.h generic-match-auto.h insn-target-def.h
@@ -2821,24 +2834,27 @@ $(simple_generated_c:insn-%.cc=s-%): s-%: build/gen%$(build_exeext)
 # genemit splits its output into different files and doesn't write to
 # stdout. (but rather to tmp-emit-01.cc..tmp-emit-10.cc)
 $(INSNEMIT_SEQ_SRC): s-tmp-emit; @true
-s-tmp-emit: build/genemit$(build_exeext) $(MD_DEPS) insn-conditions.md
+s-tmp-emit: build/genemit$(build_exeext) $(MD_DEPS) insn-conditions.md Makefile
 	$(RUN_GEN) build/genemit$(build_exeext) $(md_file) insn-conditions.md \
 	  $(addprefix -O,${INSNEMIT_SEQ_TMP})
-	$(foreach id, $(INSNEMIT_SPLITS_SEQ), \
-	  $(SHELL) $(srcdir)/../move-if-change tmp-emit-$(id).cc \
-	  insn-emit-$(id).cc;)
+	for id in $(INSNEMIT_SPLITS_SEQ); do \
+	  $(SHELL) $(srcdir)/../move-if-change tmp-emit-$$id.cc \
+	    insn-emit-$$id.cc || exit 1; \
+	done
 	$(STAMP) s-tmp-emit
 
 # Same for genrecog.
 $(INSNRECOG_SEQ_SRC): s-tmp-recog; @true
 insn-recog.h: s-tmp-recog; @true
-s-tmp-recog: build/genrecog$(build_exeext) $(MD_DEPS) insn-conditions.md
+s-tmp-recog: build/genrecog$(build_exeext) $(MD_DEPS) \
+  insn-conditions.md Makefile
 	$(RUN_GEN) build/genrecog$(build_exeext) $(md_file) insn-conditions.md \
 	  -Hinsn-recog.h \
 	  $(addprefix -O,${INSNRECOG_SEQ_TMP})
-	$(foreach id, $(INSNRECOG_SPLITS_SEQ), \
-	  $(SHELL) $(srcdir)/../move-if-change tmp-recog-$(id).cc \
-	  insn-recog-$(id).cc;)
+	for id in $(INSNRECOG_SPLITS_SEQ); do \
+	  $(SHELL) $(srcdir)/../move-if-change tmp-recog-$$id.cc \
+	    insn-recog-$$id.cc || exit 1; \
+	done
 	$(STAMP) s-tmp-recog
 
 # gencheck doesn't read the machine description, and the file produced
@@ -2850,13 +2866,19 @@ s-check : build/gencheck$(build_exeext)
 	$(SHELL) $(srcdir)/../move-if-change tmp-check.h tree-check.h
 	$(STAMP) s-check
 
-# genattrtab produces three files: tmp-{attrtab.cc,dfatab.cc,latencytab.cc}
-insn-attrtab.cc insn-dfatab.cc insn-latencytab.cc: s-attrtab ; @true
+# genattrtab splits the attribute functions like genemit and additionally
+# produces tmp-dfatab.cc and tmp-latencytab.cc.
+$(INSNATTRTAB_SEQ_SRC): s-attrtab ; @true
+insn-dfatab.cc insn-latencytab.cc: s-attrtab ; @true
 s-attrtab : $(MD_DEPS) build/genattrtab$(build_exeext) \
-  insn-conditions.md
+  insn-conditions.md Makefile
 	$(RUN_GEN) build/genattrtab$(build_exeext) $(md_file) insn-conditions.md \
-		-Atmp-attrtab.cc -Dtmp-dfatab.cc -Ltmp-latencytab.cc
-	$(SHELL) $(srcdir)/../move-if-change tmp-attrtab.cc    insn-attrtab.cc
+		$(addprefix -A,${INSNATTRTAB_SEQ_TMP}) \
+		-Dtmp-dfatab.cc -Ltmp-latencytab.cc
+	for id in $(INSNATTRTAB_SPLITS_SEQ); do \
+	  $(SHELL) $(srcdir)/../move-if-change tmp-attrtab-$$id.cc \
+	    insn-attrtab-$$id.cc || exit 1; \
+	done
 	$(SHELL) $(srcdir)/../move-if-change tmp-dfatab.cc     insn-dfatab.cc
 	$(SHELL) $(srcdir)/../move-if-change tmp-latencytab.cc insn-latencytab.cc
 	$(STAMP) s-attrtab
@@ -4759,8 +4781,25 @@ check_p_tool=$(firstword $(subst _, ,$*))
 check_p_count=$(check_$(check_p_tool)_parallelize)
 check_p_subno=$(word 2,$(subst _, ,$*))
 check_p_subdir=$(subst _,,$*)
+# Number of runtest instances to start.  An explicit GCC_TEST_PARALLEL_SLOTS
+# wins.  Otherwise start one per job token, but never fewer than
+# check_p_min_slots: the instances claim work in batches of ten tests, so a
+# batch that runs long is the tail of the whole target, and having more
+# instances than tokens lets the ones that are left pick up the slack.  Above
+# that floor the token count is the useful number, since 128 instances on a
+# machine given -j256 leave half of it idle.  GNU make 4.0 and later put the
+# level in MFLAGS.  A bare -j, and older make, do not, and there the floor
+# stands on its own.
+check_p_min_slots=128
+check_p_jobs=$(patsubst -j%,%,$(filter -j%,$(MFLAGS)))
+# max(check_p_jobs, check_p_min_slots).  A number is <= the floor exactly when
+# it appears among the first check_p_min_slots counting numbers.
+check_p_slots=$(strip $(if $(GCC_TEST_PARALLEL_SLOTS),$(GCC_TEST_PARALLEL_SLOTS),\
+	$(if $(check_p_jobs),$(if $(filter $(check_p_jobs),\
+		$(wordlist 1,$(check_p_min_slots),$(one_to_9999))),\
+		$(check_p_min_slots),$(check_p_jobs)),$(check_p_min_slots))))
 check_p_subdirs=$(wordlist 1,$(check_p_count),$(wordlist 1, \
-		$(if $(GCC_TEST_PARALLEL_SLOTS),$(GCC_TEST_PARALLEL_SLOTS),128), \
+		$(check_p_slots), \
 		$(one_to_9999)))
 
 # For parallelized check-% targets, this decides whether parallelization
@@ -4793,19 +4832,28 @@ $(lang_checks_parallelized): check-% : site.exp
 	    EXPECT=$(EXPECT) \
 	    check-parallel-$* \
 	    $(patsubst %,check-parallel-$*_%, $(check_p_subdirs)); \
-	  sums= ; logs= ; \
+	  sums= ; logs= ; lost= ; \
 	  for dir in $(TESTSUITEDIR)/$* \
 		     $(patsubst %,$(TESTSUITEDIR)/$*%,$(check_p_subdirs));\
 	  do \
 	    if [ -d $$dir ]; then \
-	      mv -f $$dir/$*.sum $$dir/$*.sum.sep; mv -f $$dir/$*.log $$dir/$*.log.sep; \
-	      sums="$$sums $$dir/$*.sum.sep"; logs="$$logs $$dir/$*.log.sep"; \
+	      if [ -f $$dir/$*.sum ]; then \
+		mv -f $$dir/$*.sum $$dir/$*.sum.sep; mv -f $$dir/$*.log $$dir/$*.log.sep; \
+		sums="$$sums $$dir/$*.sum.sep"; logs="$$logs $$dir/$*.log.sep"; \
+	      else \
+		lost="$$lost $$dir"; \
+	      fi; \
 	    fi; \
 	  done; \
+	  if [ -n "$$lost" ]; then \
+	    echo "warning: $*: these runtest instances produced no results:$$lost" >&2; \
+	  fi; \
 	  $(SHELL) $(srcdir)/../contrib/dg-extract-results.sh $$sums \
-	    > $(TESTSUITEDIR)/$*/$*.sum; \
+	    > $(TESTSUITEDIR)/$*/$*.sum.tmp || exit 1; \
 	  $(SHELL) $(srcdir)/../contrib/dg-extract-results.sh -L $$logs \
-	    > $(TESTSUITEDIR)/$*/$*.log; \
+	    > $(TESTSUITEDIR)/$*/$*.log.tmp || exit 1; \
+	  mv -f $(TESTSUITEDIR)/$*/$*.sum.tmp $(TESTSUITEDIR)/$*/$*.sum; \
+	  mv -f $(TESTSUITEDIR)/$*/$*.log.tmp $(TESTSUITEDIR)/$*/$*.log; \
 	  rm -rf $(TESTSUITEDIR)/$*-parallel || true; \
 	else \
 	  $(MAKE) TESTSUITEDIR="$(TESTSUITEDIR)" RUNTESTFLAGS="$(RUNTESTFLAGS)" \

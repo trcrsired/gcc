@@ -34,7 +34,7 @@
     {".CBL", "@cobol", 0, 0, 0},
     {"@cobol",
         "cobol1 %i %(cc1_options) "
-        "%{B*} %{D*} %{E} %{I*} %{M} %{fmax-errors*} %{fsyntax-only*} "
+        "%{I*} %{B*} %{D*} %{E} %{M} %{fmax-errors*} %{fsyntax-only*} "
         "%{idirafter}"
         "%{fcobol-exceptions*} "
         "%{copyext} "
@@ -67,13 +67,19 @@
 	"%{Wcobol-volatile} %{Wno-cobol-volatile} "
 	"%{Wcomp-6} %{Wno-comp-6} "
 	"%{Wcomp-x} %{Wno-comp-x} "
+	"%{Wcontent-expr} %{Wno-content-expr} "
 	"%{Wcopybook-found} %{Wno-copybook-found} "
+	"%{Wdisplay-screen} %{Wno-display-screen} "
+	"%{Wdynamic-call} %{Wno-dynamic-call} "
 	"%{Wec-unknown} %{Wno-ec-unknown} "
 	"%{Wentry-convention} %{Wno-entry-convention} "
+	"%{Werrno} %{Wno-errno} "
+	"%{Whex-numeric} %{Wno-hex-numeric} "
 	"%{Wibm-cdf} %{Wno-ibm-cdf} "
 	"%{Wiconv-error} %{Wno-iconv-error} "
 	"%{Winclude-file-found} %{Wno-include-file-found} "
 	"%{Winclude-file-not-found} %{Wno-include-file-not-found} "
+	"%{Wvalue-clause} %{Wno-value-clause} "
 	"%{Winspect-trailing} %{Wno-inspect-trailing} "
 	"%{Wlength-of} %{Wno-length-of} "
 	"%{Wlevel-1-occurs} %{Wno-level-1-occurs} "
@@ -91,6 +97,8 @@
 	"%{Wprocedure-pointer} %{Wno-procedure-pointer} "
 	"%{Wreplace-error} %{Wno-replace-error} "
 	"%{Wredefines-first} %{Wno-redefines-first} "
+	"%{Wredefines-table} %{Wno-redefines-table} "
+	"%{Wredefines-grow} %{Wno-redefines-grow} "
 	"%{Wreturning-number} %{Wno-returning-number} "
 	"%{Wsegment-error} %{Wno-segment-error} "
 	"%{Wsegment-negative} %{Wno-segment-negative} "
@@ -104,4 +112,3 @@
         "%{nomain} "
         "%{!fsyntax-only:%(invoke_as)} "
         , 0, 0, 0},
-      

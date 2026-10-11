@@ -1709,10 +1709,6 @@ gfc_get_dtype_rank_type (int rank, tree etype)
   tree ptype;
   tree size;
   int n;
-  tree tmp;
-  tree dtype;
-  tree field;
-  vec<constructor_elt, va_gc> *v = NULL;
 
   ptype = etype;
   while (TREE_CODE (etype) == POINTER_TYPE
@@ -1784,34 +1780,7 @@ gfc_get_dtype_rank_type (int rank, tree etype)
       break;
     }
 
-  gcc_assert (size);
-
-  STRIP_NOPS (size);
-  size = fold_convert (size_type_node, size);
-  tmp = get_dtype_type_node ();
-  field = gfc_advance_chain (TYPE_FIELDS (tmp),
-			     GFC_DTYPE_ELEM_LEN);
-  CONSTRUCTOR_APPEND_ELT (v, field,
-			  fold_convert (TREE_TYPE (field), size));
-  field = gfc_advance_chain (TYPE_FIELDS (dtype_type_node),
-			     GFC_DTYPE_VERSION);
-  CONSTRUCTOR_APPEND_ELT (v, field,
-			  build_zero_cst (TREE_TYPE (field)));
-
-  field = gfc_advance_chain (TYPE_FIELDS (dtype_type_node),
-			     GFC_DTYPE_RANK);
-  if (rank >= 0)
-    CONSTRUCTOR_APPEND_ELT (v, field,
-			    build_int_cst (TREE_TYPE (field), rank));
-
-  field = gfc_advance_chain (TYPE_FIELDS (dtype_type_node),
-			     GFC_DTYPE_TYPE);
-  CONSTRUCTOR_APPEND_ELT (v, field,
-			  build_int_cst (TREE_TYPE (field), n));
-
-  dtype = build_constructor (tmp, v);
-
-  return dtype;
+  return gfc_build_dtype_constructor (size, n, rank);
 }
 
 
@@ -2289,6 +2258,42 @@ gfc_get_array_type_bounds (tree etype, int dimen, int codimen, tree * lbound,
   return fat_type;
 }
 
+
+/* Create and return a zero-rank array descriptor type suitable to hold a scalar
+   value of type SCALAR_TYPE having attributes ATTR.  An array descriptor of the
+   returned type is to be used as implementation detail when a scalar actual
+   argument of type SCALAR_TYPE and having attributes ATTR is associated with an
+   assumed-rank dummy.  */
+
+tree
+gfc_get_scalar_to_descriptor_type (tree scalar_type, symbol_attribute attr)
+{
+  enum gfc_array_kind akind;
+
+  if (attr.pointer)
+    akind = GFC_ARRAY_POINTER_CONT;
+  else if (attr.allocatable)
+    akind = GFC_ARRAY_ALLOCATABLE;
+  else
+    akind = GFC_ARRAY_ASSUMED_SHAPE_CONT;
+
+  if (POINTER_TYPE_P (scalar_type))
+    scalar_type = TREE_TYPE (scalar_type);
+
+  tree *lbound = NULL, *ubound = NULL;
+  int codim = 0;
+  if (TYPE_LANG_SPECIFIC (scalar_type))
+    {
+      struct lang_type *lang_specific = TYPE_LANG_SPECIFIC (scalar_type);
+      codim = lang_specific->corank;
+      lbound = lang_specific->lbound;
+      ubound = lang_specific->ubound;
+    }
+  return gfc_get_array_type_bounds (scalar_type, 0, codim, lbound, ubound, 1,
+				    akind, !(attr.pointer || attr.target));
+}
+
+
 /* Build a pointer type. This function is called from gfc_sym_type().  */
 
 static tree
@@ -2521,7 +2526,12 @@ gfc_sym_type (gfc_symbol * sym, bool is_bind_c)
   else
     type = gfc_typenode_for_spec (&sym->ts, sym->attr.codimension);
 
-  if (sym->attr.dummy && !sym->attr.function && !sym->attr.value
+  if (sym->attr.dummy && !sym->attr.function
+      && (!sym->attr.value
+	  || sym->attr.dimension
+	  || (sym->ts.type == BT_CHARACTER
+	      && (!sym->ts.u.cl || !sym->ts.u.cl->length
+		  || sym->ts.u.cl->length->expr_type != EXPR_CONSTANT)))
       && !sym->pass_as_value)
     byref = 1;
   else
@@ -3157,8 +3167,9 @@ gfc_get_derived_type (gfc_symbol * derived, int codimen)
       if (class_coarray_flag || !c->backend_decl || c->attr.caf_token)
 	c->backend_decl = field;
 
-      if (c->attr.pointer && (c->attr.dimension || c->attr.codimension)
-	  && !(c->ts.type == BT_DERIVED && strcmp (c->name, "_data") == 0))
+      if ((c->attr.dimension || c->attr.codimension)
+	  && ((derived->attr.is_class && c->attr.class_pointer)
+	      || (!derived->attr.is_class && c->attr.pointer)))
 	GFC_DECL_PTR_ARRAY_P (c->backend_decl) = 1;
     }
 
@@ -3740,9 +3751,8 @@ gfc_get_array_descr_info (const_tree type, struct array_descr_info *info)
   int rank, dim;
   bool indirect = false;
   tree etype, ptype, t, base_decl;
-  tree data_off, span_off, dim_off, dtype_off, dim_size, elem_size;
+  tree data_off, span_off, dim_off, rank_off, dim_size, elem_size;
   tree lower_suboff, upper_suboff, stride_suboff;
-  tree dtype, field, rank_off;
 
   if (! GFC_DESCRIPTOR_TYPE_P (type))
     {
@@ -3795,7 +3805,7 @@ gfc_get_array_descr_info (const_tree type, struct array_descr_info *info)
   if (indirect)
     base_decl = build1 (INDIRECT_REF, ptype, base_decl);
 
-  gfc_get_descriptor_offsets_for_info (type, &data_off, &dtype_off, &span_off,
+  gfc_get_descriptor_offsets_for_info (type, &data_off, &rank_off, &span_off,
 				       &dim_off, &dim_size, &stride_suboff,
 				       &lower_suboff, &upper_suboff);
 
@@ -3827,14 +3837,9 @@ gfc_get_array_descr_info (const_tree type, struct array_descr_info *info)
     {
       rank = 1;
       info->ndimensions = 1;
-      t = fold_build_pointer_plus (base_decl, dtype_off);
-      dtype = TYPE_MAIN_VARIANT (get_dtype_type_node ());
-      field = gfc_advance_chain (TYPE_FIELDS (dtype), GFC_DTYPE_RANK);
-      rank_off = byte_position (field);
-      t = fold_build_pointer_plus (t, rank_off);
-
-      t = build1 (NOP_EXPR, build_pointer_type (TREE_TYPE (field)), t);
-      t = build1 (INDIRECT_REF, TREE_TYPE (field), t);
+      t = fold_build_pointer_plus (base_decl, rank_off);
+      t = build1 (NOP_EXPR, build_pointer_type (signed_char_type_node), t);
+      t = build1 (INDIRECT_REF, signed_char_type_node, t);
       info->rank = t;
       t = build0 (PLACEHOLDER_EXPR, TREE_TYPE (dim_off));
       t = size_binop (MULT_EXPR, t, dim_size);

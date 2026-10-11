@@ -368,6 +368,9 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE ATTRIBUTE_UNUSED
 
 #define TARGET_STREAMING_SME2p3 (TARGET_STREAMING && AARCH64_HAVE_ISA (SME2p3))
 
+#define TARGET_STREAMING_SME_TMOP \
+  (AARCH64_HAVE_ISA (SME_TMOP) && TARGET_STREAMING)
+
 #define TARGET_SME_B16B16 AARCH64_HAVE_ISA (SME_B16B16)
 
 /* ARMv8.3-A features.  */
@@ -511,11 +514,17 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE ATTRIBUTE_UNUSED
    elements are enabled through +sme-lutv2.  */
 #define TARGET_SME_LUTv2 AARCH64_HAVE_ISA (SME_LUTv2)
 
+#define TARGET_SME_MOP4 (AARCH64_HAVE_ISA (SME_MOP4) && TARGET_STREAMING)
+
 /* Prefer different predicate registers for the output of a predicated
    operation over re-using an existing input predicate.  */
 #define TARGET_SVE_PRED_CLOBBER (TARGET_SVE \
 				 && (aarch64_tune_params.extra_tuning_flags \
 				     & AARCH64_EXTRA_TUNE_AVOID_PRED_RMW))
+
+/* Set if we prefer SVE merging predicated mov immediate over zeroing.  */
+#define TARGET_SVE_PREFER_ZEROING_MOVIMM \
+  !(aarch64_tune_params.extra_tuning_flags & AARCH64_EXTRA_TUNE_AVOID_MOVIMM_Z)
 
 /* fp8 instructions are enabled through +fp8.  */
 #define TARGET_FP8 AARCH64_HAVE_ISA (FP8)
@@ -929,6 +938,7 @@ enum reg_class
   POINTER_REGS,
   FP_LO8_REGS,
   FP_LO_REGS,
+  FP_HI_REGS,
   FP_REGS,
   POINTER_AND_FP_REGS,
   PR_LO_REGS,
@@ -956,6 +966,7 @@ enum reg_class
   "POINTER_REGS",				\
   "FP_LO8_REGS",				\
   "FP_LO_REGS",					\
+  "FP_HI_REGS",					\
   "FP_REGS",					\
   "POINTER_AND_FP_REGS",			\
   "PR_LO_REGS",					\
@@ -980,6 +991,7 @@ enum reg_class
   { 0xffffffff, 0x00000000, 0x00000003 },	/* POINTER_REGS */	\
   { 0x00000000, 0x000000ff, 0x00000000 },       /* FP_LO8_REGS  */	\
   { 0x00000000, 0x0000ffff, 0x00000000 },       /* FP_LO_REGS  */	\
+  { 0x00000000, 0xffff0000, 0x00000000 },       /* FP_HI_REGS */	\
   { 0x00000000, 0xffffffff, 0x00000000 },       /* FP_REGS  */		\
   { 0xffffffff, 0xffffffff, 0x00000003 },	/* POINTER_AND_FP_REGS */\
   { 0x00000000, 0x00000000, 0x00000ff0 },	/* PR_LO_REGS */	\

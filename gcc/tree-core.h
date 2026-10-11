@@ -330,6 +330,9 @@ enum omp_clause_code {
   /* OpenMP clause: link (variable-list).  */
   OMP_CLAUSE_LINK,
 
+  /* OpenMP clause: local (variable-list).  */
+  OMP_CLAUSE_LOCAL,
+
   /* OpenMP clause: detach (event-handle).  */
   OMP_CLAUSE_DETACH,
 
@@ -492,6 +495,8 @@ enum omp_clause_code {
   OMP_CLAUSE_SAFELEN,
 
   /* OpenMP clause: simdlen (constant-integer-expression).  */
+  /* OpenMP clause: simdlen ([scaled-mod:] constant-integer-expression)
+     with scaled-modifier: scaled(type [, const-integer-expression]).  */
   OMP_CLAUSE_SIMDLEN,
 
   /* OpenMP clause: device_type ({host,nohost,any}).  */

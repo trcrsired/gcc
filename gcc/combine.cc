@@ -2024,7 +2024,10 @@ can_combine_p (rtx_insn *insn, rtx_insn *i3, rtx_insn *pred ATTRIBUTE_UNUSED,
     : volatile_insn_p;
 
   for (p = NEXT_INSN (insn); p != i3; p = NEXT_INSN (p))
-    if (INSN_P (p) && p != succ && p != succ2 && is_volatile_p (PATTERN (p)))
+    if (NONDEBUG_INSN_P (p)
+	&& p != succ
+	&& p != succ2
+	&& is_volatile_p (PATTERN (p)))
       return false;
 
   /* If INSN contains an autoincrement or autodecrement, make sure that
@@ -5954,6 +5957,10 @@ combine_simplify_rtx (rtx x, machine_mode op0_mode, bool in_dest, bool in_cond)
   /* A little bit of algebraic simplification here.  */
   switch (code)
     {
+    case PREFETCH:
+      /* A prefetch reaches memory through an address, and targets recognize
+	 that address with the same predicates they use for a MEM, so it
+	 needs the same treatment.  */
     case MEM:
       /* Ensure that our address has any ASHIFTs converted to MULT in case
 	 address-recognizing predicates are called later.  */
@@ -10063,7 +10070,11 @@ distribute_and_simplify_rtx (rtx x, int n)
 
   /* Special case (and (xor B C) (not A)), which is equivalent to
      (xor (ior A B) (ior A C))  */
-  if (outer_code == AND && inner_code == XOR && GET_CODE (distributed) == NOT)
+  if (outer_code == AND && inner_code == XOR && GET_CODE (distributed) == NOT
+      /* But not when A is a paradoxical subreg since the masking effect
+	 of the outer AND is lost and the duplicated use can result in
+	 undefined bits to be exposed when spilling.  */
+      && !contains_paradoxical_subreg_p (XEXP (distributed, 0)))
     {
       distributed = XEXP (distributed, 0);
       outer_code = IOR;
@@ -12870,50 +12881,6 @@ simplify_comparison (enum rtx_code code, rtx *pop0, rtx *pop1)
 	    {
 	      op0 = gen_lowpart_or_truncate (tmode, XEXP (op0, 0));
 	      continue;
-	    }
-
-	  /* If this is (and:M1 (subreg:M1 X:M2 0) (const_int C1)) where C1
-	     fits in both M1 and M2 and the SUBREG is either paradoxical
-	     or represents the low part, permute the SUBREG and the AND
-	     and try again.  */
-	  if (GET_CODE (XEXP (op0, 0)) == SUBREG
-	      && CONST_INT_P (XEXP (op0, 1)))
-	    {
-	      unsigned HOST_WIDE_INT c1 = INTVAL (XEXP (op0, 1));
-	      /* Require an integral mode, to avoid creating something like
-		 (AND:SF ...).  */
-	      if ((is_a <scalar_int_mode>
-		   (GET_MODE (SUBREG_REG (XEXP (op0, 0))), &tmode))
-		  /* It is unsafe to commute the AND into the SUBREG if the
-		     SUBREG is paradoxical and WORD_REGISTER_OPERATIONS is
-		     not defined.  As originally written the upper bits
-		     have a defined value due to the AND operation.
-		     However, if we commute the AND inside the SUBREG then
-		     they no longer have defined values and the meaning of
-		     the code has been changed.
-		     Also C1 should not change value in the smaller mode,
-		     see PR67028 (a positive C1 can become negative in the
-		     smaller mode, so that the AND does no longer mask the
-		     upper bits).  */
-		  && ((WORD_REGISTER_OPERATIONS
-		       && mode_width > GET_MODE_PRECISION (tmode)
-		       && mode_width <= BITS_PER_WORD
-		       && trunc_int_for_mode (c1, tmode) == (HOST_WIDE_INT) c1)
-		      || (mode_width <= GET_MODE_PRECISION (tmode)
-			  && subreg_lowpart_p (XEXP (op0, 0))))
-		  && mode_width <= HOST_BITS_PER_WIDE_INT
-		  && HWI_COMPUTABLE_MODE_P (tmode)
-		  && (c1 & ~mask) == 0
-		  && (c1 & ~GET_MODE_MASK (tmode)) == 0
-		  && c1 != mask
-		  && c1 != GET_MODE_MASK (tmode))
-		{
-		  op0 = simplify_gen_binary (AND, tmode,
-					     SUBREG_REG (XEXP (op0, 0)),
-					     gen_int_mode (c1, tmode));
-		  op0 = gen_lowpart (mode, op0);
-		  continue;
-		}
 	    }
 
 	  /* Convert (ne (and (not X) 1) 0) to (eq (and X 1) 0).  */

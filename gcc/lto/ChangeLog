@@ -1,3 +1,22 @@
+2026-09-16  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127273
+	* lto.cc (offload_handle_link_vars): Remove has-value-expr check;
+	store link vars and processing them after walking the varpool.
+	(lto_main): Remove duplicated offload_handle_link_vars call.
+
+2026-09-10  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127273
+	* lto.cc (offload_handle_link_vars): Create node and force_output;
+	avoid creating the same '...$linkptr' var multiple times.
+
+2026-09-08  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR middle-end/126622
+	* lto-lang.cc (DEF_ATTR_INT): Use
+	build_int_cst (integer_type_node, cst).
+
 2026-07-17  Lewis Hyatt  <lhyatt@gmail.com>
 
 	PR lto/65536

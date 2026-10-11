@@ -20,6 +20,9 @@
    messages and debug dumps.  Please make sure to write them in a way you would
    expect to be used in statements like "[...] near ATT".  */
 
+/* If you add a new entry, please update the a68_is_* classifier functions in
+   a68-parser.cc.  */
+
 A68_ATTR(A68_PATTERN, "transput pattern")
 A68_ATTR(ACCESS_CLAUSE, "access clause")
 A68_ATTR(ACCESS_SYMBOL, "access-symbol")
@@ -85,7 +88,6 @@ A68_ATTR(COLLECTION, "collection")
 A68_ATTR(COLON_SYMBOL, "colon-symbol")
 A68_ATTR(COMMA_SYMBOL, "comma-symbol")
 A68_ATTR(COMPLEX_PATTERN, "complex pattern")
-A68_ATTR(COMPLEX_SYMBOL, "complex-symbol")
 A68_ATTR(COMPL_SYMBOL, "compl-symbol")
 A68_ATTR(CONDITIONAL_CLAUSE, "conditional clause")
 A68_ATTR(CONFORMITY_CHOICE, "conformity clause choice")
@@ -132,6 +134,7 @@ A68_ATTR(FIELD_IDENTIFIER, "field-identifier")
 A68_ATTR(FILE_SYMBOL, "file-symbol")
 A68_ATTR(FIRM, "firm context")
 A68_ATTR(FIXED_C_PATTERN, "fixed-c-pattern")
+A68_ATTR(FIXETY, "fixety")
 A68_ATTR(FI_SYMBOL, "fi-symbol")
 A68_ATTR(FLEX_SYMBOL, "flex-symbol")
 A68_ATTR(FLOAT_C_PATTERN, "float C format pattern")
@@ -382,6 +385,7 @@ A68_ATTR(WHILE_PART, "while-part")
 A68_ATTR(WHILE_SYMBOL, "while-symbol")
 A68_ATTR(WIDENING, "widening coercion")
 A68_ATTR(WILDCARD, "wildcard")
+A68_ATTR(WORD_SYMBOL, "word-symbol")
 
 /*
 Local variables:

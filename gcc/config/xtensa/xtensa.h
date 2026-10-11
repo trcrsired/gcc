@@ -58,6 +58,9 @@ along with GCC; see the file COPYING3.  If not see
 #define TARGET_SALT		(XTENSA_MARCH_EARLIEST >= 270000)
 
 #define TARGET_DEFAULT (MASK_SERIALIZE_VOLATILE)
+#define TARGET_HARD_FLOAT_CONST_S					\
+		(TARGET_HARD_FLOAT_DIV || TARGET_HARD_FLOAT_RECIP	\
+		 || TARGET_HARD_FLOAT_SQRT || TARGET_HARD_FLOAT_RSQRT)
 
 #ifndef HAVE_AS_TLS
 #define HAVE_AS_TLS 0
@@ -246,11 +249,9 @@ along with GCC; see the file COPYING3.  If not see
 
 #define REG_ALLOC_ORDER							\
 {									\
-   8,  9, 10, 11, 12, 13, 14, 15,  7,  6,  5,  4,  3,  2,		\
-  18,									\
+   8,  9, 10, 11, 12, 13, 14, 15,  7,  6,  5,  4,  3,  2, 18,		\
   19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,	\
-   0,  1, 16, 17,							\
-  35,									\
+   0,  1, 16, 17, 35,							\
 }
 #define ADJUST_REG_ALLOC_ORDER xtensa_adjust_reg_alloc_order ()
 
@@ -261,29 +262,25 @@ along with GCC; see the file COPYING3.  If not see
 /* Internal macros to classify a register number.  */
 
 /* 16 address registers + fake registers */
-#define GP_REG_FIRST 0
-#define GP_REG_LAST  17
-#define GP_REG_NUM   (GP_REG_LAST - GP_REG_FIRST + 1)
+#define GP_REG_FIRST	0
+#define GP_REG_LAST	17
 
 /* Coprocessor registers */
-#define BR_REG_FIRST 18
-#define BR_REG_LAST  18
-#define BR_REG_NUM   (BR_REG_LAST - BR_REG_FIRST + 1)
+#define BR_REG_FIRST	18
+#define BR_REG_LAST	18
 
 /* 16 floating-point registers */
-#define FP_REG_FIRST 19
-#define FP_REG_LAST  34
-#define FP_REG_NUM   (FP_REG_LAST - FP_REG_FIRST + 1)
+#define FP_REG_FIRST	19
+#define FP_REG_LAST	34
 
 /* MAC16 accumulator */
-#define ACC_REG_FIRST 35
-#define ACC_REG_LAST 35
-#define ACC_REG_NUM  (ACC_REG_LAST - ACC_REG_FIRST + 1)
+#define ACC_REG_FIRST	35
+#define ACC_REG_LAST	35
 
-#define GP_REG_P(REGNO) ((unsigned) ((REGNO) - GP_REG_FIRST) < GP_REG_NUM)
-#define BR_REG_P(REGNO) ((unsigned) ((REGNO) - BR_REG_FIRST) < BR_REG_NUM)
-#define FP_REG_P(REGNO) ((unsigned) ((REGNO) - FP_REG_FIRST) < FP_REG_NUM)
-#define ACC_REG_P(REGNO) ((unsigned) ((REGNO) - ACC_REG_FIRST) < ACC_REG_NUM)
+#define GP_REG_P(REGNO)  (IN_RANGE ((REGNO), GP_REG_FIRST, GP_REG_LAST))
+#define BR_REG_P(REGNO)  (IN_RANGE ((REGNO), BR_REG_FIRST, BR_REG_LAST))
+#define FP_REG_P(REGNO)  (IN_RANGE ((REGNO), FP_REG_FIRST, FP_REG_LAST))
+#define ACC_REG_P(REGNO) (IN_RANGE ((REGNO), ACC_REG_FIRST, ACC_REG_LAST))
 
 /* Register to use for pushing function arguments.  */
 #define STACK_POINTER_REGNUM (GP_REG_FIRST + 1)
@@ -407,7 +404,8 @@ enum reg_class
    register REGNO.  In general there is more that one such class;
    choose a class which is "minimal", meaning that no smaller class
    also contains the register.  */
-#define REGNO_REG_CLASS(REGNO) xtensa_regno_to_class (REGNO)
+extern enum reg_class xtensa_regno_to_class[FIRST_PSEUDO_REGISTER];
+#define REGNO_REG_CLASS(REGNO) xtensa_regno_to_class[REGNO]
 
 /* Use the Xtensa AR register file for base registers.
    No index registers.  */
@@ -535,10 +533,6 @@ typedef struct xtensa_args
 
 /* Stack pointer value doesn't matter at exit.  */
 #define EXIT_IGNORE_STACK 1
-
-/* The "return" pattern requires A0 register as return address, and is
-   also required so that restoring A0 in the epilogue is not dead code.  */
-#define EPILOGUE_USES(REGNO) ((REGNO) == A0_REG)
 
 /* Size in bytes of the trampoline, as an integer.  Make sure this is
    a multiple of TRAMPOLINE_ALIGNMENT to avoid -Wpadded warnings.  */

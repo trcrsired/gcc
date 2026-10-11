@@ -164,7 +164,7 @@ phi_group::calculate_using_modifier (range_query *q)
   // Limit iterations to 1 more than the number of bits.
   unsigned num_iter;
   if (do_iterative)
-    num_iter = TYPE_PRECISION (m_vr.type ()) + 1;
+    num_iter = MIN (TYPE_PRECISION (m_vr.type ()), MAX_FIXED_MODE_SIZE) + 1;
   else
     num_iter = 0;
 
@@ -394,7 +394,9 @@ phi_analyzer::process_phi (gphi *phi, range_query &query)
 	  cycle_p = false;
 	  break;
 	}
-      bitmap_set_bit (m_current, SSA_NAME_VERSION (phi_def));
+      // If the PHI is already processed, no need to scan it again.
+      if (!bitmap_set_bit (m_current, SSA_NAME_VERSION (phi_def)))
+	continue;
       // Process the args.
       for (x = 0; x < gimple_phi_num_args (phi_stmt); x++)
 	{

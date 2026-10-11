@@ -46,6 +46,7 @@ with Freeze;         use Freeze;
 with GNAT_CUDA;      use GNAT_CUDA;
 with Inline;         use Inline;
 with Lib;            use Lib;
+with Mutably_Tagged; use Mutably_Tagged;
 with Nlists;         use Nlists;
 with Nmake;          use Nmake;
 with Opt;            use Opt;
@@ -4384,23 +4385,19 @@ package body Exp_Ch7 is
                =>
                   return Curr;
 
-               --  Statements
+               --  Statements and statement-like constructs
 
-               --  Statements and statement-like constructs act as a boundary
-               --  for a transient scope.
+               --  Expressions of compound statements are master constructs so
+               --  they act as a boundary for a transient scope.
 
                when N_Accept_Alternative
                   | N_Attribute_Definition_Clause
                   | N_Case_Statement
                   | N_Case_Statement_Alternative
-                  | N_Code_Statement
                   | N_Delay_Alternative
-                  | N_Delay_Until_Statement
-                  | N_Delay_Relative_Statement
                   | N_Discriminant_Association
                   | N_Elsif_Part
                   | N_Entry_Body_Formal_Part
-                  | N_Exit_Statement
                   | N_If_Statement
                   | N_Iteration_Scheme
                   | N_Terminate_Alternative
@@ -4408,7 +4405,23 @@ package body Exp_Ch7 is
                   pragma Assert (Present (Prev));
                   return Prev;
 
-               when N_Assignment_Statement =>
+               --  An exit statement only alters the control flow, so there
+               --  is no need to wait until after its completion to finalize
+               --  its expression (which is however not a master construct).
+
+               when N_Exit_Statement =>
+                  pragma Assert (Present (Prev));
+                  return Prev;
+
+               --  Expressions of simple statements are not master constructs
+               --  (except for a simple return), so only the statements act as
+               --  a boundary for a transient scope.
+
+               when N_Assignment_Statement
+                  | N_Code_Statement
+                  | N_Delay_Relative_Statement
+                  | N_Delay_Until_Statement
+               =>
                   return Curr;
 
                when N_Entry_Call_Statement
@@ -5508,7 +5521,7 @@ package body Exp_Ch7 is
       if Is_Class_Wide_Type (Typ) then
          Utyp := Root_Type (Typ);
       else
-         Utyp := Typ;
+         Utyp := Get_Corresponding_Tagged_Type_If_Present (Typ);
       end if;
 
       Utyp := Underlying_Type (Base_Type (Utyp));
@@ -7892,7 +7905,7 @@ package body Exp_Ch7 is
          Ref  := Convert_Concurrent (Ref, Underlying_Type (Typ));
 
       else
-         Utyp := Typ;
+         Utyp := Get_Corresponding_Tagged_Type_If_Present (Typ);
          Atyp := Typ;
       end if;
 
@@ -8469,7 +8482,7 @@ package body Exp_Ch7 is
 
       else
          Is_Conc := False;
-         Utyp    := Typ;
+         Utyp    := Get_Corresponding_Tagged_Type_If_Present (Typ);
       end if;
 
       Utyp := Underlying_Type (Base_Type (Utyp));
@@ -8500,22 +8513,28 @@ package body Exp_Ch7 is
       --  [Deep_]Initialize primitive to call.
       --  If Typ is protected then no additional processing is needed either.
 
-      if No (Utyp)
-        or else Is_Protected_Type (Typ)
-      then
+      if No (Utyp) or else Is_Protected_Type (Typ) then
          return Empty;
       end if;
 
-      --  Select the appropriate version of initialize
+      --  Select the appropriate version of Initialize
 
       if Has_Controlled_Component (Utyp) then
          Proc := TSS (Utyp, TSS_Deep_Initialize);
-      elsif Is_Mutably_Tagged_Type (Utyp) then
-         Proc := Find_Controlled_Prim_Op (Etype (Utyp), Name_Initialize);
-         Check_Visibly_Controlled (Initialize_Case, Etype (Typ), Proc, Ref);
-      else
+
+      --  Derivations from [Limited_]Controlled
+
+      elsif Is_Controlled (Utyp) then
          Proc := Find_Controlled_Prim_Op (Utyp, Name_Initialize);
          Check_Visibly_Controlled (Initialize_Case, Typ, Proc, Ref);
+
+      --  Mutably tagged types without controlled parts in the root type
+
+      elsif Is_Mutably_Tagged_CW_Equivalent_Type (Typ) then
+         return Empty;
+
+      else
+         raise Program_Error;
       end if;
 
       --  If initialization procedure for an array of controlled objects is

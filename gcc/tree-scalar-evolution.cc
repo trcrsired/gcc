@@ -1425,7 +1425,13 @@ simplify_peeled_chrec (class loop *loop, tree arg, tree init_cond)
 
   /* Transform (init, {left, right}_LOOP)_LOOP to {init, right}_LOOP
      if "left" equals to "init + right".  */
-  if (operand_equal_p (left, step_val, 0))
+  if (operand_equal_p (left, step_val, 0)
+      && ((!POINTER_TYPE_P (type) && !INTEGRAL_TYPE_P (type))
+	  || TYPE_OVERFLOW_WRAPS (type)
+	  /* When overflow in the type doesn't wrap, make sure the
+	     resulting CHREC does not either.  */
+	  || !scev_probably_wraps_p (NULL_TREE, init_cond, right, NULL,
+				     loop, false)))
     {
       if (dump_file && (dump_flags & TDF_SCEV))
 	fprintf (dump_file, "Simplify PEELED_CHREC into POLYNOMIAL_CHREC.\n");
@@ -1447,7 +1453,13 @@ simplify_peeled_chrec (class loop *loop, tree arg, tree init_cond)
 
   /* Transform (init, {left, right}_LOOP)_LOOP to {init, right}_LOOP
      if "left" equals to "init + right".  */
-  if (aff_combination_zero_p (&aff1))
+  if (aff_combination_zero_p (&aff1)
+      && ((!POINTER_TYPE_P (type) && !INTEGRAL_TYPE_P (type))
+	  || TYPE_OVERFLOW_WRAPS (type)
+	  /* When overflow in the type doesn't wrap, make sure the
+	     resulting CHREC does not either.  */
+	  || !scev_probably_wraps_p (NULL_TREE, init_cond, right, NULL,
+				     loop, false)))
     {
       if (dump_file && (dump_flags & TDF_SCEV))
 	fprintf (dump_file, "Simplify PEELED_CHREC into POLYNOMIAL_CHREC.\n");
@@ -3850,12 +3862,16 @@ analyze_and_compute_bitop_with_inv_effect (class loop* loop, tree phidef,
 
   if (code1 == BIT_XOR_EXPR)
     {
-       if (!tree_fits_uhwi_p (niter))
-	return NULL_TREE;
-       unsigned HOST_WIDE_INT niter_num;
-       niter_num = tree_to_uhwi (niter);
-       if (niter_num % 2 != 0)
-	match_op[0] =  build_zero_cst (type);
+      tree niter_type = TREE_TYPE (niter);
+      tree one = build_one_cst (niter_type);
+      tree contributes = fold_build2 (BIT_XOR_EXPR, niter_type,
+				      fold_build2 (BIT_AND_EXPR, niter_type,
+						   niter, one),
+				      one);
+      /* mask is all-ones when the invariant contributes, zero otherwise.  */
+      tree mask = fold_build1 (NEGATE_EXPR, type,
+			       fold_convert (type, contributes));
+      match_op[0] = fold_build2 (BIT_AND_EXPR, type, match_op[0], mask);
     }
 
   inv = PHI_ARG_DEF_FROM_EDGE (header_phi, loop_preheader_edge (loop));
@@ -3996,9 +4012,11 @@ final_value_replacement_loop (class loop *loop)
 	  tmp &= bit2;
 	if bit2 is an invariant in loop which could simple to
 	tmp &= bit2.  */
-      else if ((bitinv_def
-		= analyze_and_compute_bitop_with_inv_effect (loop,
-							     phidef, niter)))
+      else if (integer_zerop (niter_desc.may_be_zero)
+	       && (bitinv_def
+		   = analyze_and_compute_bitop_with_inv_effect (loop,
+								phidef,
+								niter)))
 	def = bitinv_def;
 
       /* Handle bitwise induction expression.

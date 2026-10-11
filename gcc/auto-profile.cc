@@ -1763,8 +1763,8 @@ function_instance::match (cgraph_node *node,
 	  count_info *info = lookup_count (gimple_location (phi), stack, node);
 	  gcc_assert (!info);
 	  dump_stmt (phi, info, NULL, stack);
-	  counts.add (info);
-	  for (edge e : bb->succs)
+	  /* PHI arguments are indexed by incoming (predecessor) edges.  */
+	  for (edge e : bb->preds)
 	    {
 	      location_t phi_loc
 		= gimple_phi_arg_location_from_edge (phi, e);
@@ -4420,6 +4420,11 @@ afdo_calculate_branch_prob (bb_set *annotated_bb)
 	    }
       }
   afdo_adjust_guessed_profile (annotated_bb);
+  /* Avoid scaling with a zero entry count during IPA profile merging.  */
+  basic_block entry = ENTRY_BLOCK_PTR_FOR_FN (cfun);
+  if (!entry->count.nonzero_p ())
+    entry->count = profile_count::from_gcov_type
+      (MAX ((gcov_type) 1, autofdo::afdo_count_scale / 2)).afdo ();
   FOR_ALL_BB_FN (bb, cfun)
     {
       bb->aux = NULL;

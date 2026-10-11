@@ -906,6 +906,71 @@ ENDF  __ssmulsa3
 #undef C7
 #undef SS
 
+/********************************************************
+    Fixed signed (saturated) Multiplication  s.31 x s.31
+*********************************************************/
+
+;;; Argument 1 and result
+#define A0 22
+#define A1 A0+1
+#define A2 A0+2
+#define A3 A0+3
+
+;;; Argument 2
+#define B0 18
+#define B1 B0+1
+#define B2 B0+2
+#define B3 B0+3
+
+#if defined (L_mulsq3)
+DEFUN __mulsq3
+ENTRY __ssmulsq3
+    ;; tmp.7 = result sign
+    mov     __tmp_reg__, A3
+    eor     __tmp_reg__, B3
+    push    __tmp_reg__
+    .call_if_neg A3, __negsi2       ; A = |A|
+    .call_if_neg B3, __negsi2_r18   ; B = |B|
+
+    XCALL   __umulsidi3
+    ;; Adjust for only 31 fractional bits.
+    lsl     A0
+    rol     A1
+    rol     A2
+    rol     A3
+
+    ;; r30.7 = result sign
+    pop     r30
+
+    brcs .Lsaturate
+    ;; In the negative result case, A = 0x80.. is no overflow,
+    ;; but treating it as such keeps the value unchanged.
+    brmi .Lsaturate          ; Overflow?
+    ;; Handle result sign.
+    sbrs    r30, 7
+    ret
+    XJMP    __negsi2
+.Lsaturate:
+    ;; r30.7 = 0 -> C = 1 -> 0x7f..
+    ;; r30.7 = 1 -> C = 0 -> 0x80..
+    cpi     r30, 0x80
+    sbc     A0, A0
+    sbc     A1, A1
+    wmov    A2, A0
+    subi    A3, 0x80
+    ret
+ENDF  __mulsq3
+#endif /* L_mulsq3 */
+
+#undef A0
+#undef A1
+#undef A2
+#undef A3
+#undef B0
+#undef B1
+#undef B2
+#undef B3
+
 /*******************************************************
     Fixed 64 x 64 saturated Multiplication
 *******************************************************/
@@ -1152,6 +1217,8 @@ ENDF  __multa3
 DEFUN __mulQ64_work
     mov     __tmp_reg__, A7
     eor     __tmp_reg__, B7
+    bst     B7, 7
+    bld     __tmp_reg__, 0
     push    __tmp_reg__
 
     .call_if_neg  A7, __negdi2          ; A = |A|
@@ -1159,6 +1226,20 @@ DEFUN __mulQ64_work
 
     set    ; for signed
     XICALL ; __muluxx3.2
+
+    ;; r30.7 = sign result
+    ;; r30.0 = sign B
+    pop     r30
+
+    ;; If we clobbered B, unclobber it now.
+#ifdef __AVR_ERRATA_SKIP_JMP_CALL__
+    asr     r30
+    brcc 0f
+#else
+    sbrc    r30, 0
+#endif
+    XCALL   __negdi2_r10
+0:
 
     ;; Adjust for signed Q formats that have one FBIT less.
     lsl     A0
@@ -1171,9 +1252,6 @@ DEFUN __mulQ64_work
     rol     A5
     rol     A6
     rol     A7
-
-    ;; r30.7 = result sign
-    pop     r30
 
     ;; Handle overflow.
     brcs .Lsaturate
@@ -1872,6 +1950,148 @@ ENDF __udivusa3
 #undef B3
 #undef Cnt
 #undef Sign
+
+/*********************************************************
+    Fixed 0.32 and s.31 (saturated) [U]SQmode Divisions
+*********************************************************/
+
+#ifndef __AVR_TINY__
+
+;;; USQmode arg1 (dividend) and result.
+#define A0  22
+#define A1  A0+1
+#define A2  A0+2
+#define A3  A0+3
+
+;;; USQmode arg2 (divisor) and result.
+#define B0  18
+#define B1  B0+1
+#define B2  B0+2
+#define B3  B0+3
+
+;;; UDAmode arg1 (dividend) and result.
+#define X0  18
+#define X1  X0+1
+#define X2  X0+2
+#define X3  X0+3
+#define X4  X0+4
+#define X5  X0+5
+#define X6  X0+6
+#define X7  X0+7
+
+;;; UDAmode arg2 (divisor) and result.
+#define Y0  10
+#define Y1  Y0+1
+#define Y2  Y0+2
+#define Y3  Y0+3
+#define Y4  Y0+4
+#define Y5  Y0+5
+#define Y6  Y0+6
+#define Y7  Y0+7
+
+#if defined (L_udivusq3)
+;;; (set (reg:USQ 22 [A])
+;;;      (us_div:USQ (reg:USQ 22 [A])
+;;;                  (reg:USQ 18 [B])))
+DEFUN __udivusq3
+ENTRY __usdivusq3
+    ;; Save R10..R17, Y.
+    do_prologue_saves 10
+
+    ;; Y = B
+    mov4    Y0, B0
+    ;; X = A
+    mov4    X0, A0
+    ;; Zero extend X and Y from USQ to UDA.
+    clr     X4
+    clr     X5
+    wmov    X6, X4
+    mov4    Y4, X4
+
+    ;; (set (reg:UDA 18 [X])
+    ;;      (us_div:UDA (reg:UDA 18 [X])
+    ;;                  (reg:UDA 10 [Y])))
+    XCALL __usdivuda3
+
+    ;; Saturate UDA to USQ
+    or      X7, X6
+    or      X7, X5
+    or      X7, X4
+    mov4    A0, X0
+    breq 9f
+    ;; X[4..7] != 0: Saturate
+    ldi     A3, 0xff
+    ldi     A2, 0xff
+    wmov    A0, A2
+9:
+    do_epilogue_restores 10
+ENDF __udivusq3
+#endif /* L_udivusq3 */
+
+#if defined (L_divsq3)
+;;; (set (reg:SQ 22 [A])
+;;;      (ss_div:SQ (reg:SQ 22 [A])
+;;;                 (reg:SQ 18 [B])))
+DEFUN __divsq3
+ENTRY __ssdivsq3
+    ;; Save R10..R17, Y.
+    do_prologue_saves 10
+
+    ;; Y = B
+    mov4    Y0, B0
+    lsl     B3                  ; C = B.sign
+    ;; X = A
+    mov4    X0, A0
+
+    ;; Sign-extend Y from SQ to DA.
+    sbc     Y4, Y4
+    sbc     Y5, Y5
+    wmov    Y6, Y4
+    ;; Sign-extend X from SQ to DA.
+    lsl     A3                  ; C = A.sign
+    sbc     X4, X4
+    sbc     X5, X5
+    wmov    X6, X4
+
+    ;; (set (reg:DA 18 [X])
+    ;;      (ss_div:DA (reg:DA 18 [X])
+    ;;                 (reg:DA 10 [Y])))
+    XCALL __ssdivda3
+
+    ;; (set (reg:SQ 22 [A])
+    ;;      (sat_fract:SQ (reg:DA 18 [X])))
+    XCALL __satfractdasq
+
+    do_epilogue_restores 10
+ENDF __divsq3
+#endif /* L_divsq3 */
+
+#undef A0
+#undef A1
+#undef A2
+#undef A3
+#undef B0
+#undef B1
+#undef B2
+#undef B3
+#undef X0
+#undef X1
+#undef X2
+#undef X3
+#undef X4
+#undef X5
+#undef X6
+#undef X7
+#undef Y0
+#undef Y1
+#undef Y2
+#undef Y3
+#undef Y4
+#undef Y5
+#undef Y6
+#undef Y7
+
+#endif /* ! AVR_TINY */
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -2632,3 +2852,342 @@ DEFUN __ret
     ret
 ENDF  __ret
 #endif /* L_ret */
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Saturated Shift Left, 1 Byte
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+#define A0 24
+#define Off r22
+
+#ifdef L_usshift_1
+;;; (set (reg:UQQ 24)
+;;;      (us_ashift:UQQ (reg:UQQ 24)
+;;;                     (reg:QI 22)))
+;;; T = T
+;;; Clobbers: R22.
+
+DEFUN __usashluqq3
+    tst     Off
+    breq 9f
+.Loop_bits:
+    lsl     A0
+    brcs .Lsat
+    dec     Off
+    brne .Loop_bits
+    ret
+
+.Lsat:
+    ldi     A0, 0xff
+9:  ret
+ENDF __usashluqq3
+#endif /* L_usshift_1 */
+
+#ifdef L_ssshift_1
+;;; (set (reg:QQ 24)
+;;;      (ss_ashift:QQ (reg:QQ 24)
+;;;                    (reg:QI 22)))
+;;; Clobbers: R22.
+DEFUN __ssashlqq3
+    bst     A0, 7
+    sbrc    A0, 7
+    neg     A0
+    XCALL   __usashluqq3
+    ;; In the negative result case, A = 0x80 is no overflow,
+    ;; but treating it as such keeps the value unchanged.
+    tst     A0
+    brmi .Lsat
+    brtc 9f
+    neg     A0
+    ret
+
+.Lsat:
+    ;; Saturate:
+    ;; T = 0 -> 0x7f
+    ;; T = 1 -> 0x80
+    ldi     A0, 0x7f
+    brtc 9f
+    inc     A0
+9:  ret
+ENDF __ssashlqq3
+#endif /* L_ssshift_1 */
+
+#undef A0
+#undef Off
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Saturated Shift Left, 2 Bytes
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+#define A0 24
+#define A1 A0+1
+#define Off r22
+
+#ifdef L_usshift_2
+;;; (set (reg:UH* 24)
+;;;      (us_ashift:UH* (reg:UH* 24)
+;;;                     (reg:QI 22)))
+;;; T = T
+;;; Clobbers: R22.
+
+DEFUN __usshift_2
+.Loop_bytes:
+    tst     A1
+    brne .Lsat
+    mov     A1, A0
+    clr     A0
+ENTRY __usashluha3
+ENTRY __usashluhq3
+    subi    Off, 8
+    brcc .Loop_bytes
+    ;; Undo the extra Off -= 8 from above.
+    subi    Off, -8
+    breq 9f
+.Loop_bits:
+    lsl     A0
+    rol     A1
+    brcs .Lsat
+    dec     Off
+    brne .Loop_bits
+    ret
+
+.Lsat:
+    ;; A = 0xff..
+    ldi     A0, lo8(0xffff)
+    ldi     A1, hi8(0xffff)
+9:  ret
+ENDF __usshift_2
+#endif /* L_usshift_2 */
+
+#ifdef L_ssshift_2
+;;; (set (reg:HA/HQ 24)
+;;;      (ss_ashift:HA/HQ (reg:HA/HQ 24)
+;;;                       (reg:QI 22)))
+;;; Clobbers: R22.
+DEFUN __ssashlha3
+ENTRY __ssashlhq3
+    bst     A1, 7
+    brtc 1f
+    NEG2    A0
+1:  XCALL   __usashluha3
+    ;; In the negative result case, A = 0x80.. is no overflow,
+    ;; but treating it as such keeps the value unchanged.
+    tst     A1
+    brmi .Lsat
+    brtc 9f
+    NEG2    A0
+    ret
+
+.Lsat:
+    ;; Saturate:
+    ;; T = 0 -> 0x7f..
+    ;; T = 1 -> 0x80..
+    ldi     A0, lo8(0x7fff)
+    ldi     A1, hi8(0x7fff)
+    brtc 9f
+    waddi   A0, 1
+9:  ret
+ENDF __ssashlha3
+#endif /* L_ssshift_2 */
+
+#undef A0
+#undef A1
+#undef Off
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Saturated Shift Left, 4 Bytes
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+#define A0 22
+#define A1 A0+1
+#define A2 A0+2
+#define A3 A0+3
+#define Off r20
+
+#ifdef L_usshift_4
+;;; (set (reg:US* 22)
+;;;      (us_ashift:US* (reg:US* 22)
+;;;                     (reg:QI 20)))
+;;; T = T
+;;; Clobbers: R20.
+DEFUN __usshift_4
+.Loop_bytes:
+    tst     A3
+    brne .Lsat
+    mov     A3, A2
+    mov     A2, A1
+    mov     A1, A0
+    clr     A0
+ENTRY __usashlusa3
+ENTRY __usashlusq3
+    subi    Off, 8
+    brcc .Loop_bytes
+    ;; Undo the extra Off -= 8 from above.
+    subi    Off, -8
+    breq 9f
+.Loop_bits:
+    lsl     A0
+    rol     A1
+    rol     A2
+    rol     A3
+    brcs .Lsat
+    dec     Off
+    brne .Loop_bits
+    ret
+
+.Lsat:
+    ldi     A0, 0xff
+    ldi     A1, 0xff
+    wmov    A2, A0
+9:  ret
+ENDF __usshift_4
+#endif /* L_usshift_4 */
+
+#ifdef L_ssshift_4
+;;; (set (reg:SA/SQ 22)
+;;;      (ss_ashift:SA/SQ (reg:SA/SQ 22)
+;;;                       (reg:QI 20)))
+;;; Clobbers: R20.
+DEFUN __ssashlsa3
+ENTRY __ssashlsq3
+    bst     A3, 7
+    brtc 1f
+    XCALL   __negsi2
+1:  XCALL   __usashlusa3
+    ;; In the negative result case, A = 0x80.. is no overflow,
+    ;; but treating it as such keeps the value unchanged.
+    tst     A3
+    brpl 2f
+    ;; Saturate:
+    ;; T = 0 -> 0x7f..
+    ;; T = 1 -> 0x80..
+    bld     A3, 7
+    cpi     A3, 0x80
+    sbc     A0, A0
+    sbc     A1, A1
+    wmov    A2, A0
+    subi    A3, 0x80
+9:  ret
+2:  brtc 9b
+    XJMP    __negsi2
+ENDF __ssashlsa3
+#endif /* L_ssshift_4 */
+
+#undef A0
+#undef A1
+#undef A2
+#undef A3
+#undef Off
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Saturated Shift Left, 8 Bytes
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+#ifndef __AVR_TINY__
+
+#define A0 18
+#define A1 A0+1
+#define A2 A0+2
+#define A3 A0+3
+#define A4 A0+4
+#define A5 A0+5
+#define A6 A0+6
+#define A7 A0+7
+#define Off r31
+
+#ifdef L_usshift_8
+;;; (set (reg:UD* 18)
+;;;      (us_ashift:UD* (reg:UD* 18)
+;;;                     (reg:QI 16)))
+;;; T = T
+;;; Clobbers: R31
+DEFUN __usashluda3
+ENTRY __usashluta3
+ENTRY __usashludq3
+    mov     Off, r16
+    rjmp    .Lstart
+.Loop_bytes:
+    tst     A7
+    brne .Lsat
+    mov     A7, A6
+    mov     A6, A5
+    mov     A5, A4
+    mov     A4, A3
+    mov     A3, A2
+    mov     A2, A1
+    mov     A1, A0
+    clr     A0
+.Lstart:
+    subi    Off, 8
+    brcc .Loop_bytes
+    ;; Undo the extra Off -= 8 from above.
+    subi    Off, -8
+    breq 9f
+.Loop_bits:
+    lsl     A0
+    rol     A1
+    rol     A2
+    rol     A3
+    rol     A4
+    rol     A5
+    rol     A6
+    rol     A7
+    brcs .Lsat
+    dec     Off
+    brne .Loop_bits
+    ret
+
+.Lsat:
+    ldi     A0, 0xff
+    ldi     A1, 0xff
+    wmov    A2, A0
+    wmov    A4, A0
+    wmov    A6, A0
+9:  ret
+ENDF __usashluda3
+#endif /* L_usshift_8 */
+
+#ifdef L_ssshift_8
+;;; (set (reg:DA/DQ 18)
+;;;      (ss_ashift:DA/DQ (reg:DA/DQ 18)
+;;;                       (reg:QI 16)))
+DEFUN __ssashlda3
+ENTRY __ssashldq3
+ENTRY __ssashlta3
+    bst     A7, 7
+    brtc 1f
+    XCALL   __negdi2
+1:  XCALL   __usashluda3
+    ;; In the negative result case, A = 0x80.. is no overflow,
+    ;; but treating it as such keeps the value unchanged.
+    tst     A7
+    brpl 2f
+    ;; Saturate:
+    ;; T = 0 -> 0x7f..
+    ;; T = 1 -> 0x80..
+    bld     A7, 7
+    cpi     A7, 0x80
+    sbc     A0, A0
+    sbc     A1, A1
+    wmov    A2, A0
+    wmov    A4, A0
+    wmov    A6, A0
+    subi    A7, 0x80
+9:  ret
+2:  brtc 9b
+    XJMP    __negdi2
+ENDF __ssashlda3
+#endif /* L_ssshift_8 */
+
+#undef A0
+#undef A1
+#undef A2
+#undef A3
+#undef A4
+#undef A5
+#undef A6
+#undef A7
+#undef Off
+
+#endif /* !__AVR_TINY__ */

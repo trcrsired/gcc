@@ -2313,8 +2313,6 @@ is_lshift_by_1 (gassign *stmt)
 static bool
 is_rshift_by_1 (gassign *stmt)
 {
-  if (!TYPE_UNSIGNED (TREE_TYPE (gimple_assign_lhs (stmt))))
-    return false;
   if (gimple_assign_rhs_code (stmt) == RSHIFT_EXPR
       && integer_onep (gimple_assign_rhs2 (stmt)))
     return true;
@@ -2482,6 +2480,19 @@ number_of_iterations_cltz (loop_p loop, edge exit,
 
   /* We found a match.  */
   tree src = gimple_phi_arg_def (phi, loop_preheader_edge (loop)->dest_idx);
+
+  /* If the type is signed, verify via Ranger on the preheader edge
+     that the initial value entering the loop is non-negative.  */
+  if (!TYPE_UNSIGNED (TREE_TYPE (src)))
+    {
+      int_range_max r (TREE_TYPE (src));
+      edge e = loop_preheader_edge (loop);
+      if (!get_range_query (cfun)->range_on_edge (r, e, src)
+	  || r.undefined_p ()
+	  || !r.nonnegative_p ())
+	return false;
+    }
+
   int src_precision = TYPE_PRECISION (TREE_TYPE (src));
 
   /* Save the original SSA name before preprocessing for ranger queries.  */
@@ -2641,6 +2652,19 @@ number_of_iterations_cltz_complement (loop_p loop, edge exit,
 
   /* We found a match.  */
   tree src = gimple_phi_arg_def (phi, loop_preheader_edge (loop)->dest_idx);
+
+  /* If the type is signed, verify via Ranger on the preheader edge
+     that the initial value entering the loop is non-negative.  */
+  if (!TYPE_UNSIGNED (TREE_TYPE (src)))
+    {
+      int_range_max r (TREE_TYPE (src));
+      edge e = loop_preheader_edge (loop);
+      if (!get_range_query (cfun)->range_on_edge (r, e, src)
+	  || r.undefined_p ()
+	  || !r.nonnegative_p ())
+	return false;
+    }
+
   int src_precision = TYPE_PRECISION (TREE_TYPE (src));
 
   /* Get the corresponding c[lt]z builtin.  */
@@ -5347,11 +5371,8 @@ n_of_executions_at_most (gimple *stmt,
 bool
 nowrap_type_p (tree type)
 {
-  if (ANY_INTEGRAL_TYPE_P (type)
+  if ((ANY_INTEGRAL_TYPE_P (type) || POINTER_TYPE_P (type))
       && TYPE_OVERFLOW_UNDEFINED (type))
-    return true;
-
-  if (POINTER_TYPE_P (type))
     return true;
 
   return false;

@@ -8386,6 +8386,7 @@ trees_out::decl_value (tree decl, depset *dep)
       int use_tpl = -1;
       if (tree ti = node_template_info (decl, use_tpl))
 	gcc_checking_assert (TREE_CODE (TI_TEMPLATE (ti)) == OVERLOAD
+			     || TREE_CODE (TI_TEMPLATE (ti)) == IDENTIFIER_NODE
 			     || TREE_CODE (TI_TEMPLATE (ti)) == FIELD_DECL
 			     || (DECL_TEMPLATE_RESULT (TI_TEMPLATE (ti))
 				 != decl));
@@ -9889,8 +9890,9 @@ trees_out::type_node (tree type)
 	}
       break;
 
-    case META_TYPE:
+    case LANG_TYPE:
       /* No additional data.  */
+      gcc_checking_assert (REFLECTION_TYPE_P (type));
       break;
 
     case SPLICE_SCOPE:
@@ -10744,7 +10746,10 @@ trees_in::tree_node (bool is_use)
 	    }
 	    break;
 
-	  case META_TYPE:
+	  /* LANG_TYPE can be more things, but here we assume it represents
+	     std::meta::info.  Unfortunately here it's not possible to check
+	     REFLECTION_TYPE_P.  */
+	  case LANG_TYPE:
 	    if (!get_overrun ())
 	      res = meta_info_type_node;
 	    break;
@@ -11363,9 +11368,9 @@ trees_out::fn_parms_init (tree fn)
     {
       /* We must walk contract specifiers so the dependency graph is
 	 complete.  */
-      tree contract = get_fn_contract_specifiers (fn);
-      for (; contract; contract = TREE_CHAIN (contract))
-	tree_node (contract);
+      if (tree contracts = get_fn_contract_specifiers (fn))
+	for (tree contract : tree_vec_range (contracts))
+	  tree_node (contract);
     }
 
   /* Write a reference to contracts pre/post functions, if any, to avoid
@@ -21918,7 +21923,7 @@ get_originating_module_decl (tree decl)
 	  if (TREE_CODE (decl) != TEMPLATE_DECL)
 	    {
 	      /* A friend template specialization.  */
-	      gcc_checking_assert (OVL_P (decl));
+	      gcc_checking_assert (OVL_P (decl) || identifier_p (decl));
 	      return global_namespace;
 	    }
 	}
@@ -22215,6 +22220,37 @@ set_originating_module (tree decl, bool friend_p ATTRIBUTE_UNUSED)
     DECL_MODULE_EXPORT_P (decl) = true;
 }
 
+/* True if it's OK to redefine DECL under P1811 because it is attached to the
+   global module and its definition was imported; [basic.def.odr]/12 "there can
+   be more than one definition...provided that each definition appears in a
+   different translation unit"
+
+   This does not depend on whether DECL was already defined, so that for
+   instance it can affect redefinition of default arguments.  This should only
+   be used when we notice a redefinition.  */
+
+bool
+redefinable_import_p (tree decl)
+{
+  if (!modules_p () || named_module_attach_p ())
+    return false;
+
+  decl = STRIP_TEMPLATE (decl);
+
+  if (TREE_CODE (decl) == TYPE_DECL
+      && !DECL_IMPLICIT_TYPEDEF_P (decl)
+      && !TYPE_DECL_FOR_LINKAGE_PURPOSES_P (decl))
+    /* Typedefs are always redefinable, use normal handling.  */
+    return false;
+
+  return (DECL_LANG_SPECIFIC (decl)
+	  && DECL_MODULE_ENTITY_P (decl)
+	  /* Use this instead of DECL_MODULE_IMPORT_P so we don't get confused
+	     by partitions or set_instantiating_module.  */
+	  /* FIXME this also means we allow multiple redefinitions.  */
+	  && get_importing_module (decl, /*flexible*/true) > 0);
+}
+
 /* Checks whether DECL within a module unit has valid linkage for its kind.
    Must be called after visibility for DECL has been finalised.  */
 
@@ -22415,7 +22451,7 @@ transfer_defining_module (tree olddecl, tree newdecl)
 
   if (DECL_LANG_SPECIFIC (new_inner))
     {
-      gcc_checking_assert (DECL_LANG_SPECIFIC (old_inner));
+      retrofit_lang_decl (old_inner);
       if (DECL_MODULE_PURVIEW_P (new_inner))
 	DECL_MODULE_PURVIEW_P (old_inner) = true;
       if (!DECL_MODULE_IMPORT_P (new_inner))
@@ -23166,7 +23202,7 @@ static char *
 maybe_translate_include (cpp_reader *reader, line_maps *lmaps, location_t loc,
 			 _cpp_file *file, bool angle, const char **alternate)
 {
-  if (!modules_p ())
+  if (!modules_p () || !flag_module_include_translate)
     {
       /* Turn off.  */
       cpp_get_callbacks (reader)->translate_include = NULL;

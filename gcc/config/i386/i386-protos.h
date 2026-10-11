@@ -83,7 +83,6 @@ extern bool ix86_expand_set_or_cpymem (rtx, rtx, rtx, rtx, rtx, rtx,
 extern bool ix86_expand_set_or_movmem (rtx[], bool, bool);
 extern bool ix86_expand_cmpstrn_or_cmpmem (rtx, rtx, rtx, rtx, rtx, bool);
 
-extern enum reg_class ix86_insn_base_reg_class (rtx_insn *);
 extern bool ix86_regno_ok_for_insn_base_p (int, rtx_insn *);
 extern enum reg_class ix86_insn_index_reg_class (rtx_insn *);
 extern bool constant_address_p (rtx);
@@ -233,6 +232,7 @@ extern void ix86_expand_floorceil (rtx, rtx, bool);
 extern void ix86_expand_floorceildf_32 (rtx, rtx, bool);
 extern void ix86_expand_trunc (rtx, rtx);
 extern void ix86_expand_truncdf_32 (rtx, rtx);
+extern void ix86_expand_truncsfbf2 (rtx, rtx);
 extern void ix86_expand_round (rtx, rtx);
 extern void ix86_expand_rounddf_32 (rtx, rtx);
 extern void ix86_expand_round_sse4 (rtx, rtx);
@@ -310,6 +310,7 @@ extern void ix86_expand_mul_widen_evenodd (rtx, rtx, rtx, bool, bool);
 extern void ix86_expand_mul_widen_hilo (rtx, rtx, rtx, bool, bool);
 extern void ix86_expand_sse2_mulv4si3 (rtx, rtx, rtx);
 extern void ix86_expand_sse2_mulvxdi3 (rtx, rtx, rtx);
+extern void ix86_expand_umulvndi_highpart (rtx, rtx, rtx);
 extern void ix86_expand_sse2_abs (rtx, rtx);
 extern bool ix86_expand_vector_init_duplicate (bool, machine_mode, rtx,
 					       rtx);

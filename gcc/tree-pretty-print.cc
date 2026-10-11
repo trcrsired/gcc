@@ -448,6 +448,16 @@ dump_omp_iterators (pretty_printer *pp, tree iter, int spc, dump_flags_t flags)
       pp_colon (pp);
       dump_generic_node (pp, OMP_ITERATOR_STEP (it), spc, flags, false);
     }
+  if (flags & TDF_DETAILS && OMP_ITERATOR_BLOCK (iter))
+    {
+      pp_string (pp, ", block=");
+      pp_left_brace (pp);
+      newline_and_indent (pp, spc + 2);
+      dump_generic_node (pp, BLOCK_SUBBLOCKS (OMP_ITERATOR_BLOCK (iter)),
+			 spc + 2, flags, true);
+      newline_and_indent (pp, spc);
+      pp_right_brace (pp);
+    }
   if (OMP_ITERATOR_EXPANDED_P (iter))
     {
       pp_string (pp, ", loop_label=");
@@ -1426,6 +1436,20 @@ dump_omp_clause (pretty_printer *pp, tree clause, int spc, dump_flags_t flags)
 
     case OMP_CLAUSE_SIMDLEN:
       pp_string (pp, "simdlen(");
+      if (OMP_CLAUSE_SIMDLEN_TYPE (clause))
+	{
+	  pp_string (pp, "scaled(");
+	  dump_generic_node (pp, OMP_CLAUSE_SIMDLEN_TYPE (clause),
+			     spc, flags, false);
+	  if (OMP_CLAUSE_SIMDLEN_DIVISOR (clause))
+	    {
+	      pp_comma (pp);
+	      dump_generic_node (pp, OMP_CLAUSE_SIMDLEN_DIVISOR (clause),
+				 spc, flags, false);
+	    }
+	  pp_right_paren (pp);
+	  pp_colon (pp);
+	}
       dump_generic_node (pp, OMP_CLAUSE_SIMDLEN_EXPR (clause),
 			 spc, flags, false);
       pp_right_paren (pp);
@@ -1776,6 +1800,7 @@ dump_omp_context_selector (pretty_printer *pp, tree ctx, int spc,
 	    pp_string (pp, OMP_TS_NAME (sel));
 	  tree score = OMP_TS_SCORE (sel);
 	  tree props = OMP_TS_PROPERTIES (sel);
+	  enum omp_tp_type tp_type = omp_ts_map[OMP_TS_CODE (sel)].tp_type;
 	  if (props)
 	    {
 	      pp_string (pp, " (");
@@ -1787,7 +1812,9 @@ dump_omp_context_selector (pretty_printer *pp, tree ctx, int spc,
 		}
 	      for (tree prop = props; prop; prop = TREE_CHAIN (prop))
 		{
-		  if (OMP_TP_NAME (prop) == OMP_TP_NAMELIST_NODE)
+		  if (tp_type == OMP_TRAIT_PROPERTY_CLAUSE_LIST)
+		    dump_omp_clause (pp, prop, spc + 4, flags);
+		  else if (OMP_TP_NAME (prop) == OMP_TP_NAMELIST_NODE)
 		    {
 		      const char *str = omp_context_name_list_prop (prop);
 		      pp_string (pp, "\"");
@@ -3047,6 +3074,28 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, dump_flags_t flags,
 	widest_int curidx;
 	if (flags & TDF_GIMPLE)
 	  {
+	    if (TREE_CLOBBER_P (node))
+	      {
+		pp_string (pp, "__CLOBBER");
+		switch (CLOBBER_KIND (node))
+		  {
+		  case CLOBBER_STORAGE_BEGIN:
+		    pp_string (pp, "(bos)");
+		    break;
+		  case CLOBBER_STORAGE_END:
+		    pp_string (pp, "(eos)");
+		    break;
+		  case CLOBBER_OBJECT_BEGIN:
+		    pp_string (pp, "(bob)");
+		    break;
+		  case CLOBBER_OBJECT_END:
+		    pp_string (pp, "(eob)");
+		    break;
+		  default:
+		    break;
+		  }
+		break;
+	      }
 	    pp_string (pp, "_Literal (");
 	    dump_generic_node (pp, TREE_TYPE (node), spc, flags, false);
 	    pp_string (pp, ") ");
@@ -5256,34 +5305,6 @@ dump_function_header (FILE *dump_file, tree fdecl, dump_flags_t flags)
     }
   else
     fprintf (dump_file, ")\n\n");
-}
-
-/* Dump double_int D to pretty_printer PP.  UNS is true
-   if D is unsigned and false otherwise.  */
-void
-pp_double_int (pretty_printer *pp, double_int d, bool uns)
-{
-  if (d.fits_shwi ())
-    pp_wide_integer (pp, d.low);
-  else if (d.fits_uhwi ())
-    pp_unsigned_wide_integer (pp, d.low);
-  else
-    {
-      unsigned HOST_WIDE_INT low = d.low;
-      HOST_WIDE_INT high = d.high;
-      if (!uns && d.is_negative ())
-	{
-	  pp_minus (pp);
-	  high = ~high + !low;
-	  low = -low;
-	}
-      /* Would "%x%0*x" or "%x%*0x" get zero-padding on all
-	 systems?  */
-      sprintf (pp_buffer (pp)->m_digit_buffer,
-	       HOST_WIDE_INT_PRINT_DOUBLE_HEX,
-	       (unsigned HOST_WIDE_INT) high, low);
-      pp_string (pp, pp_buffer (pp)->m_digit_buffer);
-    }
 }
 
 #if __GNUC__ >= 10

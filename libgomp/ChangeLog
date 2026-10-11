@@ -1,3 +1,191 @@
+2026-10-09  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127723
+	* libgomp.texi (OpenMP 6.1 Impl. Status): Link to Bugzilla
+	for the pending 'scaled' modifer to the 'simdlen' clause.
+
+2026-10-08  John David Anglin  <danglin@gcc.gnu.org>
+
+	* testsuite/libgomp.c++/target-std__cmath.C: Skip on hppa*-*-hpux*.
+
+2026-09-30  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 6.0 Impl. Status): Set 'local' clause to 'Y'.
+
+2026-09-26  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (Impl. Status): Mark optional const bool
+	expr for inarguable clauses as implemented for Fortran.
+
+2026-09-26  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (Impl.Status): Mark 'omp groupprivate' as
+	partially supported.
+	* testsuite/libgomp.fortran/groupprivate-1.f90: New test.
+	* testsuite/libgomp.fortran/groupprivate-2.f90: New test.
+
+2026-09-25  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR tree-optimization/127053
+	* testsuite/libgomp.graphite/force-parallel-8.c:
+	'dg-additional-options -fno-expensive-optimizations'.
+
+2026-09-25  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR lto/127589
+	* testsuite/libgomp.c/cmplxint-target-1.c: New test.
+	* testsuite/libgomp.c/cmplxint128-target-1.c: New test.
+	* testsuite/libgomp.c/dfp-target-1.c: New test.
+	* testsuite/libgomp.c/float16-target-1.c: New test.
+	* testsuite/libgomp.c/float16-target-2.c: New test.
+
+2026-09-24  Jakub Jelinek  <jakub@redhat.com>
+
+	* alloc.c (gomp_aligned_alloc): Check for overflows in the
+	_aligned_malloc case and in the last fallback.
+
+2026-09-22  Chung-Lin Tang  <cltang@baylibre.com>
+
+	* testsuite/libgomp.c-c++-common/declare-target-local-1.c: New test.
+	* testsuite/libgomp.c-c++-common/declare-target-local-2.c: New test.
+	* testsuite/libgomp.c-c++-common/declare-target-local-3.c: New test.
+	* testsuite/libgomp.c-c++-common/declare-target-local-4.c: New test.
+	* testsuite/libgomp.fortran/declare-target-local-1.f90: New test.
+
+2026-09-21  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 5.2 Impl. Status): Mark comma between
+	directive name and first clause as implemented in Fortran.
+
+2026-09-11  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (omp_control_tool): Add example interface for calling
+	the tool with a passed argument from Fortran
+
+2026-09-10  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/127273
+	* testsuite/libgomp.c/usm_env_handling-1-self.c: Remove 'dg-ice'.
+
+2026-09-09  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR middle-end/122205
+	* testsuite/libgomp.c/usm_env_handling-2.c: Improve debug printf.
+	* testsuite/libgomp.c/usm_env_handling-1.c: likewise; add
+	'#ifdef USE_SELF_MAPS'.
+	* testsuite/libgomp.c/usm_env_handling-1-self.c: New test.
+	* testsuite/libgomp.c/usm_env_handling-2-self.c: New test.
+	* testsuite/libgomp.c/usm_env_handling-3-self.c: New test.
+
+2026-09-08  Chung-Lin Tang  <cltang@baylibre.com>
+
+	PR middle-end/122205
+	* testsuite/libgomp.c/omp_target_is_present.c: Adjust tests for self_maps.
+	* testsuite/libgomp.c-c++-common/requires-8.c: New test.
+	* testsuite/libgomp.fortran/requires-2.f90: New test.
+
+2026-09-07  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 6.0 implementation status): Mark
+	'need_device_addr' as supported.
+	(GOMP_RUNTIME_USM): Improve wording of the unsupported part.
+
+2026-09-07  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP 6.0 Impl Status): Mark underscore
+	variant of multi-word directive names as supported by Fortran.
+
+2026-09-07  Andrew Stubbs  <ams@baylibre.com>
+
+	* config/gcn/time.c (omp_get_wtime): Use "=Sg".
+
+2026-09-07  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/126964
+	* testsuite/libgomp.oacc-fortran/host_data-5.F90: Expect no copy
+	of a span normalized dummy passed to a dummy without a descriptor.
+
+2026-09-04  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/127186
+	* libgomp.texi (GOMP_RUNTIME_USM): Update caveat section.
+	* target.c (gomp_target_enter_exit_data_usm): Handle GOMP_MAP_ATTACH.
+	* testsuite/libgomp.c/usm_env_handling-3.c: New test.
+
+2026-09-02  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/127186
+	* target.c (GOMP_target_ext): Fix comment related to
+	GOMP_RUNTIME_USM.
+	* testsuite/libgomp.c/usm_env_handling-2.c: New test.
+
+2026-09-01  Tobias Burnus  <tburnus@baylibre.com>
+
+	* target.c (gomp_load_image_to_device): With shared memory, do not
+	add 'link' variables to the splay tree.
+	(GOMP_target_update_ext): For OFFLOAD_CAP_SHARED_MEM, still call
+	gomp_update unless requires self_maps/USM is set.
+	(gomp_update): For OFFLOAD_CAP_SHARED_MEM, only handle global
+	static variables (other than 'link').
+	(GOMP_target_ext, GOMP_target_data_ext): For OFFLOAD_CAP_SHARED_MEM
+	without 'requires self_maps/USM', abort with a 'sorry' for
+	global static variables other than 'link' as the MAP clause would
+	otherwise be ignored.
+	(gomp_target_enter_exit_data_usm): New; handle global static variables
+	other than 'link' with OFFLOAD_CAP_SHARED_MEM.
+	(GOMP_target_enter_exit_data): Call it in that case, unless there
+	is a 'requires self_maps/USM'.
+	* testsuite/libgomp.c/usm_env_handling-1.c: New test.
+
+2026-09-01  supers1ngular  <supers1ngular@baylibre.com>
+
+	* env.c (enum gomp_runtime_usm_t): New variable.
+	(parse_rt_usm): New function to parse environment variable.
+	(initialize_env): Enforce default 'disabled'.
+	* libgomp.h (struct gomp_team_state): Whitespace.
+	(enum gomp_device_num): Ditto.
+	(enum gomp_runtime_usm_t): New enum.
+	(gomp_init_device): Update signature.
+	* libgomp.texi: Add relevant documentation.
+	* oacc-init.c (acc_init_1): Update function call.
+	(goacc_attach_host_thread_to_device): Whitespace.
+	(acc_init): Ditto.
+	(acc_set_device_type): Update function call.
+	(acc_set_device_num): Ditto.
+	(get_property_any): Ditto.
+	(goacc_restore_bind): Whitespace.
+	* target.c (resolve_device): Update function call.
+	(gomp_load_image_to_device): Allow copying if the device
+	capability is set.
+	(gomp_init_device): Update signature, and add capability logic.
+	Also add a debugging output.
+	(gomp_page_locked_host_alloc): Update function call.
+
+2026-08-20  Paul-Antoine Arras  <parras@baylibre.com>
+
+	* config/gcn/teams.c (GOMP_distribute_static_worksharing_start):
+	Update comment.
+	* config/nvptx/teams.c (GOMP_distribute_static_worksharing_start):
+	Likewise.
+	* loop.c (GOMP_loop_static_worksharing_start): Likewise.
+	* teams.c (GOMP_distribute_static_worksharing_start): Likewise.
+	* testsuite/libgomp.c-c++-common/for-static-3.c: Use
+	-fopenmp-ompt=extended instead of -fopenmp-ompt-detailed.
+
+2026-08-17  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/53800
+	* testsuite/libgomp.oacc-fortran/host_data-5.F90: Update the
+	privatization notes for the packing of a TARGET dummy.
+
+2026-08-14  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR libgomp/41418
+	* configure.ac (FC): Revert ealier changes; just set to '"$GFORTRAN"'.
+	(USE_FORTRAN): Conditionalize on '--enable-languages=fortran' being in
+	effect.
+	* configure: Regenerate.
+
 2026-08-10  Paul-Antoine Arras  <parras@baylibre.com>
 
 	* loop.c (GOMP_loop_static_worksharing_start,

@@ -275,7 +275,8 @@ static struct ix86_target_opts isa2_opts[] =
   { "-mmovrs",		OPTION_MASK_ISA2_MOVRS },
   { "-mamx-movrs",	OPTION_MASK_ISA2_AMX_MOVRS },
   { "-mavx512bmm",	OPTION_MASK_ISA2_AVX512BMM },
-  { "-mavx10v2aux",	OPTION_MASK_ISA2_AVX10V2AUX }
+  { "-mavx10v2aux",	OPTION_MASK_ISA2_AVX10V2AUX },
+  { "-macev1",		OPTION_MASK_ISA2_ACEV1 }
 };
 static struct ix86_target_opts isa_opts[] =
 {
@@ -1141,6 +1142,7 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
     IX86_ATTR_ISA ("amx-movrs", OPT_mamx_movrs),
     IX86_ATTR_ISA ("avx512bmm", OPT_mavx512bmm),
     IX86_ATTR_ISA ("avx10v2aux", OPT_mavx10v2aux),
+    IX86_ATTR_ISA ("acev1", OPT_macev1),
 
     /* enum options */
     IX86_ATTR_ENUM ("fpmath=",	OPT_mfpmath_),
@@ -2305,6 +2307,11 @@ ix86_option_override_internal (bool main_args_p,
     sorry ("%i-bit mode not compiled in",
 	   (opts->x_ix86_isa_flags & OPTION_MASK_ISA_64BIT) ? 64 : 32);
 
+  processor_vendor ix86_vendor = VENDOR_OTHER;
+  processor_types ix86_type = CPU_TYPE_MAX;
+  processor_subtypes ix86_subtype = CPU_SUBTYPE_MAX;
+  wide_int_bitmask ix86_pta = 0;
+
   /* Last processor_alias_table must point to "generic" entry.  */
   gcc_checking_assert (strcmp (processor_alias_table[pta_size - 1].name,
 			       "generic") == 0);
@@ -2340,6 +2347,10 @@ ix86_option_override_internal (bool main_args_p,
 
 	ix86_schedule = processor_alias_table[i].schedule;
 	ix86_arch = processor_alias_table[i].processor;
+	ix86_pta = processor_alias_table[i].flags;
+
+	ix86_decode_cpu_info (processor_alias_table[i].model,
+			      ix86_vendor, ix86_type, ix86_subtype);
 
 	/* Default cpu tuning to the architecture, unless the table
 	   entry requests not to do this.  Used by the x86-64 psABI
@@ -2526,6 +2537,47 @@ ix86_option_override_internal (bool main_args_p,
 		: G_("valid arguments to %<target(\"tune=\")%> attribute "
 		     "are: %s"), s);
       XDELETEVEC (s);
+    }
+
+  /* Disable -m128bit-atomic if not set on command-line.  */
+  if (!TARGET_128BIT_ATOMIC_P (opts_set->x_ix86_target_flags))
+    opts->x_ix86_target_flags &= ~OPTION_MASK_128BIT_ATOMIC;
+
+  if (TARGET_128BIT_ATOMIC_P (opts->x_ix86_target_flags))
+    {
+      if (!TARGET_64BIT_P (opts->x_ix86_isa_flags))
+	error ("%<-m128bit-atomic%> not supported for 32-bit code");
+      else if (!TARGET_CX16_P (opts_set->x_ix86_isa_flags2))
+	{
+	  /* Enable CMPXCHG16B when -m128bit-atomic is enabled.  */
+	  opts->x_ix86_isa_flags2 |= OPTION_MASK_ISA2_CX16;
+	}
+    }
+  else if (!TARGET_128BIT_ATOMIC_P (opts_set->x_ix86_target_flags)
+	   && TARGET_64BIT_P (opts->x_ix86_isa_flags)
+	   && ((TARGET_AVX_P (opts->x_ix86_isa_flags)
+		&& (ix86_vendor == VENDOR_INTEL
+		    || ix86_vendor == VENDOR_AMD
+		    || ix86_vendor == VENDOR_HYGON
+		    || ix86_vendor == VENDOR_ZHAOXIN))
+	       || (ix86_pta & PTA_X86_64_V3) == PTA_X86_64_V3
+	       || ix86_type == AMDFAM17H
+	       || ix86_type == AMDFAM19H
+	       || ix86_type == AMDFAM1AH
+	       || ix86_type == HYGONFAM18H
+	       || (ix86_type >= INTEL_SIERRAFOREST
+		   && ix86_type <= INTEL_CLEARWATERFOREST)
+	       || ix86_subtype == INTEL_COREI7_SANDYBRIDGE
+	       || (ix86_subtype >= AMDFAM17H_ZNVER1
+		   && ix86_subtype <= INTEL_COREI7_ROCKETLAKE)
+	       || (ix86_subtype >= AMDFAM19H_ZNVER4
+		   && ix86_subtype <= HYGONFAM18H_C86_4G_M8)))
+    {
+      /* Turn on -m128bit-atomic in 64-bit mode by default if supported
+	 by the targeting processor, which is one of x86-64-v3 capable
+	 processors as well as AVX capable processors from Intel, AMD,
+	 Hygon and Zhaoxin.  */
+      opts->x_ix86_target_flags |= OPTION_MASK_128BIT_ATOMIC;
     }
 
   set_ix86_tune_features (opts, ix86_tune, opts->x_ix86_dump_tunes);
@@ -2742,6 +2794,13 @@ ix86_option_override_internal (bool main_args_p,
 	      warning (0, "387 instruction set disabled, using SSE arithmetics");
 	      opts->x_ix86_fpmath = FPMATH_SSE;
 	    }
+	}
+      else if ((opts->x_ix86_fpmath & FPMATH_387)
+	       && !TARGET_80387_P (opts->x_target_flags)
+	       && TARGET_SSE_P (opts->x_ix86_isa_flags))
+	{
+	  warning (0, "387 instruction set disabled, using SSE arithmetics");
+	  opts->x_ix86_fpmath = FPMATH_SSE;
 	}
     }
   /* For all chips supporting SSE2, -mfpmath=sse performs better than
@@ -3759,7 +3818,7 @@ ix86_handle_tm_regparm_attribute (tree *node, tree, tree,
     alt = tree_cons (get_identifier ("fastcall"), NULL, NULL);
   else
     {
-      alt = tree_cons (NULL, build_int_cst (NULL, 2), NULL);
+      alt = tree_cons (NULL, build_int_cst (integer_type_node, 2), NULL);
       alt = tree_cons (get_identifier ("regparm"), alt, NULL);
     }
   decl_attributes (node, alt, flags);

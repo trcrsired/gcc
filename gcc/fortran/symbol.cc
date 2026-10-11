@@ -694,7 +694,6 @@ gfc_check_conflict (symbol_attribute *attr, const char *name, locus *where)
   conf (value, subroutine)
   conf (value, function)
   conf (value, volatile_)
-  conf (value, dimension)
   conf (value, codimension)
   conf (value, external)
 
@@ -2526,7 +2525,8 @@ gfc_find_derived_types (gfc_symbol *sym, gfc_namespace *ns,
 			const char *name, bool stash)
 {
   gfc_namespace *encompassing = NULL;
-  gcc_assert (sym->assoc);
+  if (sym->assoc == NULL)
+    return 0;
 
   cts = 0;
   while (ns->parent)
@@ -3817,8 +3817,9 @@ restore_old_symbol (gfc_symbol *p)
   p->mark = 0;
   old = p->old_symbol;
 
-  p->ts.type = old->ts.type;
-  p->ts.kind = old->ts.kind;
+  /* Restore the whole typespec, not just type/kind, so ts.u.cl doesn't
+     dangle.  */
+  p->ts = old->ts;
 
   p->attr = old->attr;
 
@@ -5699,6 +5700,31 @@ gfc_is_associate_pointer (gfc_symbol* sym)
     return false;
 
   return true;
+}
+
+
+/* Check if the actual argument of a dummy must be passed directly, rather
+   than through a copy-in/copy-out temporary.  A pointer associated with an
+   assumed shape or assumed rank TARGET dummy has to stay valid after the
+   call, so its actual argument is never copied and its elements can be
+   spaced by more than the element size.  CLASS and assumed type entities
+   already carry their element size and are excluded.  */
+
+bool
+gfc_dummy_requires_direct_arg (gfc_symbol *sym)
+{
+  return sym->attr.dummy
+	 && sym->attr.target
+	 && sym->attr.dimension
+	 && !sym->attr.value
+	 && !sym->attr.contiguous
+	 && !sym->attr.pointer
+	 && !sym->attr.allocatable
+	 && sym->ts.type != BT_CLASS
+	 && sym->ts.type != BT_ASSUMED
+	 && sym->as
+	 && (sym->as->type == AS_ASSUMED_SHAPE
+	     || sym->as->type == AS_ASSUMED_RANK);
 }
 
 

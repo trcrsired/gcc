@@ -227,6 +227,38 @@
    (V64QI "QI") (V64HI "HI") (V64SI "SI") (V64TI "TI")
    (V64HF "HF") (V64SF "SF") (V64DI "DI") (V64DF "DF")])
 
+(define_mode_attr vnhi
+  [(QI "hi") (HI "hi") (SI "hi") (TI "hi")
+   (HF "hi") (SF "hi") (DI "hi") (DF "hi")
+   (V2QI "v2hi") (V2HI "v2hi") (V2HF "v2hi") (V2SI "v2hi")
+   (V2SF "v2hi") (V2DI "v2hi") (V2DF "v2hi") (V2TI "v2hi")
+   (V4QI "v4hi") (V4HI "v4hi") (V4HF "v4hi") (V4SI "v4hi")
+   (V4SF "v4hi") (V4DI "v4hi") (V4DF "v4hi") (V4TI "v4hi")
+   (V8QI "v8hi") (V8HI "v8hi") (V8HF "v8hi") (V8SI "v8hi")
+   (V8SF "v8hi") (V8DI "v8hi") (V8DF "v8hi") (V8TI "v8hi")
+   (V16QI "v16hi") (V16HI "v16hi") (V16HF "v16hi") (V16SI "v16hi")
+   (V16SF "v16hi") (V16DI "v16hi") (V16DF "v16hi") (V16TI "v16hi")
+   (V32QI "v32hi") (V32HI "v32hi") (V32HF "v32hi") (V32SI "v32hi")
+   (V32SF "v32hi") (V32DI "v32hi") (V32DF "v32hi") (V32TI "v32hi")
+   (V64QI "v64hi") (V64HI "v64hi") (V64HF "v64hi") (V64SI "v64hi")
+   (V64SF "v64hi") (V64DI "v64hi") (V64DF "v64hi") (V64TI "v64hi")])
+
+(define_mode_attr VnHI
+  [(QI "HI") (HI "HI") (SI "HI") (TI "HI")
+   (HF "HI") (SF "HI") (DI "HI") (DF "HI")
+   (V2QI "V2HI") (V2HI "V2HI") (V2HF "V2HI") (V2SI "V2HI")
+   (V2SF "V2HI") (V2DI "V2HI") (V2DF "V2HI") (V2TI "V2HI")
+   (V4QI "V4HI") (V4HI "V4HI") (V4HF "V4HI") (V4SI "V4HI")
+   (V4SF "V4HI") (V4DI "V4HI") (V4DF "V4HI") (V4TI "V4HI")
+   (V8QI "V8HI") (V8HI "V8HI") (V8HF "V8HI") (V8SI "V8HI")
+   (V8SF "V8HI") (V8DI "V8HI") (V8DF "V8HI") (V8TI "V8HI")
+   (V16QI "V16HI") (V16HI "V16HI") (V16HF "V16HI") (V16SI "V16HI")
+   (V16SF "V16HI") (V16DI "V16HI") (V16DF "V16HI") (V16TI "V16HI")
+   (V32QI "V32HI") (V32HI "V32HI") (V32HF "V32HI") (V32SI "V32HI")
+   (V32SF "V32HI") (V32DI "V32HI") (V32DF "V32HI") (V32TI "V32HI")
+   (V64QI "V64HI") (V64HI "V64HI") (V64HF "V64HI") (V64SI "V64HI")
+   (V64SF "V64HI") (V64DI "V64HI") (V64DF "V64HI") (V64TI "V64HI")])
+
 (define_mode_attr vnsi
   [(QI "si") (HI "si") (SI "si") (TI "si")
    (HF "si") (SF "si") (DI "si") (DF "si")
@@ -468,13 +500,14 @@
 	  (match_operand:DI 3 "register_operand")))
    (clobber (match_scratch:<VnDI> 4))]
   "!MEM_P (operands[0]) || REG_P (operands[1])"
-  {@ [cons: =0, 1, 2, 3, =4; attrs: type, length]
-  [v,vA,U0,e ,X ;vop1 ,4 ] v_mov_b32\t%0, %1
-  [v,B ,U0,e ,X ;vop1 ,8 ] v_mov_b32\t%0, %1
-  [v,v ,vA,cV,X ;vop2 ,4 ] v_cndmask_b32\t%0, %2, %1, vcc
-  [v,vA,vA,Sv,X ;vop3a,8 ] v_cndmask_b32\t%0, %2, %1, %3
-  [v,m ,U0,e ,&v;*    ,16] #
-  [m,v ,U0,e ,&v;*    ,16] #
+  {@ [cons: =0, 1, 2, 3, =4; attrs: type, length, xnack]
+  [v ,vA,U0,e ,X ;vop1 ,4 ,*  ] v_mov_b32\t%0, %1
+  [v ,B ,U0,e ,X ;vop1 ,8 ,*  ] v_mov_b32\t%0, %1
+  [v ,v ,vA,cV,X ;vop2 ,4 ,*  ] v_cndmask_b32\t%0, %2, %1, vcc
+  [v ,vA,vA,Sv,X ;vop3a,8 ,*  ] v_cndmask_b32\t%0, %2, %1, %3
+  [v ,m ,U0,e ,&v;*    ,16,off] #
+  [&v,m ,U0,e ,&v;*    ,16,on ] #
+  [m ,v ,U0,e ,&v;*    ,16,*  ] #
   })
 
 (define_insn "*mov<mode>"
@@ -497,12 +530,13 @@
 	  (match_operand:DI 3 "register_operand")))
    (clobber (match_scratch:<VnDI> 4))]
   "!MEM_P (operands[0]) || REG_P (operands[1])"
-  {@ [cons: =0, 1, 2, 3, =4; attrs: type, length]
-  [v,vDB,U0  ,e ,X ;vmult,16] v_mov_b32\t%L0, %L1\;v_mov_b32\t%H0, %H1
-  [v,v0 ,vDA0,cV,X ;vmult,16] v_cndmask_b32\t%L0, %L2, %L1, vcc\;v_cndmask_b32\t%H0, %H2, %H1, vcc
-  [v,v0 ,vDA0,Sv,X ;vmult,16] v_cndmask_b32\t%L0, %L2, %L1, %3\;v_cndmask_b32\t%H0, %H2, %H1, %3
-  [v,m  ,U0  ,e ,&v;*    ,16] #
-  [m,v  ,U0  ,e ,&v;*    ,16] #
+  {@ [cons: =0, 1, 2, 3, =4; attrs: type, length, xnack]
+  [v ,vDB,U0  ,e ,X ;vmult,16,*  ] v_mov_b32\t%L0, %L1\;v_mov_b32\t%H0, %H1
+  [v ,v0 ,vDA0,cV,X ;vmult,16,*  ] v_cndmask_b32\t%L0, %L2, %L1, vcc\;v_cndmask_b32\t%H0, %H2, %H1, vcc
+  [v ,v0 ,vDA0,Sv,X ;vmult,16,*  ] v_cndmask_b32\t%L0, %L2, %L1, %3\;v_cndmask_b32\t%H0, %H2, %H1, %3
+  [v ,m  ,U0  ,e ,&v;*    ,16,off] #
+  [&v,m  ,U0  ,e ,&v;*    ,16,on ] #
+  [m ,v  ,U0  ,e ,&v;*    ,16,*  ] #
   })
 
 (define_insn "*mov<mode>_4reg"
@@ -524,12 +558,13 @@
 	  (match_operand:DI 3 "register_operand")))
    (clobber (match_scratch:<VnDI> 4))]
   "!MEM_P (operands[0]) || REG_P (operands[1])"
-  {@ [cons: =0, 1, 2, 3, =4; attrs: type, length]
-  [v,vDB,U0  ,e ,X ;vmult,32] v_mov_b32\t%L0, %L1\;v_mov_b32\t%H0, %H1\;v_mov_b32\t%J0, %J1\;v_mov_b32\t%K0, %K1
-  [v,v0 ,vDA0,cV,X ;vmult,32] v_cndmask_b32\t%L0, %L2, %L1, vcc\;v_cndmask_b32\t%H0, %H2, %H1, vcc\;v_cndmask_b32\t%J0, %J2, %J1, vcc\;v_cndmask_b32\t%K0, %K2, %K1, vcc
-  [v,v0 ,vDA0,Sv,X ;vmult,32] v_cndmask_b32\t%L0, %L2, %L1, %3\;v_cndmask_b32\t%H0, %H2, %H1, %3\;v_cndmask_b32\t%J0, %J2, %J1, %3\;v_cndmask_b32\t%K0, %K2, %K1, %3
-  [v,m  ,U0  ,e ,&v;*    ,32] #
-  [m,v  ,U0  ,e ,&v;*    ,32] #
+  {@ [cons: =0, 1, 2, 3, =4; attrs: type, length, xnack]
+  [v ,vDB,U0  ,e ,X ;vmult,32,*  ] v_mov_b32\t%L0, %L1\;v_mov_b32\t%H0, %H1\;v_mov_b32\t%J0, %J1\;v_mov_b32\t%K0, %K1
+  [v ,v0 ,vDA0,cV,X ;vmult,32,*  ] v_cndmask_b32\t%L0, %L2, %L1, vcc\;v_cndmask_b32\t%H0, %H2, %H1, vcc\;v_cndmask_b32\t%J0, %J2, %J1, vcc\;v_cndmask_b32\t%K0, %K2, %K1, vcc
+  [v ,v0 ,vDA0,Sv,X ;vmult,32,*  ] v_cndmask_b32\t%L0, %L2, %L1, %3\;v_cndmask_b32\t%H0, %H2, %H1, %3\;v_cndmask_b32\t%J0, %J2, %J1, %3\;v_cndmask_b32\t%K0, %K2, %K1, %3
+  [v ,m  ,U0  ,e ,&v;*    ,32,off] #
+  [&v,m  ,U0  ,e ,&v;*    ,32,on ] #
+  [m ,v  ,U0  ,e ,&v;*    ,32,*  ] #
   })
 
 ; A SGPR-base load looks like:
@@ -551,13 +586,15 @@
 	  UNSPEC_SGPRBASE))
    (clobber (match_operand:<VnDI> 2 "register_operand"))]
   "lra_in_progress || reload_completed"
-  {@ [cons: =0, 1, =2; attrs: type, length, cdna]
-  [v,vA,&v;vop1,4 ,*    ] v_mov_b32\t%0, %1
-  [v,vB,&v;vop1,8 ,*    ] ^
-  [v,m ,&v;*   ,12,*    ] #
-  [m,v ,&v;*   ,12,*    ] #
-  [a,m ,&v;*   ,12,cdna2] #
-  [m,a ,&v;*   ,12,cdna2] #
+  {@ [cons: =0, 1, =2; attrs: type, length, cdna, xnack]
+  [v ,vA,&v;vop1,4 ,*    ,*  ] v_mov_b32\t%0, %1
+  [v ,vB,&v;vop1,8 ,*    ,*  ] ^
+  [v ,m ,&v;*   ,12,*    ,off] #
+  [&v,m ,&v;*   ,12,*    ,on ] #
+  [m ,v ,&v;*   ,12,*    ,*  ] #
+  [a ,m ,&v;*   ,12,cdna2,off] #
+  [&a,m ,&v;*   ,12,cdna2,on ] #
+  [m ,a ,&v;*   ,12,cdna2,*  ] #
   })
 
 (define_insn "@mov<mode>_sgprbase"
@@ -567,12 +604,14 @@
 	  UNSPEC_SGPRBASE))
    (clobber (match_operand:<VnDI> 2 "register_operand"))]
   "lra_in_progress || reload_completed"
-  {@ [cons: =0, 1, =2; attrs: type, length, cdna]
-  [v,vDB,&v;vmult,8 ,*    ] v_mov_b32\t%L0, %L1\;v_mov_b32\t%H0, %H1
-  [v,m  ,&v;*    ,12,*    ] #
-  [m,v  ,&v;*    ,12,*    ] #
-  [a,m  ,&v;*    ,12,cdna2] #
-  [m,a  ,&v;*    ,12,cdna2] #
+  {@ [cons: =0, 1, =2; attrs: type, length, cdna, xnack]
+  [v ,vDB,&v;vmult,8 ,*    ,*  ] v_mov_b32\t%L0, %L1\;v_mov_b32\t%H0, %H1
+  [v ,m  ,&v;*    ,12,*    ,off] #
+  [&v,m  ,&v;*    ,12,*    ,on ] #
+  [m ,v  ,&v;*    ,12,*    ,*  ] #
+  [a ,m  ,&v;*    ,12,cdna2,off] #
+  [&a,m  ,&v;*    ,12,cdna2,on ] #
+  [m ,a  ,&v;*    ,12,cdna2,*  ] #
   })
 
 (define_insn "@mov<mode>_sgprbase"
@@ -582,10 +621,11 @@
 	  UNSPEC_SGPRBASE))
    (clobber (match_operand:<VnDI> 2 "register_operand"))]
   "lra_in_progress || reload_completed"
-  {@ [cons: =0, 1, =2; attrs: type, length]
-  [v,vDB,&v;vmult,8 ] v_mov_b32\t%L0, %L1\;v_mov_b32\t%H0, %H1\;v_mov_b32\t%J0, %J1\;v_mov_b32\t%K0, %K1
-  [v,m  ,&v;*    ,12] #
-  [m,v  ,&v;*    ,12] #
+  {@ [cons: =0, 1, =2; attrs: type, length, xnack]
+  [v ,vDB,&v;vmult,8 ,*  ] v_mov_b32\t%L0, %L1\;v_mov_b32\t%H0, %H1\;v_mov_b32\t%J0, %J1\;v_mov_b32\t%K0, %K1
+  [v ,m  ,&v;*    ,12,off] #
+  [&v,m  ,&v;*    ,12,on ] #
+  [m ,v  ,&v;*    ,12,*  ] #
   })
 
 ; Expand scalar addresses into gather/scatter patterns
@@ -2235,6 +2275,26 @@
   [(set_attr "type" "vop3a")
    (set_attr "length" "8")])
 
+(define_insn "<u>mul<mode><vnsi>3<exec>"
+  [(set (match_operand:<VnSI> 0 "register_operand"		     "= v")
+	(mult:<VnSI>
+	  (any_extend:<VnSI> (match_operand:V_HI 1 "gcn_alu_operand" "%vA"))
+	  (any_extend:<VnSI> (match_operand:V_HI 2 "gcn_alu_operand" " vA"))))]
+  "TARGET_SDWA"
+  "v_mul_<iu>32_<iu>24_sdwa\t%0, %<e>1, %<e>2 src0_sel:WORD_0 src1_sel:WORD_0"
+  [(set_attr "type" "vop_sdwa")
+   (set_attr "length" "8")])
+
+(define_insn "<u>mul<mode><vnhi>3<exec>"
+  [(set (match_operand:<VnHI> 0 "register_operand"		      "= v")
+	(mult:<VnHI>
+	  (any_extend:<VnHI> (match_operand:V_QI 1 "register_operand" "%vA"))
+	  (any_extend:<VnHI> (match_operand:V_QI 2 "register_operand" " vA"))))]
+  "TARGET_SDWA"
+  "v_mul_<iu>32_<iu>24_sdwa\t%0, %<e>1, %<e>2 src0_sel:BYTE_0 src1_sel:BYTE_0"
+  [(set_attr "type" "vop_sdwa")
+   (set_attr "length" "8")])
+
 (define_insn_and_split "mul<mode>3"
   [(set (match_operand:V_DI 0 "register_operand"  "=&v")
 	(mult:V_DI
@@ -2259,8 +2319,6 @@
     emit_insn (gen_mul<vnsi>3 (tmp, left_hi, right_lo));
     emit_insn (gen_add<vnsi>3 (out_hi, out_hi, tmp));
     emit_insn (gen_mul<vnsi>3 (tmp, left_lo, right_hi));
-    emit_insn (gen_add<vnsi>3 (out_hi, out_hi, tmp));
-    emit_insn (gen_mul<vnsi>3 (tmp, left_hi, right_hi));
     emit_insn (gen_add<vnsi>3 (out_hi, out_hi, tmp));
     DONE;
   })
@@ -2290,8 +2348,6 @@
     emit_insn (gen_mul<vnsi>3_dup (tmp, left_hi, right_lo));
     emit_insn (gen_add<vnsi>3 (out_hi, out_hi, tmp));
     emit_insn (gen_mul<vnsi>3_dup (tmp, left_lo, right_hi));
-    emit_insn (gen_add<vnsi>3 (out_hi, out_hi, tmp));
-    emit_insn (gen_mul<vnsi>3_dup (tmp, left_hi, right_hi));
     emit_insn (gen_add<vnsi>3 (out_hi, out_hi, tmp));
     DONE;
   })
@@ -2338,8 +2394,6 @@
     emit_insn (gen_mul<vnsi>3_exec (tmp, left_hi, right_lo, undef, exec));
     emit_insn (gen_add<vnsi>3_exec (out_hi, out_hi, tmp, out_hi, exec));
     emit_insn (gen_mul<vnsi>3_exec (tmp, left_lo, right_hi, undef, exec));
-    emit_insn (gen_add<vnsi>3_exec (out_hi, out_hi, tmp, out_hi, exec));
-    emit_insn (gen_mul<vnsi>3_exec (tmp, left_hi, right_hi, undef, exec));
     emit_insn (gen_add<vnsi>3_exec (out_hi, out_hi, tmp, out_hi, exec));
     DONE;
   })
@@ -2388,8 +2442,6 @@
     emit_insn (gen_mul<vnsi>3_dup_exec (tmp, left_hi, right_lo, undef, exec));
     emit_insn (gen_add<vnsi>3_exec (out_hi, out_hi, tmp, out_hi, exec));
     emit_insn (gen_mul<vnsi>3_dup_exec (tmp, left_lo, right_hi, undef, exec));
-    emit_insn (gen_add<vnsi>3_exec (out_hi, out_hi, tmp, out_hi, exec));
-    emit_insn (gen_mul<vnsi>3_dup_exec (tmp, left_hi, right_hi, undef, exec));
     emit_insn (gen_add<vnsi>3_exec (out_hi, out_hi, tmp, out_hi, exec));
     DONE;
   })
@@ -2729,9 +2781,22 @@
 	(bitunop:V_INT_1REG
 	  (match_operand:V_INT_1REG 1 "gcn_valu_src0_operand" "vSvB")))]
   ""
-  "v_<mnemonic>0\t%0, %1"
+  "v_<mnemonic>0\t%0, %1<popcount_extra_op>"
   [(set_attr "type" "vop1")
    (set_attr "length" "8")])
+
+(define_insn "<expander><mode>2<exec>"
+  [(set (match_operand:V_SI 0 "gcn_valu_dst_operand")
+	(countzeros:V_SI
+	  (match_operand:V_SI 1 "gcn_valu_src0_operand")))]
+  ""
+  {@ [cons: =0,1 ;attrs: length,rdna]
+  [v,vSv;4,n3] v_<mnemonic>0\t%0, %1
+  [v,B  ;8,n3] ^
+  [v,vSv;4,3p] v_<rdna_mnemonic>0\t%0, %1
+  [v,B  ;8,3p] ^
+  }
+  [(set_attr "type" "vop1")])
 
 (define_insn "<expander><mode>3<exec>"
   [(set (match_operand:V_INT_1REG 0 "gcn_valu_dst_operand"	 "=  v,RD")
@@ -2994,6 +3059,67 @@
     emit_insn (gen_mov<mode>_exec (out, tmp, operands[3], exec));
   }
   [(set_attr "type" "mult")])
+
+;; }}}
+;; {{{ ALU VnDImode
+
+(define_expand "<expander><mode>2"
+  [(match_operand:V_DI 0 "register_operand")
+   (countzeros:V_DI)
+   (match_operand:V_DI 1 "gcn_alu_operand")]
+  ""
+  {
+    rtx tmp = gen_reg_rtx (<VnSI>mode);
+    emit_insn (gen_<expander><mode>2_natural (tmp, operands[1]));
+    emit_insn (gen_zero_extend<vnsi><mode>2 (operands[0], tmp));
+    DONE;
+  })
+
+;; The ctz/clz named patterns require operand[0] to match operand[1], for
+;; vectors only.  This pattern provides a counterpart for the scalar insn,
+;; but cannot be the named pattern without an output conversion.
+(define_insn_and_split "<expander><mode>2_natural"
+  [(set (match_operand:<VnSI> 0 "register_operand"  "=&v")
+	(truncate:<VnSI>
+	  (countzeros:V_DI
+	    (match_operand:V_DI 1 "gcn_alu_operand" "v"))))
+   (clobber (match_scratch:<VnSI> 2 "=&v"))
+   (clobber (match_scratch:DI 3 "=&cV"))]
+  ""
+  "#"
+  "reload_completed"
+  [(const_int 0)]
+  {
+    enum {clz = 0, ctz = 1} op = <expander>;
+
+    /* "far/near" is "lo/hi" for clz, and "hi/lo" for ctz.  */
+    rtx src_far = gcn_operand_part (<MODE>mode, operands[1], op);
+    rtx src_near = gcn_operand_part (<MODE>mode, operands[1], !op);
+    rtx res_far = operands[op ? 0 : 2];
+    rtx res_near = operands[op ? 2 : 0];
+    rtx vcc = operands[3];
+
+    /* Count the parts.  */
+    emit_insn (gen_<expander><vnsi>2 (res_far, src_far));
+    emit_insn (gen_<expander><vnsi>2 (res_near, src_near));
+
+    /* Clamp the far-part to 32, to allow for the -1 result on all zeros.  */
+    emit_insn (gen_umin<vnsi>3 (res_far, res_far,
+				gcn_vec_constant (<VnSI>mode, 32)));
+
+    /* Add 32 to the clamped far-part; we won't use this unless near-part is
+       all zeroes.  */
+    emit_insn (gen_add<vnsi>3 (res_far, res_far,
+			       gcn_vec_constant (<VnSI>mode, 32)));
+
+    /* Select which result is correct.  */
+    emit_insn (gen_vec_cmp<vnsi>di (vcc, gen_rtx_NE (VOIDmode, 0, 0),
+				    gcn_vec_constant (<VnSI>mode, 0),
+				    src_near));
+    emit_insn (gen_vcond_mask_<vnsi>di (operands[0], res_near, res_far, vcc));
+    DONE;
+  }
+  [(set_attr "type" "vmult")])
 
 ;; }}}
 ;; {{{ Int unops

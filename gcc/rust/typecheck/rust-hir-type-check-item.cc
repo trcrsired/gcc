@@ -36,9 +36,51 @@
 #include "rust-type-util.h"
 #include "rust-tyty-variance-analysis.h"
 #include "rust-tyty.h"
+#include "options.h"
+#include "rust-compile-base.h"
+#include "rust-compile-context.h"
 
 namespace Rust {
 namespace Resolver {
+
+// Const-evaluate the discriminants of a repr(C) enum and warn when a value does
+// not fit into a C int/unsigned int. Done here, during type resolution, using
+// the compile context (a singleton shared with the backend).
+static void
+check_repr_c_enum_discriminants (Compile::Context *ctx, TyTy::BaseType *type)
+{
+  if (type->get_kind () != TyTy::TypeKind::ADT)
+    return;
+
+  auto &adt = static_cast<TyTy::ADTType &> (*type);
+  if (!adt.is_enum ()
+      || adt.get_repr_options ().repr_kind != TyTy::ADTType::ReprKind::C)
+    return;
+
+  for (auto &variant : adt.get_variants ())
+    {
+      if (!variant->has_discriminant ())
+	continue;
+
+      HIR::Expr &discriminant = variant->get_discriminant ();
+      TyTy::BaseType *discrim_ty = nullptr;
+      if (!ctx->get_tyctx ()->lookup_type (
+	    discriminant.get_mappings ().get_hirid (), &discrim_ty))
+	continue;
+
+      tree folded
+	= Compile::HIRCompileBase::query_compile_const_expr (ctx, discrim_ty,
+							     discriminant);
+      if (folded == error_mark_node || TREE_CODE (folded) != INTEGER_CST)
+	continue;
+
+      widest_int value = wi::to_widest (folded);
+      if (wi::lts_p (value, INT32_MIN) || wi::gts_p (value, UINT32_MAX))
+	rust_warning_at (discriminant.get_locus (), OPT_Woverflow,
+			 "%<repr(C)%> enum discriminant does not fit into C "
+			 "%<int%> nor into C %<unsigned int%>");
+    }
+}
 
 TypeCheckItem::TypeCheckItem () : TypeCheckBase (), infered (nullptr) {}
 
@@ -51,7 +93,14 @@ TypeCheckItem::Resolve (HIR::Item &item)
   bool already_resolved
     = context->lookup_type (item.get_mappings ().get_hirid (), &resolved);
   if (already_resolved)
-    return resolved;
+    {
+      bool function_body_pending = false;
+      if (auto fn = resolved->try_as<TyTy::FnType> ())
+	function_body_pending = context->function_body_pending (fn->get_id ());
+
+      if (!function_body_pending)
+	return resolved;
+    }
 
   rust_assert (item.get_hir_kind () == HIR::Node::BaseKind::VIS_ITEM);
   HIR::VisItem &vis_item = static_cast<HIR::VisItem &> (item);
@@ -59,6 +108,24 @@ TypeCheckItem::Resolve (HIR::Item &item)
   TypeCheckItem resolver;
   vis_item.accept_vis (resolver);
   return resolver.infered;
+}
+
+TyTy::FnType *
+TypeCheckItem::ResolveFunctionSignature (HIR::Function &function)
+{
+  TypeCheckItem resolver;
+  auto lifetime_pin = resolver.context->push_clean_lifetime_resolver ();
+  TyTy::FnType *result = resolver.resolve_function_signature (function);
+  if (result != nullptr)
+    resolver.context->mark_function_body_pending (result->get_id ());
+  return result;
+}
+
+TyTy::BaseType *
+TypeCheckItem::ResolveTraitSignature (HIR::Trait &trait)
+{
+  TypeCheckItem resolver;
+  return resolver.resolve_trait (trait, false);
 }
 
 TyTy::BaseType *
@@ -72,6 +139,7 @@ TyTy::BaseType *
 TypeCheckItem::ResolveImplBlockSelf (HIR::ImplBlock &impl_block)
 {
   TypeCheckItem resolver;
+  auto lifetime_pin = resolver.context->push_clean_lifetime_resolver (true);
 
   bool failed_flag = false;
   auto result
@@ -93,6 +161,7 @@ TypeCheckItem::ResolveImplBlockSelfWithInference (
   TyTy::SubstitutionArgumentMappings *infer_arguments)
 {
   TypeCheckItem resolver;
+  auto lifetime_pin = resolver.context->push_clean_lifetime_resolver (true);
 
   bool failed_flag = false;
   auto result = resolver.resolve_impl_block_substitutions (impl, failed_flag);
@@ -241,10 +310,8 @@ TypeCheckItem::visit (HIR::TypeAlias &alias)
   context->insert_type (alias.get_mappings (), actual_type);
 
   TyTy::RegionConstraints region_constraints;
-  for (auto &where_clause_item : alias.get_where_clause ().get_items ())
-    {
-      ResolveWhereClauseItem::Resolve (*where_clause_item, region_constraints);
-    }
+  ResolveWhereClauseItem::Resolve (alias.get_where_clause (),
+				   region_constraints);
   infered = actual_type;
 }
 
@@ -260,10 +327,13 @@ TypeCheckItem::visit (HIR::TupleStruct &struct_decl)
 			    struct_decl.get_generic_params (), substitutions);
 
   TyTy::RegionConstraints region_constraints;
-  for (auto &where_clause_item : struct_decl.get_where_clause ().get_items ())
-    {
-      ResolveWhereClauseItem::Resolve (*where_clause_item, region_constraints);
-    }
+  ResolveWhereClauseItem::Resolve (struct_decl.get_where_clause (),
+				   region_constraints);
+
+  // Process #[repr(X)] attribute, if any
+  const AST::AttrVec &attrs = struct_decl.get_outer_attrs ();
+  TyTy::ADTType::ReprOptions repr
+    = parse_repr_options (attrs, struct_decl.get_locus ());
 
   std::vector<TyTy::StructFieldType *> fields;
   size_t idx = 0;
@@ -278,6 +348,13 @@ TypeCheckItem::visit (HIR::TupleStruct &struct_decl)
       fields.push_back (ty_field);
       context->insert_type (field.get_mappings (), ty_field->get_field_type ());
       idx++;
+    }
+
+  if (repr.repr_kind == TyTy::ADTType::ReprKind::SIMD)
+    {
+      bool is_valid = validate_repr_simd (fields, struct_decl.get_locus ());
+      if (!is_valid)
+	return;
     }
 
   // get the path
@@ -298,11 +375,6 @@ TypeCheckItem::visit (HIR::TupleStruct &struct_decl)
 			  struct_decl.get_identifier ().as_string (), ident,
 			  TyTy::VariantDef::VariantType::TUPLE, tl::nullopt,
 			  std::move (fields)));
-
-  // Process #[repr(X)] attribute, if any
-  const AST::AttrVec &attrs = struct_decl.get_outer_attrs ();
-  TyTy::ADTType::ReprOptions repr
-    = parse_repr_options (attrs, struct_decl.get_locus ());
 
   auto *type = new TyTy::ADTType (
     struct_decl.get_mappings ().get_defid (),
@@ -334,10 +406,8 @@ TypeCheckItem::visit (HIR::StructStruct &struct_decl)
 			    struct_decl.get_generic_params (), substitutions);
 
   TyTy::RegionConstraints region_constraints;
-  for (auto &where_clause_item : struct_decl.get_where_clause ().get_items ())
-    {
-      ResolveWhereClauseItem::Resolve (*where_clause_item, region_constraints);
-    }
+  ResolveWhereClauseItem::Resolve (struct_decl.get_where_clause (),
+				   region_constraints);
 
   // Process #[repr(X)] attribute, if any
   const AST::AttrVec &attrs = struct_decl.get_outer_attrs ();
@@ -365,6 +435,12 @@ TypeCheckItem::visit (HIR::StructStruct &struct_decl)
       context->insert_type (field.get_mappings (), ty_field->get_field_type ());
     }
 
+  if (repr.repr_kind == TyTy::ADTType::ReprKind::SIMD)
+    {
+      bool is_valid = validate_repr_simd (fields, struct_decl.get_locus ());
+      if (!is_valid)
+	return;
+    }
   if (repr.repr_kind == TyTy::ADTType::ReprKind::TRANSPARENT)
     {
       size_t num_non_zst = 0;
@@ -480,6 +556,9 @@ TypeCheckItem::visit (HIR::Enum &enum_decl)
   infered = type;
 
   context->get_variance_analysis_ctx ().add_type_constraints (*type);
+
+  if (flag_unused_check_2_0)
+    check_repr_c_enum_discriminants (Compile::Context::get (), type);
 }
 
 void
@@ -492,10 +571,8 @@ TypeCheckItem::visit (HIR::Union &union_decl)
 			    union_decl.get_generic_params (), substitutions);
 
   TyTy::RegionConstraints region_constraints;
-  for (auto &where_clause_item : union_decl.get_where_clause ().get_items ())
-    {
-      ResolveWhereClauseItem::Resolve (*where_clause_item, region_constraints);
-    }
+  ResolveWhereClauseItem::Resolve (union_decl.get_where_clause (),
+				   region_constraints);
 
   std::vector<TyTy::StructFieldType *> fields;
   for (auto &variant : union_decl.get_variants ())
@@ -563,7 +640,9 @@ void
 TypeCheckItem::visit (HIR::ConstantItem &constant)
 {
   TyTy::BaseType *type = TypeCheckType::Resolve (constant.get_type ());
+  context->push_const_context ();
   TyTy::BaseType *expr_type = TypeCheckExpr::Resolve (constant.get_expr ());
+  context->pop_const_context ();
 
   TyTy::BaseType *unified = unify_site (
     constant.get_mappings ().get_hirid (),
@@ -736,10 +815,9 @@ TypeCheckItem::resolve_impl_item (HIR::ImplBlock &impl_block,
   return TypeCheckImplItem::Resolve (impl_block, item, self, substitutions);
 }
 
-void
-TypeCheckItem::visit (HIR::Function &function)
+TyTy::FnType *
+TypeCheckItem::resolve_function_signature (HIR::Function &function)
 {
-  auto lifetime_pin = context->push_clean_lifetime_resolver ();
   std::vector<TyTy::SubstitutionParamMapping> substitutions;
   if (function.has_generics ())
     resolve_generic_params (HIR::Item::ItemKind::Function,
@@ -747,10 +825,8 @@ TypeCheckItem::visit (HIR::Function &function)
 			    function.get_generic_params (), substitutions);
 
   TyTy::RegionConstraints region_constraints;
-  for (auto &where_clause_item : function.get_where_clause ().get_items ())
-    {
-      ResolveWhereClauseItem::Resolve (*where_clause_item, region_constraints);
-    }
+  ResolveWhereClauseItem::Resolve (function.get_where_clause (),
+				   region_constraints);
 
   TyTy::BaseType *ret_type = nullptr;
   if (!function.has_function_return_type ())
@@ -759,7 +835,7 @@ TypeCheckItem::visit (HIR::Function &function)
     {
       auto resolved = TypeCheckType::Resolve (function.get_return_type ());
       if (resolved->get_kind () == TyTy::TypeKind::ERROR)
-	return;
+	return nullptr;
 
       ret_type = resolved->clone ();
       ret_type->set_ref (
@@ -797,8 +873,33 @@ TypeCheckItem::visit (HIR::Function &function)
 
   context->insert_type (function.get_mappings (), fn_type);
 
+  return fn_type;
+}
+
+void
+TypeCheckItem::visit (HIR::Function &function)
+{
+  auto lifetime_pin = context->push_clean_lifetime_resolver ();
+
+  TyTy::BaseType *resolved = nullptr;
+  TyTy::FnType *resolved_fn_type = nullptr;
+  if (context->lookup_type (function.get_mappings ().get_hirid (), &resolved))
+    {
+      if (resolved->get_kind () != TyTy::TypeKind::FNDEF)
+	return;
+      resolved_fn_type = static_cast<TyTy::FnType *> (resolved);
+    }
+  else
+    resolved_fn_type = resolve_function_signature (function);
+
+  if (resolved_fn_type == nullptr)
+    return;
+
+  // Mark the body as claimed before resolving it.  Recursive queries from the
+  // body must reuse the cached signature rather than re-entering this body.
+  context->clear_function_body_pending (resolved_fn_type->get_id ());
+
   // need to get the return type from this
-  TyTy::FnType *resolved_fn_type = fn_type;
   auto expected_ret_tyty = resolved_fn_type->get_return_type ();
   context->push_return_type (TypeCheckContextItem (&function),
 			     expected_ret_tyty);
@@ -808,7 +909,7 @@ TypeCheckItem::visit (HIR::Function &function)
 
   // emit check for
   // error[E0121]: the type placeholder `_` is not allowed within types on item
-  const auto placeholder = ret_type->contains_infer ();
+  const auto placeholder = expected_ret_tyty->contains_infer ();
   if (placeholder != nullptr && function.has_return_type ())
     {
       // FIXME
@@ -848,7 +949,7 @@ TypeCheckItem::visit (HIR::Function &function)
 
   context->pop_return_type ();
 
-  infered = fn_type;
+  infered = resolved_fn_type;
 }
 
 void
@@ -860,6 +961,12 @@ TypeCheckItem::visit (HIR::Module &module)
 
 void
 TypeCheckItem::visit (HIR::Trait &trait)
+{
+  infered = resolve_trait (trait, true);
+}
+
+TyTy::BaseType *
+TypeCheckItem::resolve_trait (HIR::Trait &trait, bool resolve_bodies)
 {
   auto lifetime_pin = context->push_clean_lifetime_resolver ();
 
@@ -885,11 +992,14 @@ TypeCheckItem::visit (HIR::Trait &trait)
   if (trait_ref->is_error ())
     {
       infered = new TyTy::ErrorType (trait.get_mappings ().get_hirid ());
-      return;
+      return infered;
     }
 
+  if (resolve_bodies)
+    trait_ref->resolve_default_function_bodies ();
+
   RustIdent ident{CanonicalPath::create_empty (), trait.get_locus ()};
-  infered = new TyTy::DynamicObjectType (
+  return new TyTy::DynamicObjectType (
     trait.get_mappings ().get_hirid (), ident,
     {TyTy::TypeBoundPredicate (*trait_ref, BoundPolarity::RegularBound,
 			       trait.get_locus ())});
@@ -933,10 +1043,8 @@ TypeCheckItem::resolve_impl_block_substitutions (HIR::ImplBlock &impl_block,
 			    impl_block.get_generic_params (), substitutions);
 
   TyTy::RegionConstraints region_constraints;
-  for (auto &where_clause_item : impl_block.get_where_clause ().get_items ())
-    {
-      ResolveWhereClauseItem::Resolve (*where_clause_item, region_constraints);
-    }
+  ResolveWhereClauseItem::Resolve (impl_block.get_where_clause (),
+				   region_constraints);
 
   auto specified_bound = TyTy::TypeBoundPredicate::error ();
   TraitReference *trait_reference = &TraitReference::error_node ();
@@ -966,7 +1074,7 @@ TypeCheckItem::resolve_impl_block_substitutions (HIR::ImplBlock &impl_block,
 
   // inherit the bounds
   if (!specified_bound.is_error ())
-    self->inherit_bounds ({specified_bound});
+    self->inherit_bound (specified_bound);
 
   // check for any unconstrained type-params
   const TyTy::SubstitutionArgumentMappings trait_constraints
@@ -984,6 +1092,117 @@ TyTy::BaseType *
 TypeCheckItem::resolve_impl_block_self (HIR::ImplBlock &impl_block)
 {
   return TypeCheckType::Resolve (impl_block.get_type ());
+}
+
+bool
+TypeCheckItem::validate_repr_simd (
+  const std::vector<TyTy::StructFieldType *> &fields, location_t locus)
+{
+  if (fields.empty ())
+    {
+      rust_error_at (locus, ErrorCode::E0075, "SIMD vector cannot be empty");
+      return false;
+    }
+
+  // in 1.49, repr simd assumes all fields are same type with its size
+  // being power-of-two.
+  //
+  // TODO update this typecheck to make repr simd take in a single field
+  // of an array instead when we move past 1.49. Relevant Rust github
+  // issues/PRs:
+  // - https://github.com/rust-lang/compiler-team/issues/621
+  // - https://github.com/rust-lang/rust/pull/78863 (implemented
+  //   for 1.50.0)
+
+  TyTy::BaseType *first_field_ty = fields.at (0)->get_field_type ();
+  TyTy::TypeKind ty_kind = first_field_ty->get_kind ();
+  bool fields_are_same_type = true;
+
+  switch (ty_kind)
+    {
+    case TyTy::TypeKind::INT:
+      {
+	auto int_ty = static_cast<TyTy::IntType *> (first_field_ty);
+	auto int_kind = int_ty->get_int_kind ();
+	for (const auto field : fields)
+	  {
+	    if (field->get_field_type ()->get_kind () != ty_kind)
+	      {
+		fields_are_same_type = false;
+		break;
+	      }
+	    auto field_int_ty
+	      = static_cast<TyTy::IntType *> (field->get_field_type ());
+	    if (field_int_ty->get_int_kind () != int_kind)
+	      {
+		fields_are_same_type = false;
+		break;
+	      }
+	  }
+	break;
+      }
+    case TyTy::TypeKind::UINT:
+      {
+	auto uint_ty = static_cast<TyTy::UintType *> (first_field_ty);
+	auto uint_kind = uint_ty->get_uint_kind ();
+	for (const auto field : fields)
+	  {
+	    if (field->get_field_type ()->get_kind () != ty_kind)
+	      {
+		fields_are_same_type = false;
+		break;
+	      }
+	    auto field_uint_ty
+	      = static_cast<TyTy::UintType *> (field->get_field_type ());
+	    if (field_uint_ty->get_uint_kind () != uint_kind)
+	      {
+		fields_are_same_type = false;
+		break;
+	      }
+	  }
+	break;
+      }
+    case TyTy::TypeKind::FLOAT:
+      {
+	auto float_ty = static_cast<TyTy::FloatType *> (first_field_ty);
+	auto float_kind = float_ty->get_float_kind ();
+	for (const auto field : fields)
+	  {
+	    if (field->get_field_type ()->get_kind () != ty_kind)
+	      {
+		fields_are_same_type = false;
+		break;
+	      }
+	    auto field_float_ty
+	      = static_cast<TyTy::FloatType *> (field->get_field_type ());
+	    if (field_float_ty->get_float_kind () != float_kind)
+	      {
+		fields_are_same_type = false;
+		break;
+	      }
+	  }
+	break;
+      }
+    default:
+      rust_error_at (locus, ErrorCode::E0077,
+		     "SIMD vector element type should be a primitive scalar");
+      return false;
+    }
+
+  if (!fields_are_same_type)
+    {
+      rust_error_at (locus, "SIMD struct fields should be of the same type");
+      return false;
+    }
+
+  // check whether field count is power of 2
+  size_t field_count = fields.size ();
+  if ((field_count & (field_count - 1)) != 0)
+    {
+      rust_error_at (locus, "Size of SIMD struct must be a power of 2");
+      return false;
+    }
+  return true;
 }
 
 } // namespace Resolver

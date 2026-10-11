@@ -2044,9 +2044,9 @@ expand_sloc (Node_Id gnat_node, tree *filename, tree *line, tree *col)
   *filename = build_string (len, str);
   TREE_TYPE (*filename) = build_array_type (char_type_node,
 					    build_index_type (size_int (len)));
-  *line = build_int_cst (NULL_TREE, line_number);
+  *line = build_int_cst (integer_type_node, line_number);
   if (col)
-    *col = build_int_cst (NULL_TREE, column_number);
+    *col = build_int_cst (integer_type_node, column_number);
 }
 
 /* Build a call to a function that raises an exception and passes file name

@@ -3683,7 +3683,7 @@ package body Sem_Ch4 is
             Analyze (N);
             return;
 
-         else
+         elsif Nkind (R) not in N_Raise_xxx_Error then
             --  In all versions of the language, if we reach this point there
             --  is a previous error that will be diagnosed below.
 
@@ -11440,10 +11440,6 @@ package body Sem_Ch4 is
       E  : Elmt_Id;
 
    begin
-      if not Is_Tagged_Type (T) then
-         return;
-      end if;
-
       E := First_Elmt (Primitive_Operations (Base_Type (T)));
       while Present (E) loop
          Op := Node (E);

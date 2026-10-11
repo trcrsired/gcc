@@ -87,6 +87,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "attribs.h" /* For lookup_attribute.  */
 #include "trans.h"
 #include "fold-const.h"
+#include "stor-layout.h" /* For min_align_of_type.  */
 #include "constructor.h"
 #include "trans-types.h"
 #include "trans-array.h"
@@ -458,7 +459,8 @@ gfc_add_ss_to_loop (gfc_loopinfo * loop, gfc_ss * head)
 }
 
 
-/* Returns true if the expression is an array pointer.  */
+/* Returns true if the expression is an array pointer.  The tree must be a
+   descriptor.  */
 
 static bool
 is_pointer_array (tree expr)
@@ -480,13 +482,134 @@ is_pointer_array (tree expr)
       && GFC_DECL_PTR_ARRAY_P (TREE_OPERAND (expr, 0)))
     return true;
 
-  /* The field declaration is marked as an pointer array.  */
+  /* The field declaration is marked as a pointer array.  */
   if (TREE_CODE (expr) == COMPONENT_REF
-      && GFC_DECL_PTR_ARRAY_P (TREE_OPERAND (expr, 1))
-      && !GFC_CLASS_TYPE_P (TREE_TYPE (TREE_OPERAND (expr, 1))))
+      && GFC_DECL_PTR_ARRAY_P (TREE_OPERAND (expr, 1)))
     return true;
 
   return false;
+}
+
+
+/* If the elements of the array are spaced by the span of its descriptor,
+   return the decl that provides that span, otherwise NULL_TREE.  This is
+   either a descriptor or the local decl of a descriptorless dummy array,
+   which keeps the descriptor it was built from as the saved one.  */
+
+static bool
+is_span_addressed_array (tree expr)
+{
+  if (is_pointer_array (expr))
+    {
+      /* For classes, index arrays using the size from the virtual pointer if
+	 the array is contiguous.  Otherwise use the span.  */
+      if (TREE_CODE (expr) == COMPONENT_REF
+	  && GFC_CLASS_TYPE_P (TREE_TYPE (TREE_OPERAND (expr, 0)))
+	  && TYPE_LANG_SPECIFIC (TREE_TYPE (expr)))
+	{
+	  switch (GFC_TYPE_ARRAY_AKIND (TREE_TYPE (expr)))
+	    {
+	    case GFC_ARRAY_ASSUMED_SHAPE_CONT:
+	    case GFC_ARRAY_ASSUMED_RANK_CONT:
+	    case GFC_ARRAY_ASSUMED_RANK_ALLOCATABLE:
+	    case GFC_ARRAY_ASSUMED_RANK_POINTER_CONT:
+	    case GFC_ARRAY_ALLOCATABLE:
+	    case GFC_ARRAY_POINTER_CONT:
+	      return false;
+
+	    default:
+	      break;
+	    }
+	}
+
+      return true;
+    }
+
+  if (VAR_P (expr)
+      && GFC_DECL_PTR_ARRAY_P (expr)
+      && !GFC_DECL_CLASS (expr)
+      && GFC_ARRAY_TYPE_P (TREE_TYPE (expr))
+      && DECL_LANG_SPECIFIC (expr)
+      && GFC_DECL_SAVED_DESCRIPTOR (expr))
+    return true;
+
+  return false;
+}
+
+
+/* Return true if the spacing of the elements of a directly passed actual
+   argument can be folded into the strides of the dummy's descriptor, so
+   that the elements are addressed by a constant element length instead of
+   by the span.  */
+
+bool
+gfc_span_folds_into_stride (gfc_symbol *sym)
+{
+  if (!gfc_dummy_requires_direct_arg (sym))
+    return false;
+
+  /* A character element length is not necessarily constant and a complex or
+     derived type can be larger than its alignment.  */
+  if (sym->ts.type != BT_INTEGER
+      && sym->ts.type != BT_REAL
+      && sym->ts.type != BT_LOGICAL)
+    return false;
+
+  /* An assumed rank dummy has no strides to fold the spacing into.  */
+  if (!sym->as || sym->as->type != AS_ASSUMED_SHAPE || sym->as->rank < 1)
+    return false;
+
+  tree etype = gfc_typenode_for_spec (&sym->ts);
+  tree size = etype ? TYPE_SIZE_UNIT (etype) : NULL_TREE;
+
+  return (size
+	  && tree_fits_uhwi_p (size)
+	  && tree_to_uhwi (size) == min_align_of_type (etype));
+}
+
+
+/* Check if a dummy argument must be addressed using the span of its
+   descriptor.  Where the spacing of the elements is folded into the strides
+   instead, the dummy is addressed like any other array and its descriptor is
+   built with the element length as span, so it is not span addressed.  */
+
+bool
+gfc_is_span_addressed_dummy (gfc_symbol *sym)
+{
+  return gfc_dummy_requires_direct_arg (sym)
+	 && !gfc_span_folds_into_stride (sym);
+}
+
+
+/* Set se->expr to a test that the span of the descriptor of ARG is the
+   element length, ie. that its elements are not subobjects of larger
+   ones.  */
+
+void
+gfc_conv_span_is_elem_len (gfc_se *se, gfc_expr *arg)
+{
+  gfc_se argse;
+  gfc_ss *ss;
+
+  if (arg->ts.type == BT_CLASS)
+    gfc_add_class_array_ref (arg);
+
+  ss = gfc_walk_expr (arg);
+  gcc_assert (ss != gfc_ss_terminator);
+
+  gfc_init_se (&argse, NULL);
+  argse.data_not_needed = 1;
+  gfc_conv_expr_descriptor (&argse, arg);
+  gfc_add_block_to_block (&se->pre, &argse.pre);
+  gfc_add_block_to_block (&se->post, &argse.post);
+  gfc_free_ss_chain (ss);
+
+  tree desc = gfc_evaluate_now (argse.expr, &se->pre);
+  tree span = gfc_conv_descriptor_span_get (desc);
+  tree elem_len = fold_convert (TREE_TYPE (span),
+				gfc_conv_descriptor_elem_len_get (desc));
+  se->expr = fold_build2_loc (input_location, EQ_EXPR, boolean_type_node,
+			      span, elem_len);
 }
 
 
@@ -554,18 +677,16 @@ gfc_get_array_span (tree desc, gfc_expr *expr)
   gfc_symbol *sym = (expr && expr->expr_type == EXPR_VARIABLE) ?
 		    expr->symtree->n.sym : NULL;
 
-  if (is_pointer_array (desc)
-      || (get_CFI_desc (NULL, expr, &desc, NULL)
-	  && (POINTER_TYPE_P (TREE_TYPE (desc))
-	      ? GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (TREE_TYPE (desc)))
-	      : GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (desc)))))
-    {
-      if (POINTER_TYPE_P (TREE_TYPE (desc)))
-	desc = build_fold_indirect_ref_loc (input_location, desc);
-
-      /* This will have the span field set.  */
-      tmp = gfc_conv_descriptor_span_get (desc);
-    }
+  if (tree span = GFC_DECL_GET_SPAN (desc))
+    /* A span addressed dummy loaded its span on entry.  */
+    tmp = span;
+  else if (is_span_addressed_array (desc)
+	   || (get_CFI_desc (NULL, expr, &desc, NULL)
+	       && (POINTER_TYPE_P (TREE_TYPE (desc))
+		   ? GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (TREE_TYPE (desc)))
+		   : GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (desc)))))
+    /* This will have the span field set.  */
+    tmp = gfc_conv_descriptor_span_get (gfc_get_span_descriptor (desc));
   else if (expr->ts.type == BT_ASSUMED)
     {
       if (DECL_LANG_SPECIFIC (desc) && GFC_DECL_SAVED_DESCRIPTOR (desc))
@@ -3964,9 +4085,10 @@ gfc_conv_scalarized_array_ref (gfc_se * se, gfc_array_ref * ar,
   /* A pointer array component can be detected from its field decl. Fix
      the descriptor, mark the resulting variable decl and pass it to
      gfc_build_array_ref.  */
-  if (is_pointer_array (info->descriptor)
-      || (expr && expr->ts.deferred && info->descriptor
-	  && GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (info->descriptor))))
+  if (is_span_addressed_array (info->descriptor)
+      || (expr && ((expr->ts.deferred && info->descriptor
+		    && GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (info->descriptor)))
+		   || (expr && gfc_expr_attr (expr).pdt_string))))
     {
       if (TREE_CODE (info->descriptor) == COMPONENT_REF)
 	decl = info->descriptor;
@@ -4050,6 +4172,10 @@ build_array_ref (tree desc, tree offset, tree decl, tree vptr)
 	    decl = TREE_OPERAND (cdesc, 0);
 	}
     }
+
+  if (decl == NULL_TREE
+      && is_span_addressed_array (desc))
+    decl = desc;
 
   tmp = gfc_conv_array_data (desc);
   tmp = build_fold_indirect_ref_loc (input_location, tmp);
@@ -4217,27 +4343,23 @@ gfc_conv_array_ref (gfc_se * se, gfc_array_ref * ar, gfc_expr *expr,
   if (get_CFI_desc (sym, expr, &decl, ar))
     decl = build_fold_indirect_ref_loc (input_location, decl);
   if (!expr->ts.deferred && !sym->attr.codimension
-      && is_pointer_array (se->expr))
+      && is_span_addressed_array (se->expr))
     {
-      if (TREE_CODE (se->expr) == COMPONENT_REF)
-	decl = se->expr;
-      else if (INDIRECT_REF_P (se->expr))
+      if (INDIRECT_REF_P (se->expr))
 	decl = TREE_OPERAND (se->expr, 0);
       else
 	decl = se->expr;
     }
   else if (expr->ts.deferred
 	   || (sym->ts.type == BT_CHARACTER
-	       && sym->attr.select_type_temporary))
+	       && sym->attr.select_type_temporary)
+	   || (expr->ts.type == BT_CHARACTER
+	       && GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (se->expr))
+	       && gfc_expr_attr (expr).pdt_string))
     {
-      if (GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (se->expr)))
-	{
-	  decl = se->expr;
-	  if (INDIRECT_REF_P (decl))
-	    decl = TREE_OPERAND (decl, 0);
-	}
-      else
-	decl = sym->backend_decl;
+      decl = se->expr;
+      if (INDIRECT_REF_P (decl))
+	decl = TREE_OPERAND (decl, 0);
     }
   else if (sym->ts.type == BT_CLASS)
     {
@@ -7503,6 +7625,49 @@ gfc_trans_dummy_array_bias (gfc_symbol * sym, tree tmpdesc,
   if (VAR_P (GFC_TYPE_ARRAY_OFFSET (type)))
     gfc_add_modify (&init, GFC_TYPE_ARRAY_OFFSET (type), offset);
 
+  /* Fold the element spacing of the actual argument into the strides and the
+     offset, so that the elements are addressed by the constant element length
+     rather than by a span loaded from the descriptor.  */
+  if (DECL_LANG_SPECIFIC (tmpdesc) && GFC_DECL_SPAN_NORMALIZED (tmpdesc))
+    {
+      tree element = fold_convert (gfc_array_index_type,
+				   TYPE_SIZE_UNIT (gfc_get_element_type (type)));
+      tree span = gfc_evaluate_now (gfc_conv_descriptor_span_get (dumdesc),
+				    &init);
+      tree unit = fold_build2_loc (input_location, EQ_EXPR, logical_type_node,
+				   span, element);
+      tree factor = fold_build2_loc (input_location, TRUNC_DIV_EXPR,
+				     gfc_array_index_type, span, element);
+      factor = gfc_evaluate_now (factor, &init);
+
+      auto scale = [&] (tree var)
+	{
+	  tree scaled = fold_build2_loc (input_location, MULT_EXPR,
+					 gfc_array_index_type, var, factor);
+	  scaled = fold_build3_loc (input_location, COND_EXPR,
+				    gfc_array_index_type, unit, var, scaled);
+	  gfc_add_modify (&init, var, scaled);
+	};
+
+      /* A span addressed dummy is never repacked, so its strides and its
+	 offset are all variables loaded from the descriptor.  */
+      for (n = 0; n < as->rank; n++)
+	{
+	  gcc_assert (VAR_P (GFC_TYPE_ARRAY_STRIDE (type, n)));
+	  scale (GFC_TYPE_ARRAY_STRIDE (type, n));
+	}
+
+      gcc_assert (VAR_P (GFC_TYPE_ARRAY_OFFSET (type)));
+      scale (GFC_TYPE_ARRAY_OFFSET (type));
+    }
+
+  /* Load the span once here, like the bounds above, so that element
+     addressing does not reload it from the descriptor.  The descriptor
+     itself is not available in an outlined region, such as an OpenMP
+     target region, whereas this local variable is.  */
+  if (tree span = GFC_DECL_GET_SPAN (tmpdesc))
+    gfc_add_modify (&init, span, gfc_conv_descriptor_span_get (dumdesc));
+
   gfc_trans_vla_type_sizes (sym, &init);
 
   stmtInit = gfc_finish_block (&init);
@@ -7595,6 +7760,8 @@ gfc_get_dataptr_offset (stmtblock_t *block, tree parm, tree desc, tree offset,
 	return;
     }
 
+  /* An array whose elements are spaced by the span needs pointer arithmetic
+     to reference an element.  */
   tmp = build_array_ref (desc, offset, NULL, NULL);
 
   /* Offset the data pointer for pointer assignments from arrays with
@@ -8058,6 +8225,7 @@ gfc_conv_expr_descriptor (gfc_se *se, gfc_expr *expr)
 
       subref_array_target = (is_subref_array (expr)
 			     && (se->direct_byref
+				 || se->force_no_tmp
 				 || expr->ts.type == BT_CHARACTER));
       need_tmp = (gfc_ref_needs_temporary_p (expr->ref)
 		  && !subref_array_target);
@@ -8086,6 +8254,13 @@ gfc_conv_expr_descriptor (gfc_se *se, gfc_expr *expr)
 	full = 0;
       else
 	full = gfc_full_array_ref_p (info->ref, NULL);
+
+      /* A subobject of the array elements is described by a new descriptor,
+	 whose element type is that of the subobject and whose span is the
+	 element size of the array.  */
+      if (subref_array_target && !se->direct_byref
+	  && info->ref && info->ref->next)
+	full = 0;
 
       if (full && !transposed_dims (ss))
 	{
@@ -8408,8 +8583,10 @@ gfc_conv_expr_descriptor (gfc_se *se, gfc_expr *expr)
 	}
       else
 	{
-	  /* Otherwise make a new one.  */
-	  if (expr->ts.type == BT_CHARACTER)
+	  /* Otherwise make a new one.  The element type is that of the
+	     subobject for a subreference of the array.  */
+	  if (expr->ts.type == BT_CHARACTER
+	      || (subref_array_target && !se->direct_byref))
 	    parmtype = gfc_typenode_for_spec (&expr->ts);
 	  else
 	    parmtype = gfc_get_element_type (TREE_TYPE (desc));
@@ -10120,6 +10297,7 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
       bool inside_wrapper = generating_copy_helper;
 
       bool is_pdt_type = IS_PDT (c);
+      tree strlen = NULL_TREE;
 
       cdecl = c->backend_decl;
       ctype = TREE_TYPE (cdecl);
@@ -10543,7 +10721,7 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 	      else
 		gfc_add_modify (&fnblock, comp,
 				build_int_cst (TREE_TYPE (comp), 0));
-	      if (gfc_deferred_strlen (c, &comp))
+	      if (!c->attr.pdt_string && gfc_deferred_strlen (c, &comp))
 		{
 		  comp = fold_build3_loc (input_location, COMPONENT_REF,
 					  TREE_TYPE (comp),
@@ -10796,7 +10974,7 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 	 runtime helpers to avoid compile-time infinite recursion.  Generate
 	 a call to _gfortran_cfi_deep_copy_array with an element copy
 	 wrapper.  When inside a wrapper, reuse current_function_decl.  */
-      else if (c->attr.allocatable && c->as && cmp_has_alloc_comps && same_type
+      else if (c->attr.allocatable && cmp_has_alloc_comps && same_type
 	       && purpose == COPY_ALLOC_COMP && !c->attr.proc_pointer
 	       && !c->attr.codimension && !caf_in_coarray (caf_mode)
 	       && c->ts.type == BT_DERIVED && c->ts.u.derived != NULL)
@@ -10814,6 +10992,8 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 		elem_type = gfc_get_element_type (ctype);
 	      else if (TREE_CODE (ctype) == ARRAY_TYPE)
 		elem_type = TREE_TYPE (ctype);
+	      else if (!c->as)
+		elem_type = TREE_TYPE (TREE_TYPE (comp));
 
 	      helper_ptr_type = get_copy_helper_pointer_type ();
 
@@ -10834,16 +11014,31 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 						   purpose, caf_mode);
 	      copy_wrapper = fold_convert (helper_ptr_type, copy_wrapper);
 
-	      /* Build addresses of descriptors.  */
-	      dest_addr = gfc_build_addr_expr (pvoid_type_node, dcmp);
-	      src_addr = gfc_build_addr_expr (pvoid_type_node, comp);
+	      if (c->as)
+		{
+		  /* Build addresses of descriptors.  */
+		  dest_addr = gfc_build_addr_expr (pvoid_type_node, dcmp);
+		  src_addr = gfc_build_addr_expr (pvoid_type_node, comp);
+		}
+	      else
+		{
+		  /* For scalars, create separate descriptors for source and
+		     dest, then pass their addresses.  */
+		  gfc_se se;
+		  gfc_init_se (&se, NULL);
+		  tmp = gfc_conv_scalar_to_descriptor (&se, dcmp, c->attr);
+		  dest_addr = gfc_build_addr_expr (pvoid_type_node, tmp);
+		  tmp = gfc_conv_scalar_to_descriptor (&se, comp, c->attr);
+		  src_addr = gfc_build_addr_expr (pvoid_type_node, tmp);
+		  gfc_add_block_to_block (&fnblock, &se.pre);
+		}
 
-	      /* Build call: _gfortran_cfi_deep_copy_array (&dcmp, &comp,
-		 wrapper).  */
+	      /* Build call: _gfortran_cfi_deep_copy_array (&dcmp, &comp, wrapper).  */
 	      call = build_call_expr_loc (input_location,
 					  gfor_fndecl_cfi_deep_copy_array, 3,
 					  dest_addr, src_addr,
 					  copy_wrapper);
+
 	      gfc_add_expr_to_block (&fnblock, call);
 	    }
 	  /* For allocatable arrays with nested allocatable components,
@@ -10933,7 +11128,6 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 	    {
 	      gfc_se tse;
 	      gfc_init_se (&tse, NULL);
-	      tree strlen = NULL_TREE;
 	      gfc_expr *e = gfc_copy_expr (c->ts.u.cl->length);
 	      /* Convert the parameterized string length to its value. The
 		 string length is stored in a hidden field in the same way as
@@ -10972,7 +11166,9 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 	  if (c->ts.type == BT_CLASS)
 	    comp = gfc_class_data_get (comp);
 
-	  if (c->attr.pdt_array)
+	  if (c->attr.pdt_array
+	      || (c->attr.pdt_string
+		  && GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (comp))))
 	    {
 	      gfc_se tse;
 	      int i;
@@ -11035,6 +11231,8 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 		    tmp = build_fold_indirect_ref_loc (input_location, tmp);
 		  tmp = gfc_vptr_size_get (tmp);
 		}
+	      else if (strlen != NULL_TREE)
+		tmp = strlen;
 	      else
 		tmp = TYPE_SIZE_UNIT (gfc_get_element_type (ctype));
 	      tmp = fold_convert (gfc_array_index_type, tmp);
@@ -11045,6 +11243,12 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 	      gfc_conv_descriptor_data_set (&fnblock, comp, tmp);
 	      gfc_conv_descriptor_dtype_set (&fnblock, comp,
 					     gfc_get_dtype (ctype));
+	      if (strlen != NULL_TREE)
+		{
+		  tmp = gfc_conv_descriptor_elem_len_get (comp);
+		  gfc_add_modify (&fnblock, tmp, fold_convert (TREE_TYPE (tmp), strlen));
+		  gfc_conv_descriptor_span_set (&fnblock, comp, strlen);
+		}
 
 	      if (c->initializer && c->initializer->rank)
 		{
@@ -11107,7 +11311,7 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 	  if (c->attr.pdt_array || c->attr.pdt_string)
 	    {
 	      tmp = comp;
-	      if (c->attr.pdt_array)
+	      if (GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (comp)))
 		tmp = gfc_conv_descriptor_data_get (comp);
 	      null_cond = fold_build2_loc (input_location, NE_EXPR,
 					   logical_type_node, tmp,
@@ -11143,7 +11347,7 @@ structure_alloc_comps (gfc_symbol * der_type, tree decl, tree dest,
 			      build_empty_stmt (input_location));
 	      gfc_add_expr_to_block (&fnblock, tmp);
 
-	      if (c->attr.pdt_array)
+	      if (GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (comp)))
 		gfc_conv_descriptor_data_set (&fnblock, comp, null_pointer_node);
 	      else
 		{
@@ -12455,34 +12659,22 @@ gfc_trans_deferred_array (gfc_symbol * sym, gfc_wrapped_block * block)
 
   /* NULLIFY the data pointer for non-saved allocatables, or for non-saved
      pointers when -fcheck=pointer is specified.  */
-  if (GFC_DESCRIPTOR_TYPE_P (type) && !sym->attr.save
-      && (sym->attr.allocatable
-	  || (sym->attr.pointer && (gfc_option.rtcheck & GFC_RTCHECK_POINTER))))
+  if (GFC_DESCRIPTOR_TYPE_P (type)
+      && (sym->attr.allocatable || sym->attr.pointer))
     {
-      gfc_conv_descriptor_data_set (&init, descriptor, null_pointer_node);
-      if (flag_coarray == GFC_FCOARRAY_LIB && sym->attr.codimension)
+      if (flag_coarray == GFC_FCOARRAY_LIB
+	  && sym->attr.codimension
+	  && !sym->attr.save)
 	{
 	  /* Declare the variable static so its array descriptor stays present
 	     after leaving the scope.  It may still be accessed through another
 	     image.  This may happen, for example, with the caf_mpi
 	     implementation.  */
 	  TREE_STATIC (descriptor) = 1;
-	  gfc_conv_descriptor_token_set (&init, descriptor, null_pointer_node);
 	}
+      gfc_init_descriptor_variable (&init, sym, descriptor);
     }
 
-  /* Set initial TKR for pointers and allocatables */
-  if (GFC_DESCRIPTOR_TYPE_P (type)
-      && (sym->attr.pointer || sym->attr.allocatable))
-    {
-      tree etype;
-
-      gcc_assert (sym->as && sym->as->rank>=0);
-      etype = gfc_get_element_type (type);
-      gfc_conv_descriptor_dtype_set (&init, descriptor,
-				     gfc_get_dtype_rank_type (sym->as->rank,
-							      etype));
-    }
   input_location = loc;
   gfc_init_block (&cleanup);
 

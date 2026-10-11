@@ -835,6 +835,7 @@ proc v3-build_support { } {
     # Build the support objects.
     set source_files [list testsuite_abi.cc testsuite_allocator.cc \
 			  testsuite_character.cc testsuite_hooks.cc \
+			  testsuite_semaphore.cc \
 			  io/verified_cmd_line_input.cc \
 			  io/prog_bar.cc performance/time/elapsed_timer.cc ]
     foreach f $source_files {
@@ -844,7 +845,7 @@ proc v3-build_support { } {
 	# do not prevent compilation.
 	# Disable LTO so that ar/ranlib don't need the LTO plugin.
 	if { [v3_target_compile $srcdir/util/$f $object_file "object" \
-		  [list "incdir=$srcdir" "additional_flags=-w -fno-lto -fno-freestanding"]]
+		  [list "additional_flags=-w -fno-lto -fno-freestanding"]]
 	     != "" } {
 	    error "could not compile $f"
 	}
@@ -883,7 +884,7 @@ proc v3-build_support { } {
 	    # Compile with "-w" so that warnings issued by the compiler
 	    # do not prevent compilation.
 	    if { [v3_target_compile $srcdir/util/$f $object_file "sharedlib" \
-	     [list "incdir=$srcdir" "additional_flags=-fno-inline -w -shared -fPIC -DPIC -std=gnu++98 -fno-freestanding"]]
+	     [list "additional_flags=-fno-inline -w -shared -fPIC -DPIC -std=gnu++98 -fno-freestanding"]]
 		 != "" } {
 		error "could not compile $f"
 	    }
@@ -1175,18 +1176,18 @@ proc v3_check_preprocessor_condition { name cond { inc "" } } {
 	"
     set flags "$cxxflags $DEFAULT_CXXFLAGS -Werror"
 
-    return [v3_try_preprocess name $code $flags]
+    return [v3_try_preprocess $name $code $flags]
 }
 
 # Return 1 if libstdc++ defines macro for the current target, 0 otherwise.
 proc check_v3_target_cpp_feature_test { cond } {
+    global v3_max_std
     global cxxflags
     set cxxflags_saved $cxxflags
     # Use the latest standard, so that all feature test macros are defined.
     # We need to do it here, because this check happens before v3-dg-runtest
     # runs its loop to test multiple times with different -std options.
-    # This should be updated when a new -std is added.
-    set cxxflags "$cxxflags -std=gnu++26"
+    set cxxflags "$cxxflags -std=gnu++$v3_max_std"
     set inc "#include <version>"
     set result [v3_check_preprocessor_condition cpp_feature_test "$cond" $inc]
     set cxxflags $cxxflags_saved
@@ -1438,6 +1439,16 @@ proc check_v3_target_nprocs { } {
 	set cond "$cond || defined _GLIBCXX_USE_SC_NPROC_ONLN"
 	return [v3_check_preprocessor_condition nprocs $cond]
     }]
+}
+
+# Return 1 if the POSIX Semaphores option or the XSI option is supported
+# for the current target, 0 otherwise.
+proc check_v3_target_posix_or_sysv_semaphore { } {
+    set name "posix_or_sysv_semaphore"
+    set inc "#include <unistd.h>"
+    set cond "_POSIX_SEMAPHORES > 0 || _XOPEN_UNIX > 0"
+    set result [v3_check_preprocessor_condition $name $cond $inc]
+    return $result
 }
 
 # Return 1 if linking with -static-libstdc++ works, 0 otherwise.

@@ -577,7 +577,7 @@ build_ivar_list_initializer (tree type, tree field_decl)
 	else
 	  /* Unnamed bit-field ivar (yuck).  */
 	  CONSTRUCTOR_APPEND_ELT (ivar, fields,
-				  build_int_cst (NULL_TREE, 0));
+				  build_int_cst (integer_type_node, 0));
 
 	/* Set type.  */
 	fields = next_type_field (fields);

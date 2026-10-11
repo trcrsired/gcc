@@ -97,6 +97,11 @@
   (and (match_code "reg")
        (match_test "MASK_REGNO_P (REGNO (op))")))
 
+;; Return true if op is the block scale register.
+(define_special_predicate "bsr0_operand"
+  (and (match_code "reg")
+       (match_test "REGNO (op) == BSR0_REG")))
+
 ;; Match a DI, SI or HImode register operand.
 (define_special_predicate "int248_register_operand"
   (and (match_operand 0 "register_operand")
@@ -1563,6 +1568,17 @@
        (and (match_test "TARGET_AVX")
 	    (match_code "ge,gt,uneq,unle,unlt,ltgt"))))
 
+;; SSE2 doesn't have quiet vector compare for UNLT/UNLE/UNGT/UNGE, so reject
+;; them in the packed FP vec_cmp expanders when trapping math is in effect
+;; and NaNs are honored
+
+(define_predicate "ix86_fp_vec_cmp_operator"
+  (and (match_operand 0 "comparison_operator")
+       (ior (not (match_code "unlt,unle,ungt,unge"))
+	    (match_test "TARGET_AVX")
+	    (not (match_test "flag_trapping_math"))
+	    (not (match_test "HONOR_NANS (GET_MODE (XEXP (op, 0)))")))))
+
 (define_predicate "ix86_comparison_int_operator"
   (match_code "ne,eq,ge,gt,le,lt"))
 
@@ -2040,6 +2056,30 @@
     return false;
 
   return true;
+})
+
+;; Return true if OP is a parallel for an insertps vec_select,
+;; where one of the two operands of the vec_concat is const0_operand.
+(define_predicate "insertps_parallel"
+  (and (match_code "parallel")
+       (match_code "const_int" "a"))
+{
+  int i;
+
+  if (XVECLEN (op, 0) != 4)
+    return false;
+
+  /* One element in [0..3], and the other 3 in [4..7].  */
+  bool found = false;
+  for (i = 0; i < 4; ++i)
+    if (INTVAL (XVECEXP (op, 0, i)) < 4)
+      {
+	if (found)
+	  return false;
+	found = true;
+      }
+
+  return found;
 })
 
 ;; Return true if OP is a const vector with duplicate value.

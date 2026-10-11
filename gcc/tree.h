@@ -1005,7 +1005,7 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
 
 /* True if an overflow is to be preserved for sanitization.  */
 #define TYPE_OVERFLOW_SANITIZED(TYPE)			\
-  (INTEGRAL_TYPE_P (TYPE)				\
+  (ANY_INTEGRAL_TYPE_P (TYPE)				\
    && !TYPE_OVERFLOW_WRAPS (TYPE)			\
    && (flag_sanitize & SANITIZE_SI_OVERFLOW))
 
@@ -2162,6 +2162,12 @@ class auto_suppress_location_wrappers
 
 #define OMP_CLAUSE_SIMDLEN_EXPR(NODE) \
   OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_SIMDLEN), 0)
+
+#define OMP_CLAUSE_SIMDLEN_TYPE(NODE) \
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_SIMDLEN), 1)
+
+#define OMP_CLAUSE_SIMDLEN_DIVISOR(NODE) \
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_SIMDLEN), 2)
 
 #define OMP_CLAUSE__SIMDUID__DECL(NODE) \
   OMP_CLAUSE_OPERAND (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE__SIMDUID_), 0)
@@ -5411,6 +5417,11 @@ extern tree ssa_uniform_vector_p (tree);
 
 extern tree uniform_integer_cst_p (tree);
 
+/* Return the uniform difference between two INTEGER_CSTs or corresponding
+   elements of two VECTOR_CSTs or NULL_TREE if no such difference exists.  */
+
+extern tree uniform_vector_difference_p (const_tree, const_tree);
+
 extern int single_nonzero_element (const_tree);
 
 /* Given a CONSTRUCTOR CTOR, return the element values as a vector.  */
@@ -5688,6 +5699,9 @@ extern tree decl_type_context (const_tree);
 /* Return true if EXPR is the real constant zero.  */
 extern bool real_zerop (const_tree);
 
+/* Return true if EXPR is the real constant negative zero.  */
+extern bool real_negzerop (const_tree);
+
 /* Initialize the iterator I with arguments from function FNDECL  */
 
 inline void
@@ -5784,6 +5798,7 @@ extern bool auto_var_p (const_tree);
 extern bool auto_var_in_fn_p (const_tree, const_tree);
 extern tree build_low_bits_mask (tree, unsigned);
 extern bool tree_nop_conversion_p (const_tree, const_tree);
+extern bool vector_nop_conversion_p (const_tree, const_tree);
 extern tree tree_strip_nop_conversions (tree);
 extern tree tree_strip_sign_nop_conversions (tree);
 extern const_tree strip_invariant_refs (const_tree);

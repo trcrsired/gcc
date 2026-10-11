@@ -95,7 +95,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-dfa.h"
 #include "gdb/gdb-index.h"
 #include "rtl-iter.h"
-#include "stringpool.h"
 #include "attribs.h"
 #include "file-prefix-map.h" /* remap_debug_filename()  */
 
@@ -23180,8 +23179,7 @@ gen_descr_array_type_die (tree type, struct array_descr_info *info,
 
   gen_type_die (info->element_type, context_die);
   add_type_attribute (array_die, info->element_type, TYPE_UNQUALIFIED,
-		      TREE_CODE (type) == ARRAY_TYPE
-		      && TYPE_REVERSE_STORAGE_ORDER (type),
+		      info->reverse_storage_order,
 		      context_die);
 
   if (get_AT (array_die, DW_AT_name))

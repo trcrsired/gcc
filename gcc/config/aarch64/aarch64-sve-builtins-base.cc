@@ -72,6 +72,18 @@ is_undef (tree val)
   return false;
 }
 
+/* Emit the notional FFR update for an LDFF1 or LDNF1 instruction.
+   Use the load expression rather than the load result, so that later RTL
+   optimizers can still treat the load result as single-use.  */
+static void
+emit_ldf1_ffr_update (rtx_insn *load_insn)
+{
+  rtx set = single_set (load_insn);
+  gcc_assert (set && GET_CODE (SET_SRC (set)) == UNSPEC);
+  emit_insn (gen_aarch64_update_ffr (GET_MODE (SET_SRC (set)),
+				       copy_rtx (SET_SRC (set))));
+}
+
 /* Return the UNSPEC_CMLA* unspec for rotation amount ROT.  */
 static unspec
 unspec_cmla (int rot)
@@ -345,6 +357,26 @@ class svbrk_unary_impl : public function_base
 {
 public:
   constexpr svbrk_unary_impl (unspec unspec) : m_unspec (unspec) {}
+
+  gimple *
+  fold (gimple_folder &f) const override
+  {
+    tree pg = f.gp_value (f.call);
+    if ((f.pred == PRED_z || f.pred == PRED_m)
+	&& is_ptrue (pg, f.type_suffix (0).element_bytes))
+      {
+	tree pn = gimple_call_arg (f.call, f.gp_index + 1);
+	if (is_pfalse (pn))
+	  return f.fold_to_ptrue ();
+	if (is_ptrue (pn, f.type_suffix (0).element_bytes))
+	  {
+	    if (m_unspec == UNSPEC_BRKA)
+	      return f.fold_to_vl_pred (1);
+	    return f.fold_to_pfalse ();
+	  }
+      }
+    return nullptr;
+  }
 
   rtx
   expand (function_expander &e) const override
@@ -1704,23 +1736,7 @@ public:
   gimple *
   fold (gimple_folder &f) const override
   {
-    if (f.vectors_per_tuple () != 1)
-      return nullptr;
-
-    tree vectype = f.vector_type (0);
-
-    /* Get the predicate and base pointer.  */
-    gimple_seq stmts = NULL;
-    tree pred = f.convert_pred (stmts, vectype, 0);
-    tree base = f.fold_contiguous_base (stmts, vectype);
-    tree els = build_zero_cst (vectype);
-    gsi_insert_seq_before (f.gsi, stmts, GSI_SAME_STMT);
-
-    tree cookie = f.load_store_cookie (TREE_TYPE (vectype));
-    gcall *new_call = gimple_build_call_internal (IFN_MASK_LOAD, 4,
-						  base, cookie, pred, els);
-    gimple_call_set_lhs (new_call, f.lhs);
-    return new_call;
+    return f.fold_contiguous_load (IFN_MASK_LOAD);
   }
 
   rtx
@@ -1999,16 +2015,18 @@ public:
   rtx
   expand (function_expander &e) const override
   {
-    /* See the block comment in aarch64-sve.md for details about the
-       FFR handling.  */
-    emit_insn (gen_aarch64_update_ffr_for_load ());
-
     e.prepare_gather_address_operands (1);
     /* Put the predicate last, since ldff1_gather uses the same operand
        order as mask_gather_load_optab.  */
     e.rotate_inputs_left (0, 5);
     machine_mode mem_mode = e.memory_vector_mode ();
-    return e.use_exact_insn (code_for_aarch64_ldff1_gather (mem_mode));
+    rtx res = e.use_exact_insn (code_for_aarch64_ldff1_gather (mem_mode));
+
+    /* See the block comment in aarch64-sve.md for details about the
+       FFR handling.  */
+    emit_ldf1_ffr_update (get_last_insn ());
+
+    return res;
   }
 };
 
@@ -2021,10 +2039,6 @@ public:
   rtx
   expand (function_expander &e) const override
   {
-    /* See the block comment in aarch64-sve.md for details about the
-       FFR handling.  */
-    emit_insn (gen_aarch64_update_ffr_for_load ());
-
     e.prepare_gather_address_operands (1);
     /* Put the predicate last, since ldff1_gather uses the same operand
        order as mask_gather_load_optab.  */
@@ -2034,7 +2048,11 @@ public:
     insn_code icode = code_for_aarch64_ldff1_gather (extend_rtx_code (),
 						     e.vector_mode (0),
 						     e.memory_vector_mode ());
-    return e.use_exact_insn (icode);
+    rtx res = e.use_exact_insn (icode);
+    /* See the block comment in aarch64-sve.md for details about the
+       FFR handling.  */
+    emit_ldf1_ffr_update (get_last_insn ());
+    return res;
   }
 };
 
@@ -2073,12 +2091,13 @@ public:
   rtx
   expand (function_expander &e) const override
   {
+    machine_mode mode = e.vector_mode (0);
+    insn_code icode = code_for_aarch64_ldf1 (m_unspec, mode);
+    rtx res = e.use_contiguous_load_insn (icode);
     /* See the block comment in aarch64-sve.md for details about the
        FFR handling.  */
-    emit_insn (gen_aarch64_update_ffr_for_load ());
-
-    machine_mode mode = e.vector_mode (0);
-    return e.use_contiguous_load_insn (code_for_aarch64_ldf1 (m_unspec, mode));
+    emit_ldf1_ffr_update (get_last_insn ());
+    return res;
   }
 
   /* The unspec associated with the load.  */
@@ -2101,14 +2120,15 @@ public:
   rtx
   expand (function_expander &e) const override
   {
-    /* See the block comment in aarch64-sve.md for details about the
-       FFR handling.  */
-    emit_insn (gen_aarch64_update_ffr_for_load ());
+    machine_mode mode = e.vector_mode (0);
 
     insn_code icode = code_for_aarch64_ldf1 (m_unspec, extend_rtx_code (),
-					     e.vector_mode (0),
-					     e.memory_vector_mode ());
-    return e.use_contiguous_load_insn (icode);
+					     mode, e.memory_vector_mode ());
+    rtx res = e.use_contiguous_load_insn (icode, true);
+    /* See the block comment in aarch64-sve.md for details about the
+       FFR handling.  */
+    emit_ldf1_ffr_update (get_last_insn ());
+    return res;
   }
 
   /* The unspec associated with the load.  */
@@ -2532,10 +2552,7 @@ public:
   gimple *
   fold (gimple_folder &f) const override
   {
-    if (f.type_suffix (0).tclass == TYPE_bool)
-      return f.fold_to_pfalse ();
-
-    return nullptr;
+    return f.fold_to_pfalse ();
   }
 
   rtx
@@ -2565,6 +2582,17 @@ public:
   expand (function_expander &e) const override
   {
     machine_mode mode = e.vector_mode (0);
+    if (m_unspec == UNSPEC_PFIRST
+	&& rtx_equal_p (e.args[0], CONSTM1_RTX (mode))
+	&& rtx_equal_p (e.args[1], CONST0_RTX (mode)))
+      {
+	rtx pattern = gen_int_mode (AARCH64_SV_VL1, SImode);
+	rtvec vec = gen_rtvec (2, pattern, CONST0_RTX (mode));
+	rtx ptrue = gen_rtx_CONST (VNx16BImode,
+				   gen_rtx_UNSPEC (VNx16BImode, vec,
+						   UNSPEC_PTRUE));
+	return force_reg (VNx16BImode, ptrue);
+      }
     e.add_ptrue_hint (0, mode);
     return e.use_exact_insn (code_for_aarch64_sve (m_unspec, mode));
   }
@@ -3416,6 +3444,10 @@ public:
     /* Check whether the result is known to be all-false.  */
     if (m_eq_p ? known_gt (arg0, arg1) : known_ge (arg0, arg1))
       return f.fold_to_pfalse ();
+
+    /* Punt if we are trying to fold a predicate-as-counter builtin.  */
+    if (f.type_suffix (0).tclass == TYPE_count)
+      return NULL;
 
     /* Punt if we can't tell at compile time whether the result
        is all-false.  */

@@ -51,37 +51,41 @@ libsubincludedir = $(libsubdir)
 ## 2.2.12 Automatic Dependency Tracking
 ## Automake generates code for automatic dependency tracking by default
 
-libgcobol_la_SOURCES =				\
-	charmaps.cc				\
-	constants.cc				\
-	gfileio.cc				\
-	gmath.cc				\
-	inspect.cc				\
-	intrinsic.cc				\
-	io.cc					\
-	libgcobol.cc				\
-	posix/shim/errno.cc			\
-	posix/shim/fstat.cc			\
-	posix/shim/localtime.cc			\
-	posix/shim/lseek.cc			\
-	posix/shim/open.cc			\
-	posix/shim/stat.cc			\
-	stringbin.cc				\
-	valconv.cc				\
-	xmlparse.cc
+libgcobol_la_SOURCES =      \
+    charmaps.cc             \
+    constants.cc            \
+    gfileio.cc              \
+    gmath.cc                \
+    inspect.cc              \
+    intrinsic.cc            \
+    io.cc                   \
+    libgcobol.cc            \
+    posix/shim/errno.cc     \
+    posix/shim/fstat.cc     \
+    posix/shim/localtime.cc \
+    posix/shim/lseek.cc     \
+    posix/shim/open.cc      \
+    posix/shim/stat.cc      \
+    posix/shim/gettime.cc   \
+    stringbin.cc            \
+    unstring.cc             \
+    valconv.cc              \
+    xmlparse.cc
 
 libgcobol_compat_gnu_la_SOURCES =		\
-	compat/gnu/udf/cobrt-file-status.cbl	\
-	compat/gnu/udf/stored-char-length.cbl	\
+	compat/gnu/lib/cobrt-file-status.cbl	\
+	compat/gnu/lib/stored-char-length.cbl	\
 	compat/gnu/lib/CBL_ALLOC_MEM.cbl	\
 	compat/gnu/lib/CBL_CHECK_FILE_EXIST.cbl	\
 	compat/gnu/lib/CBL_CLOSE_FILE.cbl	\
 	compat/gnu/lib/CBL_CREATE_FILE.cbl	\
 	compat/gnu/lib/CBL_DELETE_FILE.cbl	\
 	compat/gnu/lib/CBL_FREE_MEM.cbl		\
+	compat/gnu/lib/CBL_GET_PROGRAM_INFO.cbl	\
 	compat/gnu/lib/CBL_OPEN_FILE.cbl	\
 	compat/gnu/lib/CBL_READ_FILE.cbl	\
-	compat/gnu/lib/CBL_WRITE_FILE.cbl
+	compat/gnu/lib/CBL_WRITE_FILE.cbl	\
+	compat/gnu/lib/cbl_gpi.cc
 
 libgcobol_posix_la_SOURCES =			\
 	posix/udf/posix-close.cbl		\
@@ -96,7 +100,8 @@ libgcobol_posix_la_SOURCES =			\
 	posix/udf/posix-read.cbl		\
 	posix/udf/posix-stat.cbl		\
 	posix/udf/posix-unlink.cbl		\
-	posix/udf/posix-write.cbl
+	posix/udf/posix-write.cbl		\
+	posix/udf/posix-clock-gettime.cbl
 
 # Install the COBOL for the POSIX and compatibility libraries.
 nobase_libsubinclude_HEADERS =			\
@@ -110,6 +115,7 @@ nobase_libsubinclude_HEADERS =			\
 	posix/cpy/posix-open.cpy		\
 	posix/cpy/posix-read.cpy		\
 	posix/cpy/posix-stat.cpy		\
+	posix/cpy/posix-clock-gettime.cpy	\
 	posix/cpy/psx-lseek.cpy			\
 	posix/cpy/psx-open.cpy			\
 	posix/cpy/statbuf.cpy			\
@@ -167,6 +173,7 @@ LP_COPYBOOKS = \
 	$(LP_COPYDIR_BUILD)/posix-localtime.cpy \
 	$(LP_COPYDIR_BUILD)/posix-lseek.cpy \
 	$(LP_COPYDIR_BUILD)/posix-mkdir.cpy \
+	$(LP_COPYDIR_BUILD)/posix-close.cpy \
 	$(LP_COPYDIR_BUILD)/posix-open.cpy \
 	$(LP_COPYDIR_BUILD)/posix-read.cpy \
 	$(LP_COPYDIR_BUILD)/posix-stat.cpy \
@@ -183,8 +190,10 @@ $(LP_COPYDIR_BUILD)/%.cpy: ${srcdir}/posix/cpy/%.cpy
 libgcobol_la_LINK = $(CXXLINK) $(libgcobol_la_LDFLAGS)
 version_arg = -version-info $(LIBGCOBOL_VERSION)
 libgcobol_la_LDFLAGS = $(LTLDFLAGS) $(LIBQUADLIB) $(LTLIBICONV) \
-	$(extra_ldflags_libgcobol) $(LIBS) $(LIBXML2_LIBS) $(version_arg)
-libgcobol_la_DEPENDENCIES = libgcobol.spec $(LIBQUADLIB_DEP)
+	$(extra_ldflags_libgcobol) $(LIBS) $(LIBXML2_LIBS) $(version_arg) \
+	-Wl,--version-script=$(srcdir)/libgcobol.map
+libgcobol_la_DEPENDENCIES = libgcobol.spec $(LIBQUADLIB_DEP) \
+	$(srcdir)/libgcobol.map
 
 # Rules for libgcobol_posix.so and libgcobol_compat_gnu.so, which have
 # COBOL sources.  They require gcobol and libgcobol to have already
@@ -199,16 +208,17 @@ libgcobol_la_DEPENDENCIES = libgcobol.spec $(LIBQUADLIB_DEP)
 
 libgcobol_posix_la_LINK = $(CXXLINK) $(libgcobol_posix_la_LDFLAGS)
 libgcobol_posix_la_LDFLAGS = $(LTLDFLAGS) $(LIBQUADLIB) $(LTLIBICONV) \
-	$(extra_ldflags_libgcobol) $(LIBS) $(LIBXML2_LIBS) $(version_arg)
+	$(extra_ldflags_libgcobol) $(LIBS) $(LIBXML2_LIBS) $(version_arg) \
+	-Wl,--version-script=$(srcdir)/libgcobol_posix.map
 libgcobol_posix_la_DEPENDENCIES = libgcobol.spec $(LIBQUADLIB_DEP) \
-	$(LP_COPYBOOKS)
+	$(LP_COPYBOOKS) $(srcdir)/libgcobol_posix.map
 
 libgcobol_compat_gnu_la_LINK = $(CXXLINK) $(libgcobol_compat_gnu_la_LDFLAGS)
 libgcobol_compat_gnu_la_LDFLAGS = $(LTLDFLAGS) $(LIBQUADLIB) $(LTLIBICONV) \
-	$(extra_ldflags_libgcobol) $(LIBS) $(LIBXML2_LIBS) $(version_arg)
+	$(extra_ldflags_libgcobol) $(LIBS) $(LIBXML2_LIBS) $(version_arg) \
+	-Wl,--version-script=$(srcdir)/libgcobol_compat_gnu.map
 libgcobol_compat_gnu_la_DEPENDENCIES = libgcobol.spec $(LIBQUADLIB_DEP) \
-	$(LC_COPYBOOKS)
-
+	$(LC_COPYBOOKS) $(srcdir)/libgcobol_compat_gnu.map
 
 LTCOBCOMPILE = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 	--mode=compile $(AM_COBC) $(AM_COBFLAGS)
@@ -219,6 +229,6 @@ LTCOBCOMPILE = $(LIBTOOL) --tag=CC $(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) \
 .cbl.lo:
 	$(LTCOBCOMPILE) $(COBFLAGS) $(MULTIFLAGS) -c -o $@ $<
 
-
+EXTRA_DIST = libgcobol.map libgcobol_posix.map libgcobol_compat_gnu.map
 
 endif BUILD_LIBGCOBOL

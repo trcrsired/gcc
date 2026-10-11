@@ -1959,11 +1959,12 @@ get_mem_align_offset (rtx mem, unsigned int align)
 /* Given REF (a MEM) and T, either the type of X or the expression
    corresponding to REF, set the memory attributes.  OBJECTP is nonzero
    if we are making a new object of this type.  BITPOS is nonzero if
-   there is an offset outstanding on T that will be applied later.  */
+   there is an offset outstanding on T that will be applied later.
+   MAY_STORE_P is true when REF can be the destination of a store.  */
 
 void
 set_mem_attributes_minus_bitpos (rtx ref, tree t, int objectp,
-				 poly_int64 bitpos)
+				 poly_int64 bitpos, bool may_store_p)
 {
   poly_int64 apply_bitpos = 0;
   tree type;
@@ -2059,7 +2060,8 @@ set_mem_attributes_minus_bitpos (rtx ref, tree t, int objectp,
 	t = TREE_OPERAND (t, 0);
 
       /* Note whether this expression can trap.  */
-      MEM_NOTRAP_P (ref) = !tree_could_trap_p (t);
+      MEM_NOTRAP_P (ref)
+	= !(may_store_p ? lhs_could_trap_p (t) : tree_could_trap_p (t));
 
       base = get_base_address (t);
       if (base)
@@ -2191,9 +2193,9 @@ set_mem_attributes_minus_bitpos (rtx ref, tree t, int objectp,
 }
 
 void
-set_mem_attributes (rtx ref, tree t, int objectp)
+set_mem_attributes (rtx ref, tree t, int objectp, bool may_store_p)
 {
-  set_mem_attributes_minus_bitpos (ref, t, objectp, 0);
+  set_mem_attributes_minus_bitpos (ref, t, objectp, 0, may_store_p);
 }
 
 /* Set the alias set of MEM to SET.  */
@@ -2606,7 +2608,7 @@ address_reload_context::emit_autoinc (rtx value, poly_int64 inc_amount)
 {
   /* Since we're going to call recog, and might be called within recog,
      we need to ensure we save and restore recog_data.  */
-  recog_data_saver recog_save;
+  recog_state_saver recog_save;
 
   /* REG or MEM to be copied and incremented.  */
   rtx incloc = XEXP (value, 0);
@@ -7090,6 +7092,18 @@ complete_seq (const uint8_t *seq, rtx *operands)
 {
   rtx_expander (seq, operands).expand_seq ();
   return end_sequence ();
+}
+
+/* Note in the dump file that WHAT, which names a define_split or a
+   define_peephole2 and where it came from, is being applied.  genemit.cc
+   emits a call to this rather than the test and the fprintf, so that the
+   dump is written out once instead of once per pattern.  */
+
+void
+note_split (const char *what)
+{
+  if (dump_file)
+    fprintf (dump_file, "Splitting with %s\n", what);
 }
 
 /* Initialize fields of rtl_data related to stack alignment.  */

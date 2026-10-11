@@ -5065,7 +5065,7 @@ ipa_tm_insert_irr_call (struct cgraph_node *node, struct tm_region *region,
   transaction_subcode_ior (region, GTMA_MAY_ENTER_IRREVOCABLE);
 
   g = gimple_build_call (builtin_decl_explicit (BUILT_IN_TM_IRREVOCABLE),
-			 1, build_int_cst (NULL_TREE, MODE_SERIALIRREVOCABLE));
+			 1, build_int_cst (integer_type_node, MODE_SERIALIRREVOCABLE));
 
   split_block_after_labels (bb);
   gsi = gsi_after_labels (bb);

@@ -594,7 +594,7 @@
 ;;   In addition, any FFRT region that includes a load also has at least one
 ;;   instance of:
 ;;
-;;       L2: FFR = update(FFR, FFRT)  [type == no_insn]
+;;       L2: FFR = update(FFR, FFRT, <load result>)  [type == no_insn]
 ;;
 ;;   to make it clear that the region both reads from and writes to the FFR.
 ;;
@@ -1150,10 +1150,13 @@
 ;; so that the FFR value is live on entry to the region and so that the FFR
 ;; value visibly changes within the region.  This is used (possibly multiple
 ;; times) in an FFRT region that includes LDFF1 or LDNF1 instructions.
-(define_insn "aarch64_update_ffr_for_load"
+(define_insn "@aarch64_update_ffr<mode>"
   [(set (reg:VNx16BI FFR_REGNUM)
-	(unspec:VNx16BI [(reg:VNx16BI FFRT_REGNUM)
-			 (reg:VNx16BI FFR_REGNUM)] UNSPEC_UPDATE_FFR))]
+	(unspec:VNx16BI
+	 [(reg:VNx16BI FFRT_REGNUM)
+	  (reg:VNx16BI FFR_REGNUM)
+	  (match_operand:SVE_ALL 0 "" "X")
+	 ] UNSPEC_UPDATE_FFR))]
   "TARGET_SVE"
   ""
   [(set_attr "type" "no_insn")]
@@ -1487,6 +1490,7 @@
 	     (unspec:SVE_PARTIAL_I
 	       [(match_operand:<SVE_PARTIAL_I:VPRED> 2 "register_operand" "Upl")
 		(match_operand:SVE_PARTIAL_I 1 "aarch64_sve_ld<fn>f1_operand" "Ut<fn>")
+		(match_operand:SVE_PARTIAL_I 4 "aarch64_maskload_else_operand")
 		(reg:VNx16BI FFRT_REGNUM)]
 	       SVE_LDFF1_LDNF1))]
 	  UNSPEC_PRED_X))]
@@ -7884,10 +7888,10 @@
   [(set_attr "sve_type" "sve_int_dot")]
 )
 
-;; Define double widen_[su]sum as dotproduct
+;; Define double reduc_widen_[su]sum as dotproduct
 ;; Use dot product to perform double widening sum reductions by
 ;; changing += a into += (a * 1).  i.e. we seed the multiplication with 1.
-(define_expand "widen_<sur>sum<mode><vsi2qi>3"
+(define_expand "reduc_widen_<sur>sum<mode><vsi2qi>3"
   [(set (match_operand:SVE_FULL_SDI 0 "register_operand")
 	(plus:SVE_FULL_SDI
 	  (unspec:SVE_FULL_SDI
@@ -8619,7 +8623,7 @@
 ;; This creates a false dependency on z0 which can result in stalls.
 ;; The zeroing will be done via a movi d0, 0 which is cheaper.
 ;;
-(define_insn "*vcond_mask_<mode><vpred>"
+(define_insn_and_rewrite "*vcond_mask_<mode><vpred>"
   [(set (match_operand:SVE_ALL 0 "register_operand")
 	(unspec:SVE_ALL
 	  [(match_operand:<VPRED> 3 "aarch64_predicate_operand")
@@ -8636,6 +8640,13 @@
      [ w        , Ufc , 0  , Upa ; *              ] fmov\t%0.<Vetype>, %3/m, #%1
      [ ?&w      , vss , w  , Upa ; yes            ] movprfx\t%0, %2\;mov\t%0.<Vetype>, %3/m, #%I1
      [ ?&w      , Ufc , w  , Upa ; yes            ] movprfx\t%0, %2\;fmov\t%0.<Vetype>, %3/m, #%1
+  }
+  "&& reload_completed
+   && aarch64_simd_or_scalar_imm_zero (operands[2], <MODE>mode)
+   && !TARGET_SVE_PREFER_ZEROING_MOVIMM"
+  {
+    emit_move_insn (operands[0], operands[2]);
+    operands[2] = copy_rtx (operands[0]);
   }
 )
 

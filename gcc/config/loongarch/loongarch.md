@@ -2755,14 +2755,14 @@
    (set_attr "mode" "<GPR:MODE>")])
 
 (define_insn_and_split "both_non_zero"
-  [(set (match_operand:DI 0 "register_operand" "=r")
-	(and:DI (ne:DI (match_operand:DI 1 "register_operand" "r")
+  [(set (match_operand:DI 0 "register_operand" "=&r")
+	(and:DI (ne:DI (match_operand:DI 1 "register_operand" "r0")
 		       (const_int 0))
 		(ne:DI (match_operand:DI 2 "register_operand" "r")
 		       (const_int 0))))]
   "TARGET_64BIT"
   "#"
-  "&& true"
+  "&& reload_completed"
   [(set (match_dup 0)
 	(ne:DI (match_dup 1) (const_int 0)))
    (set (match_dup 0)
@@ -2771,14 +2771,14 @@
 			 (const_int 0)))])
 
 (define_insn_and_split "both_non_zero_subreg"
-  [(set (match_operand:DI 0 "register_operand" "=r")
-	(and:DI (subreg:DI (ne:SI (match_operand:DI 1 "register_operand" "r")
+  [(set (match_operand:DI 0 "register_operand" "=&r")
+	(and:DI (subreg:DI (ne:SI (match_operand:DI 1 "register_operand" "r0")
 				  (const_int 0)) 0)
 		(subreg:DI (ne:SI (match_operand:DI 2 "register_operand" "r")
 				  (const_int 0)) 0)))]
   "TARGET_64BIT"
   "#"
-  "&& true"
+  "&& reload_completed"
   [(set (match_dup 0)
 	(ne:DI (match_dup 1) (const_int 0)))
    (set (match_dup 0)
@@ -4771,7 +4771,7 @@
 (define_expand "bitreversehi2"
   [(set (match_operand:HI 0 "register_operand" "=r")
 	(bitreverse:HI (match_operand:HI 1 "register_operand" "r")))]
-  ""
+  "TARGET_64BIT || TARGET_32BIT_S"
   {
     rtx t = gen_reg_rtx (word_mode);
 

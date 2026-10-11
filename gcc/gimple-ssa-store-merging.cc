@@ -1456,7 +1456,7 @@ bswap_replace (gimple_stmt_iterator gsi, gimple *ins_stmt, tree fndecl,
      gives 0x03040102 while a bswap for that value is 0x04030201.  */
   if (bswap && n->range == 16)
     {
-      tree count = build_int_cst (NULL, BITS_PER_UNIT);
+      tree count = build_int_cst (integer_type_node, BITS_PER_UNIT);
       src = fold_build2 (LROTATE_EXPR, bswap_type, tmp, count);
       bswap_stmt = gimple_build_assign (NULL, src);
     }
@@ -4801,12 +4801,12 @@ imm_store_chain_info::output_merged_store (merged_store_group *group)
 		  if (shift < 0)
 		    tem = gimple_build (&seq, loc,
 					RSHIFT_EXPR, TREE_TYPE (tem), tem,
-					build_int_cst (NULL_TREE, -shift));
+					build_int_cst (integer_type_node, -shift));
 		  tem = gimple_convert (&seq, loc, dest_type, tem);
 		  if (shift > 0)
 		    tem = gimple_build (&seq, loc,
 					LSHIFT_EXPR, dest_type, tem,
-					build_int_cst (NULL_TREE, shift));
+					build_int_cst (integer_type_node, shift));
 		  src = gimple_build (&seq, loc,
 				      BIT_IOR_EXPR, dest_type, tem, src);
 		}

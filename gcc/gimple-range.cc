@@ -607,6 +607,15 @@ gimple_ranger::update_range_info (tree name, const vrange &r)
     }
 }
 
+// Reset range information for NAME.
+
+void
+gimple_ranger::reset_range_info (tree name)
+{
+  // Clearing the cache will also clear all the shared oracles.
+  m_cache.reset_range_info (name);
+}
+
 // This routine will export whatever global ranges are known to GCC
 // SSA_RANGE_NAME_INFO and SSA_NAME_PTR_INFO fields.
 
@@ -739,10 +748,11 @@ enable_ranger (struct function *fun, bool use_imm_uses)
 {
   gimple_ranger *r;
 
-  gcc_checking_assert (!fun->x_range_query);
   r = new gimple_ranger (use_imm_uses);
-  fun->x_range_query = r;
+  range_query *q = set_range_query (fun, r);
 
+  // Ranger should be the first and only instance.
+  gcc_checking_assert (q == get_global_range_query ());
   return r;
 }
 
@@ -752,9 +762,9 @@ enable_ranger (struct function *fun, bool use_imm_uses)
 void
 disable_ranger (struct function *fun)
 {
-  gcc_checking_assert (fun->x_range_query);
-  delete fun->x_range_query;
-  fun->x_range_query = NULL;
+  // Ensure this is the query being removed.
+  range_query *q = set_range_query (fun, get_global_range_query ());
+  delete q;
 }
 
 // ---------------------------------------------------------------------------

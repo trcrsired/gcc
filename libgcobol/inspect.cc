@@ -8,7 +8,6 @@
  * * Redistributions of source code must retain the above copyright
  *   notice, this list of conditions and the following disclaimer.
  * * Redistributions in binary form must reproduce the above
- * * Redistributions in binary form must reproduce the above
  *   copyright notice, this list of conditions and the following disclaimer
  *   in the documentation and/or other materials provided with the
  *   distribution.
@@ -290,9 +289,10 @@ typedef struct comparand_sbc
   size_t id_2_index;
   cbl_inspect_bound_t operation;
   std::string identifier_3; // The thing to be found
-//q  std::string identifier_5; // The replacement, for FORMAT 2
+  std::string identifier_5; // The replacement, for FORMAT 2
   size_t      alpha; // The start location within normalized_id_1
   size_t      omega; // The end+1 location within normalized_id_1
+  size_t      trailing_bound;
   size_t      leading_count;
   bool        leading;
   bool        first;
@@ -710,8 +710,8 @@ the_alpha_and_omega_sbc(const std::string     &id_before,
     // This is the AFTER delimiter.  We look for the first occurrence of that
     // delimiter in id_1 that occurs to the left of BEFORE/omega
 
-    alpha = haystack.substr(0, omega).find(id_after);
-    if( alpha == std::string::npos )
+    alpha = haystack.find(id_after);
+    if( alpha == std::string::npos || alpha + id_after.length() > omega )
       {
       // If there is no AFTER to the left of omega, then we can't find anything
       // in this haystack.
@@ -725,6 +725,135 @@ the_alpha_and_omega_sbc(const std::string     &id_before,
   else
     {
     alpha = 0;
+    }
+  }
+
+static void
+the_alpha_and_omega_backward_sbc(const std::string &id_before,
+                                 const std::string &id_after,
+                                 const std::string &haystack,
+                                 size_t            &alpha,
+                                 size_t            &omega)
+  {
+  alpha = 0;
+  omega = haystack.length();
+
+  if( id_before.length() )
+    {
+    size_t found = haystack.rfind(id_before);
+    if( found != std::string::npos )
+      {
+      alpha = found + id_before.length();
+      }
+    }
+
+  if( id_after.length() )
+    {
+    size_t found = haystack.rfind(id_after, omega - 1);
+    if( found != std::string::npos && found >= alpha )
+      {
+      omega = found;
+      }
+    else
+      {
+      omega = alpha;
+      }
+    }
+  }
+
+static void
+match_lengths_sbc(std::string       &id_target,
+                  const std::string &id_source)
+  {
+  id_target.assign(id_source.length(), id_target[0]);
+  }
+
+static inline bool
+matches_sbc(const std::string &haystack,
+            size_t             offset,
+            const std::string &needle,
+            size_t             length)
+  {
+  const char *candidate = haystack.data() + offset;
+  const char *pattern   = needle.data();
+
+  if( length == 0 )
+    {
+    return true;
+    }
+
+  if( candidate[0] != pattern[0] )
+    {
+    return false;
+    }
+
+  if( length == 1 )
+    {
+    return true;
+    }
+
+  if( candidate[length-1] != pattern[length-1] )
+    {
+    return false;
+    }
+
+  if( length == 2 )
+    {
+    return true;
+    }
+
+  return memcmp(candidate + 1, pattern + 1, length - 2) == 0;
+  }
+
+static void
+set_trailing_bounds_sbc(std::vector<comparand_sbc> &comparands,
+                        const std::string           &haystack,
+                        bool                         backward)
+  {
+  // Forward replacement never changes the unread suffix, and backward
+  // replacement never changes the unread prefix.  Consequently, each
+  // TRAILING run can be found once instead of being rescanned at every
+  // candidate position.
+  for(size_t i=0; i<comparands.size(); i++)
+    {
+    comparand_sbc &comparand = comparands[i];
+    if( comparand.operation != bound_trailing_e )
+      {
+      continue;
+      }
+
+    size_t length = comparand.identifier_3.length();
+    if( length == 0 || comparand.alpha >= comparand.omega )
+      {
+      comparand.trailing_bound = backward
+                                 ? comparand.alpha
+                                 : comparand.omega;
+      continue;
+      }
+    if( backward )
+      {
+      comparand.trailing_bound = comparand.alpha;
+      while( length <= comparand.omega - comparand.trailing_bound
+             && matches_sbc(haystack,
+                            comparand.trailing_bound,
+                            comparand.identifier_3,
+                            length) )
+        {
+        comparand.trailing_bound += length;
+        }
+      }
+    else
+      {
+      comparand.trailing_bound = comparand.omega;
+      while( length <= comparand.trailing_bound - comparand.alpha
+             && matches_sbc(haystack,
+                            comparand.trailing_bound - length,
+                            comparand.identifier_3,
+                            length) )
+        {
+        comparand.trailing_bound -= length;
+        }
+      }
     }
   }
 
@@ -1180,8 +1309,7 @@ inspect_backward_format_1(const size_t integers[],
                                     id_2_results[i].id2_s,
                                     id_2_value.i128,
                                     0,
-                                    truncation_e,
-                                    NULL);
+                                    truncation_e);
     }
   }
 
@@ -1549,8 +1677,7 @@ __gg__inspect_format_1( int backward,
                                     id_2_results[i].id2_s,
                                     id_2_value.i128,
                                     0,
-                                    truncation_e,
-                                    NULL);
+                                    truncation_e);
     }
   }
 
@@ -2674,16 +2801,11 @@ __gg__inspect_format_4( int backward,
 extern "C"
 void
 __gg__inspect_format_1_sbc( int backward,
-                            size_t integers[],
+                            const size_t integers[],
                             const cblc_referlet_t *params)
   {
   // When this routine is called, we know we are working in a single-byte-coded
   // codeset like ASCII or EBCDIC.
-  if( backward )
-    {
-    return inspect_backward_format_1(integers, params);
-    }
-
   size_t int_index = 0;
   size_t cblc_index = 0;
 
@@ -2704,6 +2826,7 @@ __gg__inspect_format_1_sbc( int backward,
                          = normalize_id_sbc(id1, id1_o, id1_s, id1->encoding);
 
   std::vector<comparand_sbc> comparands;
+  comparands.reserve(n_identifier_2);
 
   for(size_t i=0; i<n_identifier_2; i++)
     {
@@ -2755,11 +2878,22 @@ __gg__inspect_format_1_sbc( int backward,
                                                           id4_after_o,
                                                           id4_after_s,
                                                           id1->encoding);
-          the_alpha_and_omega_sbc(normalized_id_4_before,
-                                  normalized_id_4_after,
-                                  normalized_id_1,
-                                  next_comparand.alpha,
-                                  next_comparand.omega);
+          if( backward )
+            {
+            the_alpha_and_omega_backward_sbc(normalized_id_4_before,
+                                             normalized_id_4_after,
+                                             normalized_id_1,
+                                             next_comparand.alpha,
+                                             next_comparand.omega);
+            }
+          else
+            {
+            the_alpha_and_omega_sbc(normalized_id_4_before,
+                                    normalized_id_4_after,
+                                    normalized_id_1,
+                                    next_comparand.alpha,
+                                    next_comparand.omega);
+            }
 
           comparands.push_back(next_comparand);
           break;
@@ -2773,6 +2907,7 @@ __gg__inspect_format_1_sbc( int backward,
 
           // We need to build up pair_count comparand structures:
 
+          comparands.reserve(comparands.size() + pair_count);
           for(size_t k=0; k<pair_count; k++)
             {
             comparand_sbc next_comparand = {};
@@ -2808,11 +2943,22 @@ __gg__inspect_format_1_sbc( int backward,
                                                               id4_after_o,
                                                               id4_after_s,
                                                               id1->encoding);
-            the_alpha_and_omega_sbc(normalized_id_4_before,
-                                    normalized_id_4_after,
-                                    normalized_id_1,
-                                    next_comparand.alpha,
-                                    next_comparand.omega);
+            if( backward )
+              {
+              the_alpha_and_omega_backward_sbc(normalized_id_4_before,
+                                               normalized_id_4_after,
+                                               normalized_id_1,
+                                               next_comparand.alpha,
+                                               next_comparand.omega);
+              }
+            else
+              {
+              the_alpha_and_omega_sbc(normalized_id_4_before,
+                                      normalized_id_4_after,
+                                      normalized_id_1,
+                                      next_comparand.alpha,
+                                      next_comparand.omega);
+              }
             next_comparand.leading = true;
             next_comparand.leading_count = 0;
             comparands.push_back(next_comparand);
@@ -2822,170 +2968,239 @@ __gg__inspect_format_1_sbc( int backward,
       }
     }
 
-  // We are now ready to walk through identifier-1, character by
-  // character, checking each of the comparands for a match:
+  set_trailing_bounds_sbc(comparands, normalized_id_1, backward);
 
-  // We are now set up to accomplish the data flow described
-  // in the language specification.  We loop through the
-  // the character positions in normalized_id_1:
-  size_t leftmost = 0;
-  size_t rightmost = leftmost + normalized_id_1.length();
-
-  while( leftmost < rightmost )
+  if( backward )
     {
-    // For each leftmost position, we check each of the
-    // pairs:
+    size_t rightmost = normalized_id_1.length();
+    size_t the_end_of_the_world = rightmost;
 
-    for(size_t k=0; k<comparands.size(); k++)
+    while( rightmost > 0 )
       {
-      if( leftmost < comparands[k].alpha )
-        {
-        // This can't be a match, because leftmost is
-        // to the left of the comparand's alpha.
-        continue;
-        }
-      if( leftmost + comparands[k].identifier_3.length() > comparands[k].omega)
-        {
-        // This can't be a match, because the rightmost
-        // character of the comparand falls to the right
-        // of the comparand's omega
-        continue;
-        }
-      // A match is theoretically possible, because all
-      // the characters of the comparand fall between
-      // alpha and omega:
-      bool possible_match = true;
+      size_t rightmost_delta = 0;
+      rightmost -= 1;
 
-      if( comparands[k].operation != bound_characters_e )
+      for(size_t k=0; k<comparands.size(); k++)
         {
-        for(size_t m=0; m<comparands[k].identifier_3.length(); m++)
+        size_t length = comparands[k].identifier_3.length();
+
+        if( rightmost < comparands[k].alpha )
           {
-          if( comparands[k].identifier_3[m] != normalized_id_1[leftmost+m] )
-            {
-            possible_match = false;
-            break;
-            }
+          continue;
           }
-        }
-      if( possible_match )
-        {
-        // The characters of the comparand match the
-        // characters at leftmost.
-        bool match = false;
-        switch( comparands[k].operation )
+        if( rightmost + length > comparands[k].omega )
           {
-          case bound_first_e:
-            // This can't happen in a FORMAT_1
-            warnx("The compiler goofed: "
-                  "INSPECT FORMAT 1 "
-                  "shouldn't have "
-                  "bound_first_e");
-            abort();
-            break;
+          continue;
+          }
+        if( rightmost + length > the_end_of_the_world )
+          {
+          continue;
+          }
 
-          case bound_characters_e:
-            match = true;
-            break;
+        bool possible_match = true;
+        if( comparands[k].operation != bound_characters_e )
+          {
+          possible_match = matches_sbc(normalized_id_1,
+                                       rightmost,
+                                       comparands[k].identifier_3,
+                                       length);
+          }
 
-          case bound_all_e:
+        if( possible_match )
+          {
+          bool match = false;
+
+          switch( comparands[k].operation )
             {
-            // We have a match.
-            match = true;
-            break;
-            }
+            case bound_first_e:
+              warnx("The compiler goofed: "
+                    "INSPECT FORMAT 1 "
+                    "shouldn't have "
+                    "bound_first_e");
+              abort();
+              break;
 
-          case bound_leading_e:
-            {
-            // We have a match at leftmost.  But we need to figure out if this
-            // particular match is valid for LEADING.
+            case bound_characters_e:
+            case bound_all_e:
+              match = true;
+              break;
 
-            // Hang onto your hat.  This is delightfully clever.
-            //
-            // This position is LEADING if:
-            //  1) .leading is still true
-            //  2) leftmost / (length_of_comparand ) = current_count
-            //
-            // I get chills every time I look at that.
-
-            if( comparands[k].leading )
-              {
-              // So far, so good.
-              size_t count = ((leftmost - comparands[k].alpha))
-                              / comparands[k].identifier_3.length();
-              if( count == comparands[k].leading_count )
+            case bound_leading_e:
+              if( comparands[k].leading
+                  && rightmost
+                       + length * (comparands[k].leading_count + 1)
+                     == comparands[k].omega )
                 {
-                // This means that the match here is just the latest of a
-                // string of LEADING matches that started at .alpha
                 comparands[k].leading_count += 1;
                 match = true;
+                rightmost_delta = length - 1;
                 }
-              }
-            break;
+              break;
+
+            case bound_trailing_e:
+              match = rightmost + length <= comparands[k].trailing_bound
+                      && (rightmost - comparands[k].alpha) % length == 0;
+              break;
             }
 
-          case bound_trailing_e:
+          if( match )
             {
-            // We have a match at leftmost.
-            //
-            // We want to know if this is a trailing match.  For that to be,
-            // all of the possible matches from here to the omega have to be
-            // true as well:
-
-            if( (comparands[k].omega-leftmost)
-                    % comparands[k].identifier_3.length() == 0 )
+            id_2_results[comparands[k].id_2_index].result += 1;
+            the_end_of_the_world = rightmost;
+            if( rightmost_delta > rightmost )
               {
-              // The remaining number of characters is correct for a match.
-              // Keep checking.
-
-              // Assume a match until we learn otherwise:
-              match = true;
-              size_t local_left = leftmost;
-              local_left += comparands[k].identifier_3.length();
-              while( match && local_left < comparands[k].omega )
-                {
-                for(size_t m=0; m<comparands[k].identifier_3.length(); m++)
-                  {
-                  if( comparands[k].identifier_3[m] 
-                                            != normalized_id_1[local_left+m] )
-                    {
-                    // We have a mismatched character, so no trailing match is
-                    // possible
-                    match = false;
-                    break;
-                    }
-                  }
-                local_left += comparands[k].identifier_3.length();
-                }
+              rightmost = 0;
+              }
+            else
+              {
+              rightmost -= rightmost_delta;
               }
             break;
             }
           }
-
-        if( match )
+        else
           {
-          // We have a match at leftmost:
-
-          // Bump the result counter
-          id_2_results[comparands[k].id_2_index].result += 1;
-
-          // Adjust the leftmost pointer to point to
-          // the rightmost character of the matched
-          // string, keeping in mind that it will be
-          // bumped again after we break out of the
-          // k<pair_count loop:
-          leftmost += comparands[k].identifier_3.length() - 1;
-          break;
+          comparands[k].leading = false;
           }
-        }
-      else
-        {
-        // We are within alpha/omega, but there was no
-        // match, which permanently disqualifies the
-        // possibility of LEADING
-        comparands[k].leading = false;
         }
       }
-    leftmost += 1;
+    }
+  else
+    {
+    // We are now ready to walk through identifier-1, character by
+    // character, checking each of the comparands for a match.
+    size_t leftmost = 0;
+    size_t rightmost = normalized_id_1.length();
+
+    while( leftmost < rightmost )
+      {
+      // For each leftmost position, we check each of the pairs.
+
+      for(size_t k=0; k<comparands.size(); k++)
+        {
+        size_t length = comparands[k].identifier_3.length();
+
+        if( leftmost < comparands[k].alpha )
+          {
+          // This can't be a match, because leftmost is
+          // to the left of the comparand's alpha.
+          continue;
+          }
+        if( leftmost + length > comparands[k].omega )
+          {
+          // This can't be a match, because the rightmost
+          // character of the comparand falls to the right
+          // of the comparand's omega
+          continue;
+          }
+        // A match is theoretically possible, because all
+        // the characters of the comparand fall between
+        // alpha and omega:
+        bool possible_match = true;
+
+        if( comparands[k].operation != bound_characters_e )
+          {
+          possible_match = matches_sbc(normalized_id_1,
+                                       leftmost,
+                                       comparands[k].identifier_3,
+                                       length);
+          }
+        if( possible_match )
+          {
+          // The characters of the comparand match the
+          // characters at leftmost.
+          bool match = false;
+          switch( comparands[k].operation )
+            {
+            case bound_first_e:
+              // This can't happen in a FORMAT_1
+              warnx("The compiler goofed: "
+                    "INSPECT FORMAT 1 "
+                    "shouldn't have "
+                    "bound_first_e");
+              abort();
+              break;
+
+            case bound_characters_e:
+              match = true;
+              break;
+
+            case bound_all_e:
+              {
+              // We have a match.
+              match = true;
+              break;
+              }
+
+            case bound_leading_e:
+              {
+              // We have a match at leftmost.  But we need to figure out if this
+              // particular match is valid for LEADING.
+
+              // Hang onto your hat.  This is delightfully clever.
+              //
+              // This position is LEADING if:
+              //  1) .leading is still true
+              //  2) leftmost / (length_of_comparand ) = current_count
+              //
+              // I get chills every time I look at that.
+
+              if( comparands[k].leading )
+                {
+                // So far, so good.
+                size_t count = ((leftmost - comparands[k].alpha))
+                                / length;
+                if( count == comparands[k].leading_count )
+                  {
+                  // This means that the match here is just the latest of a
+                  // string of LEADING matches that started at .alpha
+                  comparands[k].leading_count += 1;
+                  match = true;
+                  }
+                }
+              break;
+              }
+
+            case bound_trailing_e:
+              {
+              // We have a match at leftmost.
+              //
+              // We want to know if this is a trailing match.  For that to be,
+              // all of the possible matches from here to the omega have to be
+              // true as well:
+
+              match = leftmost >= comparands[k].trailing_bound
+                      && (comparands[k].omega-leftmost) % length == 0;
+              break;
+              }
+            }
+
+          if( match )
+            {
+            // We have a match at leftmost:
+
+            // Bump the result counter
+            id_2_results[comparands[k].id_2_index].result += 1;
+
+            // Adjust the leftmost pointer to point to
+            // the rightmost character of the matched
+            // string, keeping in mind that it will be
+            // bumped again after we break out of the
+            // k<pair_count loop:
+            leftmost += length - 1;
+            break;
+            }
+          }
+        else
+          {
+          // We are within alpha/omega, but there was no
+          // match, which permanently disqualifies the
+          // possibility of LEADING
+          comparands[k].leading = false;
+          }
+        }
+      leftmost += 1;
+      }
     }
 
   // Add our results to the identifier_2 values:
@@ -3011,7 +3226,542 @@ __gg__inspect_format_1_sbc( int backward,
                                     id_2_results[i].id2_s,
                                     id_2_value.i128,
                                     0,
-                                    truncation_e,
-                                    NULL);
+                                    truncation_e);
     }
+  }
+
+extern "C"
+void
+__gg__inspect_format_2_sbc( int backward,
+                            const size_t integers[],
+                            const cblc_referlet_t *params)
+  {
+  // When this routine is called, we know we are working in a single-byte-coded
+  // codeset like ASCII or EBCDIC.
+  size_t int_index = 0;
+  size_t cblc_index = 0;
+
+  // Reference the language specification for the meanings of identifier_X
+
+  // Pick up identifier_1, which is the string being inspected.
+  cblc_field_t *id1   = params[cblc_index].field;
+  size_t        id1_o = params[cblc_index].offset;
+  size_t        id1_s = params[cblc_index].size;
+  cblc_index += 1;
+
+  std::string normalized_id_1
+    = normalize_id_sbc(id1, id1_o, id1_s, id1->encoding);
+
+  std::vector<comparand_sbc> comparands;
+
+  // Pick up the count of operations.
+  size_t nbounds = integers[int_index++];
+  comparands.reserve(nbounds);
+
+  for(size_t j=0; j<nbounds; j++)
+    {
+    cbl_inspect_bound_t operation
+      = (cbl_inspect_bound_t)integers[int_index++];
+
+    switch( operation )
+      {
+      case bound_characters_e:
+        {
+        comparand_sbc next_comparand = {};
+        next_comparand.operation = operation;
+
+        const cblc_field_t *id5   = params[cblc_index].field;
+        size_t              id5_o = params[cblc_index].offset;
+        size_t              id5_s = params[cblc_index].size;
+        cblc_index += 1;
+
+        const cblc_field_t *id4_before   = params[cblc_index].field;
+        size_t              id4_before_o = params[cblc_index].offset;
+        size_t              id4_before_s = params[cblc_index].size;
+        cblc_index += 1;
+
+        const cblc_field_t *id4_after   = params[cblc_index].field;
+        size_t              id4_after_o = params[cblc_index].offset;
+        size_t              id4_after_s = params[cblc_index].size;
+        cblc_index += 1;
+
+        next_comparand.identifier_3.assign(1, '\0');
+        next_comparand.identifier_5
+          = normalize_id_sbc(id5, id5_o, id5_s, id1->encoding);
+        next_comparand.identifier_5.resize(1);
+
+        std::string normalized_id_4_before
+          = normalize_id_sbc(id4_before,
+                             id4_before_o,
+                             id4_before_s,
+                             id1->encoding);
+        std::string normalized_id_4_after
+          = normalize_id_sbc(id4_after,
+                             id4_after_o,
+                             id4_after_s,
+                             id1->encoding);
+
+        if( backward )
+          {
+          the_alpha_and_omega_backward_sbc(normalized_id_4_before,
+                                           normalized_id_4_after,
+                                           normalized_id_1,
+                                           next_comparand.alpha,
+                                           next_comparand.omega);
+          }
+        else
+          {
+          the_alpha_and_omega_sbc(normalized_id_4_before,
+                                  normalized_id_4_after,
+                                  normalized_id_1,
+                                  next_comparand.alpha,
+                                  next_comparand.omega);
+          }
+        comparands.push_back(next_comparand);
+        break;
+        }
+
+      default:
+        {
+        // There are pair_count identifier-3/identifier-5 pairs, each with
+        // possible PHRASE1 modifiers.
+        size_t pair_count = integers[int_index++];
+        comparands.reserve(comparands.size() + pair_count);
+
+        for(size_t k=0; k<pair_count; k++)
+          {
+          comparand_sbc next_comparand = {};
+          next_comparand.operation = operation;
+
+          const cblc_field_t *id3   = params[cblc_index].field;
+          size_t              id3_o = params[cblc_index].offset;
+          size_t              id3_s = params[cblc_index].size;
+          cblc_index += 1;
+
+          const cblc_field_t *id5   = params[cblc_index].field;
+          size_t              id5_o = params[cblc_index].offset;
+          size_t              id5_s = params[cblc_index].size;
+          cblc_index += 1;
+
+          const cblc_field_t *id4_before   = params[cblc_index].field;
+          size_t              id4_before_o = params[cblc_index].offset;
+          size_t              id4_before_s = params[cblc_index].size;
+          cblc_index += 1;
+
+          const cblc_field_t *id4_after   = params[cblc_index].field;
+          size_t              id4_after_o = params[cblc_index].offset;
+          size_t              id4_after_s = params[cblc_index].size;
+          cblc_index += 1;
+
+          next_comparand.identifier_3
+            = normalize_id_sbc(id3, id3_o, id3_s, id1->encoding);
+          next_comparand.identifier_5
+            = normalize_id_sbc(id5, id5_o, id5_s, id1->encoding);
+
+          if( id3->attr & FIGCONST_MASK )
+            {
+            match_lengths_sbc(next_comparand.identifier_3,
+                              next_comparand.identifier_5);
+            }
+          else if( id5->attr & FIGCONST_MASK )
+            {
+            match_lengths_sbc(next_comparand.identifier_5,
+                              next_comparand.identifier_3);
+            }
+
+          std::string normalized_id_4_before
+            = normalize_id_sbc(id4_before,
+                               id4_before_o,
+                               id4_before_s,
+                               id1->encoding);
+          std::string normalized_id_4_after
+            = normalize_id_sbc(id4_after,
+                               id4_after_o,
+                               id4_after_s,
+                               id1->encoding);
+
+          if( backward )
+            {
+            the_alpha_and_omega_backward_sbc(normalized_id_4_before,
+                                             normalized_id_4_after,
+                                             normalized_id_1,
+                                             next_comparand.alpha,
+                                             next_comparand.omega);
+            }
+          else
+            {
+            the_alpha_and_omega_sbc(normalized_id_4_before,
+                                    normalized_id_4_after,
+                                    normalized_id_1,
+                                    next_comparand.alpha,
+                                    next_comparand.omega);
+            }
+
+          next_comparand.leading = true;
+          next_comparand.leading_count = 0;
+          next_comparand.first = true;
+          comparands.push_back(next_comparand);
+          }
+        break;
+        }
+      }
+    }
+
+  set_trailing_bounds_sbc(comparands, normalized_id_1, backward);
+
+  if( backward )
+    {
+    size_t rightmost = normalized_id_1.length();
+    size_t the_end_of_the_world = rightmost;
+
+    while( rightmost > 0 )
+      {
+      size_t rightmost_delta = 0;
+      rightmost -= 1;
+
+      for(size_t k=0; k<comparands.size(); k++)
+        {
+        size_t length = comparands[k].identifier_3.length();
+
+        if( rightmost < comparands[k].alpha )
+          {
+          continue;
+          }
+        if( rightmost + length > comparands[k].omega )
+          {
+          continue;
+          }
+        if( rightmost + length > the_end_of_the_world )
+          {
+          continue;
+          }
+
+        bool possible_match = true;
+        if( comparands[k].operation != bound_characters_e )
+          {
+          possible_match = matches_sbc(normalized_id_1,
+                                       rightmost,
+                                       comparands[k].identifier_3,
+                                       length);
+          }
+
+        if( possible_match )
+          {
+          bool match = false;
+
+          switch( comparands[k].operation )
+            {
+            case bound_first_e:
+              warnx("The compiler goofed: "
+                    "INSPECT FORMAT 2 "
+                    "shouldn't have "
+                    "bound_first_e");
+              abort();
+              break;
+
+            case bound_characters_e:
+            case bound_all_e:
+              match = true;
+              break;
+
+            case bound_leading_e:
+              if( comparands[k].leading
+                  && rightmost
+                       + length * (comparands[k].leading_count + 1)
+                     == comparands[k].omega )
+                {
+                comparands[k].leading_count += 1;
+                match = true;
+                rightmost_delta = length - 1;
+                }
+              break;
+
+            case bound_trailing_e:
+              match = rightmost + length <= comparands[k].trailing_bound
+                      && (rightmost - comparands[k].alpha) % length == 0;
+              break;
+            }
+
+          if( match )
+            {
+            memcpy(&normalized_id_1[rightmost],
+                   comparands[k].identifier_5.data(),
+                   comparands[k].identifier_5.length());
+            the_end_of_the_world = rightmost;
+            if( rightmost_delta > rightmost )
+              {
+              rightmost = 0;
+              }
+            else
+              {
+              rightmost -= rightmost_delta;
+              }
+            break;
+            }
+          }
+        else
+          {
+          comparands[k].leading = false;
+          }
+        }
+      }
+    }
+  else
+    {
+    size_t leftmost = 0;
+    size_t rightmost = normalized_id_1.length();
+
+    while( leftmost < rightmost )
+      {
+      for(size_t k=0; k<comparands.size(); k++)
+        {
+        size_t length = comparands[k].identifier_3.length();
+
+        if( leftmost < comparands[k].alpha )
+          {
+          continue;
+          }
+        if( leftmost + length > comparands[k].omega )
+          {
+          continue;
+          }
+
+        bool possible_match = true;
+        if( comparands[k].operation != bound_characters_e )
+          {
+          possible_match = matches_sbc(normalized_id_1,
+                                       leftmost,
+                                       comparands[k].identifier_3,
+                                       length);
+          }
+
+        if( possible_match )
+          {
+          bool match = false;
+
+          switch( comparands[k].operation )
+            {
+            case bound_characters_e:
+            case bound_all_e:
+              match = true;
+              break;
+
+            case bound_first_e:
+              if( comparands[k].first )
+                {
+                match = true;
+                comparands[k].first = false;
+                }
+              break;
+
+            case bound_leading_e:
+              if( comparands[k].leading )
+                {
+                size_t count = (leftmost - comparands[k].alpha) / length;
+                if( count == comparands[k].leading_count )
+                  {
+                  comparands[k].leading_count += 1;
+                  match = true;
+                  }
+                }
+              break;
+
+            case bound_trailing_e:
+              match = leftmost >= comparands[k].trailing_bound
+                      && (comparands[k].omega - leftmost) % length == 0;
+              break;
+            }
+
+          if( match )
+            {
+            memcpy(&normalized_id_1[leftmost],
+                   comparands[k].identifier_5.data(),
+                   comparands[k].identifier_5.length());
+            leftmost += length - 1;
+            break;
+            }
+          }
+        else
+          {
+          comparands[k].leading = false;
+          }
+        }
+      leftmost += 1;
+      }
+    }
+  charmap_t *charmap = __gg__get_charmap(id1->encoding);
+  unsigned char *id1_data = id1->data + id1_o;
+  charmap->memset(id1_data, charmap->mapped_character(ascii_space), id1_s);
+  memcpy(id1_data,
+         normalized_id_1.data(),
+         std::min(normalized_id_1.length(), id1_s));
+  }
+
+extern "C"
+void
+__gg__inspect_format_4_sbc( int backward,
+                            cblc_field_t *input,
+                            size_t        input_offset,
+                            size_t        input_size,
+                      const cblc_field_t *original,
+                            size_t        original_offset,
+                            size_t        original_size,
+                      const cblc_field_t *replacement,
+                            size_t        replacement_offset,
+                            size_t        replacement_size,
+                      const cblc_field_t *after,
+                            size_t        after_offset,
+                            size_t        after_size,
+                      const cblc_field_t *before,
+                            size_t        before_offset,
+                            size_t        before_size)
+  {
+  // When this routine is called, we know we are working in a single-byte-coded
+  // codeset like ASCII or EBCDIC.
+  cbl_figconst_t figconst_original
+    = static_cast<cbl_figconst_t>(original->attr & FIGCONST_MASK);
+  cbl_figconst_t figconst_replacement
+    = static_cast<cbl_figconst_t>(replacement->attr & FIGCONST_MASK);
+  int figswitch = (figconst_original ? 2 : 0)
+                  + (figconst_replacement ? 1 : 0);
+
+  switch( figswitch )
+    {
+    case 0:
+      break;
+    case 1:
+      replacement_size = (size_t)(-1LL);
+      break;
+    case 2:
+      original_size = 1;
+      break;
+    case 3:
+      replacement_size = original_size = 1;
+      break;
+    }
+
+  if( before && before_size && before->attr & FIGCONST_MASK )
+    {
+    before_size = 1;
+    }
+  if( after && after_size && after->attr & FIGCONST_MASK )
+    {
+    after_size = 1;
+    }
+
+  bool all = replacement_size == (size_t)(-1LL);
+  if( all )
+    {
+    replacement_size = 1;
+    }
+
+  std::string str_input
+    = normalize_id_sbc(input,
+                       input_offset,
+                       input_size,
+                       input->encoding);
+  std::string str_original
+    = normalize_id_sbc(original,
+                       original_offset,
+                       original_size,
+                       input->encoding);
+  std::string str_replacement
+    = normalize_id_sbc(replacement,
+                       replacement_offset,
+                       replacement_size,
+                       input->encoding);
+  std::string str_after
+    = normalize_id_sbc(after,
+                       after_offset,
+                       after_size,
+                       input->encoding);
+  std::string str_before
+    = normalize_id_sbc(before,
+                       before_offset,
+                       before_size,
+                       input->encoding);
+
+  if( all )
+    {
+    str_replacement.assign(str_original.length(), str_replacement[0]);
+    }
+
+  size_t leftmost;
+  size_t rightmost;
+
+  if( backward )
+    {
+    if( str_after.empty() )
+      {
+      rightmost = str_input.length();
+      }
+    else
+      {
+      size_t found = str_input.rfind(str_after, str_input.length());
+      rightmost = found == std::string::npos ? 0 : found;
+      }
+
+    if( str_before.empty() )
+      {
+      leftmost = 0;
+      }
+    else
+      {
+      size_t found = str_input.rfind(str_before, rightmost);
+      leftmost = found == std::string::npos
+                 ? 0
+                 : found + str_before.length();
+      }
+    }
+  else
+    {
+    if( str_after.empty() )
+      {
+      leftmost = 0;
+      }
+    else
+      {
+      size_t found = str_input.find(str_after);
+      leftmost = found == std::string::npos
+                 ? str_input.length()
+                 : found + str_after.length();
+      }
+
+    if( str_before.empty() )
+      {
+      rightmost = str_input.length();
+      }
+    else
+      {
+      size_t found = str_input.find(str_before, leftmost);
+      rightmost = found == std::string::npos ? str_input.length() : found;
+      }
+    }
+
+  if( leftmost < rightmost )
+    {
+    unsigned char conversion[256];
+    for(size_t i=0; i<256; i++)
+      {
+      conversion[i] = static_cast<unsigned char>(i);
+      }
+
+    // Construct the table backwards so that the first occurrence of a
+    // repeated original character supplies its replacement.
+    for(size_t i=str_original.length(); i>0; i--)
+      {
+      unsigned char from = static_cast<unsigned char>(str_original[i-1]);
+      conversion[from] = static_cast<unsigned char>(str_replacement[i-1]);
+      }
+
+    for(size_t i=leftmost; i<rightmost; i++)
+      {
+      unsigned char from = static_cast<unsigned char>(str_input[i]);
+      str_input[i] = static_cast<char>(conversion[from]);
+      }
+    }
+
+  memcpy(input->data + input_offset,
+         str_input.data(),
+         std::min(str_input.length(), input_size));
   }

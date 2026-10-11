@@ -318,6 +318,7 @@ unsigned const char omp_clause_num_ops[] =
   1, /* OMP_CLAUSE_UNIFORM  */
   1, /* OMP_CLAUSE_ENTER  */
   1, /* OMP_CLAUSE_LINK  */
+  1, /* OMP_CLAUSE_LOCAL */
   1, /* OMP_CLAUSE_DETACH  */
   1, /* OMP_CLAUSE_USE_DEVICE_PTR  */
   1, /* OMP_CLAUSE_USE_DEVICE_ADDR  */
@@ -363,7 +364,7 @@ unsigned const char omp_clause_num_ops[] =
   1, /* OMP_CLAUSE_THREAD_LIMIT  */
   0, /* OMP_CLAUSE_PROC_BIND  */
   1, /* OMP_CLAUSE_SAFELEN  */
-  1, /* OMP_CLAUSE_SIMDLEN  */
+  3, /* OMP_CLAUSE_SIMDLEN  */
   0, /* OMP_CLAUSE_DEVICE_TYPE  */
   0, /* OMP_CLAUSE_FOR  */
   0, /* OMP_CLAUSE_PARALLEL  */
@@ -424,6 +425,7 @@ const char * const omp_clause_code_name[] =
   "uniform",
   "enter",
   "link",
+  "local",
   "detach",
   "use_device_ptr",
   "use_device_addr",
@@ -1860,6 +1862,8 @@ wide_int_to_tree_1 (tree type, const wide_int_ref &pcst)
 
       switch (code)
 	{
+	/* This could represent the C++ std::meta::info type.  */
+	case LANG_TYPE:
 	case NULLPTR_TYPE:
 	  gcc_assert (hwi == 0);
 	  /* Fallthru.  */
@@ -2035,6 +2039,8 @@ cache_integer_cst (tree t, bool might_duplicate ATTRIBUTE_UNUSED)
      wide_int_to_type_1.  */
   switch (TREE_CODE (type))
     {
+    /* This could represent the C++ std::meta::info type.  */
+    case LANG_TYPE:
     case NULLPTR_TYPE:
       gcc_checking_assert (integer_zerop (t));
       /* Fallthru.  */
@@ -3324,6 +3330,29 @@ real_zerop (const_tree expr)
     default:
       return false;
     }
+}
+
+/* Return true if EXPR is the real constant negative zero.  */
+
+bool
+real_negzerop (const_tree expr)
+{
+  STRIP_ANY_LOCATION_WRAPPER (expr);
+
+  if (TREE_CODE (expr) == VECTOR_CST)
+    {
+      expr = uniform_vector_p (expr);
+      if (!expr)
+	return false;
+    }
+
+  if (TREE_CODE (expr) == COMPLEX_CST)
+    return real_negzerop (TREE_REALPART (expr))
+	   && real_negzerop (TREE_IMAGPART (expr));
+
+  return TREE_CODE (expr) == REAL_CST
+	  && REAL_VALUE_MINUS_ZERO (TREE_REAL_CST (expr))
+	  && !(DECIMAL_FLOAT_MODE_P (TYPE_MODE (TREE_TYPE (expr))));
 }
 
 /* Return true if EXPR is the real constant one in real or complex form.
@@ -10910,6 +10939,89 @@ uniform_integer_cst_p (tree t)
   return NULL_TREE;
 }
 
+/* Return true if ELT1 and ELT2 are INTEGER_CSTs and if ELT1 - ELT2 is
+   consistent with the uniform difference recorded in DIFF.  */
+
+static bool
+record_uniform_integer_difference (const_tree elt1, const_tree elt2,
+				   widest_int *diff, bool *diff_p)
+{
+  STRIP_ANY_LOCATION_WRAPPER (elt1);
+  STRIP_ANY_LOCATION_WRAPPER (elt2);
+
+  if (TREE_CODE (elt1) != INTEGER_CST
+      || TREE_CODE (elt2) != INTEGER_CST)
+    return false;
+
+  widest_int elt_diff = wi::to_widest (elt1) - wi::to_widest (elt2);
+  if (!*diff_p)
+    {
+      *diff = elt_diff;
+      *diff_p = true;
+      return true;
+    }
+
+  return *diff == elt_diff;
+}
+
+/* Return the uniform difference between two INTEGER_CSTs or corresponding
+   elements of two VECTOR_CSTs or NULL_TREE if no such difference exists.  */
+
+tree
+uniform_vector_difference_p (const_tree t1, const_tree t2)
+{
+  STRIP_ANY_LOCATION_WRAPPER (t1);
+  STRIP_ANY_LOCATION_WRAPPER (t2);
+
+  if (TREE_CODE (t1) == INTEGER_CST
+      && TREE_CODE (t2) == INTEGER_CST)
+    {
+      widest_int diff = wi::to_widest (t1) - wi::to_widest (t2);
+      if (!wi::fits_shwi_p (diff))
+	return NULL_TREE;
+      return build_int_cst (long_long_integer_type_node, diff.to_shwi ());
+    }
+
+  if (TREE_CODE (t1) != VECTOR_CST
+      || TREE_CODE (t2) != VECTOR_CST
+      || !known_eq (VECTOR_CST_NELTS (t1), VECTOR_CST_NELTS (t2)))
+    return NULL_TREE;
+
+  widest_int diff;
+  bool diff_p = false;
+
+  if (VECTOR_CST_LOG2_NPATTERNS (t1) == VECTOR_CST_LOG2_NPATTERNS (t2)
+      && (VECTOR_CST_NELTS_PER_PATTERN (t1)
+	  == VECTOR_CST_NELTS_PER_PATTERN (t2)))
+    {
+      unsigned int encoded_nelts = vector_cst_encoded_nelts (t1);
+      gcc_assert (encoded_nelts == vector_cst_encoded_nelts (t2));
+
+      for (unsigned int i = 0; i < encoded_nelts; ++i)
+	if (!record_uniform_integer_difference (VECTOR_CST_ENCODED_ELT (t1, i),
+						VECTOR_CST_ENCODED_ELT (t2, i),
+						&diff, &diff_p))
+	  return NULL_TREE;
+    }
+  else
+    {
+      unsigned HOST_WIDE_INT nelts;
+      if (!VECTOR_CST_NELTS (t1).is_constant (&nelts))
+	return NULL_TREE;
+
+      for (unsigned HOST_WIDE_INT i = 0; i < nelts; ++i)
+	if (!record_uniform_integer_difference (vector_cst_elt (t1, i),
+						vector_cst_elt (t2, i),
+						&diff, &diff_p))
+	  return NULL_TREE;
+    }
+
+  if (!diff_p || !wi::fits_shwi_p (diff))
+    return NULL_TREE;
+
+  return build_int_cst (long_long_integer_type_node, diff.to_shwi ());
+}
+
 /* Checks to see if T is a constant or a constant vector and if each element E
    adheres to ~E + 1 == pow2 then return ~E otherwise NULL_TREE.  */
 
@@ -12379,9 +12491,37 @@ tree_nop_conversion_p (const_tree outer_type, const_tree inner_type)
 	  || TREE_CODE (inner_type) == OFFSET_TYPE))
     return TYPE_PRECISION (outer_type) == TYPE_PRECISION (inner_type);
 
+  if (TYPE_MODE (outer_type) == BLKmode
+      && TYPE_MODE (inner_type) == BLKmode)
+    {
+      if (VECTOR_TYPE_P (outer_type)
+	  && VECTOR_TYPE_P (inner_type)
+	  && known_eq (TYPE_VECTOR_SUBPARTS (outer_type),
+		       TYPE_VECTOR_SUBPARTS (inner_type))
+	  && (TYPE_MODE (TREE_TYPE (outer_type))
+	      == TYPE_MODE (TREE_TYPE (inner_type))))
+	return true;
+      return false;
+    }
+
   /* Otherwise fall back on comparing machine modes (e.g. for
      aggregate types, floats).  */
   return TYPE_MODE (outer_type) == TYPE_MODE (inner_type);
+}
+
+/* Return true iff a view conversion from vector type INNER_TYPE to vector
+   type OUTER_TYPE has the same number of elements and does not change the
+   representation of an element.  */
+
+bool
+vector_nop_conversion_p (const_tree outer_type, const_tree inner_type)
+{
+  return (VECTOR_TYPE_P (outer_type)
+	  && VECTOR_TYPE_P (inner_type)
+	  && known_eq (TYPE_VECTOR_SUBPARTS (outer_type),
+		       TYPE_VECTOR_SUBPARTS (inner_type))
+	  && tree_nop_conversion_p (TREE_TYPE (outer_type),
+				    TREE_TYPE (inner_type)));
 }
 
 /* Return true iff conversion in EXP generates no instruction.  Mark

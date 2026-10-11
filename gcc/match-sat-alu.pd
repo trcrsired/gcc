@@ -23,6 +23,13 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 
+/* Clamp @0 between the constant bounds @1 and @2.  The source can put the
+   MIN or the MAX first.  */
+(match (integer_constant_clamp @0 @1 @2)
+ (max (min @0 INTEGER_CST@2) INTEGER_CST@1))
+(match (integer_constant_clamp @0 @1 @2)
+ (min (max @0 INTEGER_CST@1) INTEGER_CST@2))
+
 /* Saturation add for unsigned integer.  */
 (if (INTEGRAL_TYPE_P (type) && TYPE_UNSIGNED (type))
  (match (usadd_overflow_mask @0 @1)
@@ -69,6 +76,13 @@ along with GCC; see the file COPYING3.  If not see
     }
     (if (wi::eq_p (max, sum))))))
  (match (unsigned_integer_sat_add @0 @1)
+  /* SAT_U_ADD = X + MIN (~X, Y).  ~X is MAX - X, so the MIN caps Y at the
+     largest addend that does not overflow.  The MIN has to be single use:
+     while it stays live the saturating add is computed beside it instead of
+     replacing it, which costs an instruction.  */
+  (plus:c (min:c@2 (bit_not @0) @1) @0)
+  (if (single_use (@2))))
+ (match (unsigned_integer_sat_add @0 @1)
   /* SUM = ADD_OVERFLOW (X, Y)
      SAT_U_ADD = REALPART (SUM) | -IMAGPART (SUM)   */
   (bit_ior:c (realpart (IFN_ADD_OVERFLOW@2 @0 @1)) (negate (imagpart @2)))
@@ -98,6 +112,28 @@ along with GCC; see the file COPYING3.  If not see
 	 integer_minus_onep (realpart @2))
   (if (types_match (type, @0) && int_fits_type_p (@1, type))))
  (match (unsigned_integer_sat_add @0 @1)
+  /* SUM = ADD_OVERFLOW (X, Y)
+     SAT_U_ADD = IMAGPART (SUM) == 0 ? X + Y : -1.  */
+  (cond^ (eq (imagpart (IFN_ADD_OVERFLOW @0 @1)) integer_zerop)
+	 (plus @0 @1) integer_minus_onep))
+ (match (unsigned_integer_sat_add @0 @1)
+  /* SUM = ADD_OVERFLOW (X, Y)
+     SAT_U_ADD = IMAGPART (SUM) != 0 ? -1 : X + Y.  */
+  (cond^ (ne (imagpart (IFN_ADD_OVERFLOW @0 @1)) integer_zerop)
+	 integer_minus_onep (plus @0 @1)))
+ /* A source that tests for overflow against the complement of an operand,
+    such as a > MAX - b ? MAX : a + b, reaches the recognisers as a compare
+    with ~Y, since ~Y is MAX - Y.  The strict and non-strict forms are both
+    exact because at X == ~Y the sum is MAX and the two arms agree.  */
+ (for cmp (ge gt)
+  (match (unsigned_integer_sat_add @0 @1)
+   (cond^ (cmp:c (bit_not @1) @0)
+	  (plus:c @0 @1) integer_minus_onep)))
+ (for cmp (lt le)
+  (match (unsigned_integer_sat_add @0 @1)
+   (cond^ (cmp:c (bit_not @1) @0)
+	  integer_minus_onep (plus:c @0 @1))))
+ (match (unsigned_integer_sat_add @0 @1)
   /* WIDEN_SUM = (WT)X + (WT)Y
      SAT_U_ADD = WIDEN_SUM > MAX ? MAX : (NT)WIDEN_SUM  */
   (cond^ (le (plus (convert@2 @0) (convert@3 @1)) INTEGER_CST@4)
@@ -109,28 +145,56 @@ along with GCC; see the file COPYING3.  If not see
      unsigned widen_precision = TYPE_PRECISION (TREE_TYPE (@2));
      wide_int max = wi::mask (precision, false, widen_precision);
      wide_int c4 = wi::to_wide (@4);
+     /* A source written with < rather than <= puts MAX - 1 in the compare.
+	The sum equal to MAX then takes the other arm, which is also MAX.  */
+     wide_int c4_add_1 = wi::add (c4, wi::uhwi (1, widen_precision));
     }
-    (if (wi::eq_p (c4, max) && widen_precision > precision))))))
+    (if ((wi::eq_p (c4, max) || wi::eq_p (c4_add_1, max))
+	 && widen_precision > precision))))))
 
 /* Saturation sub for unsigned integer.  */
 (if (INTEGRAL_TYPE_P (type) && TYPE_UNSIGNED (type))
  (match (unsigned_integer_sat_sub @0 @1)
-  /* SAT_U_SUB = X > Y ? X - Y : 0  */
-  (cond^ (gt @0 @1) (minus @0 @1) integer_zerop)
+  /* SAT_U_SUB = X > Y ? X - Y : 0, and the commuted comparison.  */
+  (cond^ (gt:c @0 @1) (minus @0 @1) integer_zerop)
   (if (types_match (type, @0, @1))))
  (match (unsigned_integer_sat_sub @0 @1)
-  /* SAT_U_SUB = X >= Y ? X - Y : 0  */
-  (cond^ (ge @0 @1) (convert? (minus (convert1? @0) (convert1? @1)))
+  /* SAT_U_SUB = X >= Y ? X - Y : 0, and the commuted comparison.  */
+  (cond^ (ge:c @0 @1) (convert? (minus (convert1? @0) (convert1? @1)))
 		    integer_zerop)
   (if (TYPE_UNSIGNED (TREE_TYPE (@0)) && types_match (@0, @1))))
  (match (unsigned_integer_sat_sub @0 @1)
-  /* SAT_U_SUB = (X - Y) * (X > Y)  */
-  (mult:c (minus @0 @1) (convert (gt @0 @1)))
+  /* SAT_U_SUB = (X - Y) * (X > Y), and the commuted comparison.  */
+  (mult:c (minus @0 @1) (convert (gt:c @0 @1)))
   (if (types_match (type, @0, @1))))
  (match (unsigned_integer_sat_sub @0 @1)
-  /* SAT_U_SUB = (X - Y) * (X >= Y)  */
-  (mult:c (minus @0 @1) (convert (ge @0 @1)))
+  /* SAT_U_SUB = (X - Y) * (X >= Y), and the commuted comparison.  */
+  (mult:c (minus @0 @1) (convert (ge:c @0 @1)))
   (if (types_match (type, @0, @1))))
+ /* A source with two returns can keep zero on the taken arm.  Accept a
+    commuted comparison in this form too.  */
+ (match (unsigned_integer_sat_sub @0 @1)
+  (cond^ (lt:c @0 @1) integer_zerop (minus @0 @1))
+  (if (types_match (type, @0, @1))))
+ (match (unsigned_integer_sat_sub @0 @1)
+  (cond^ (le:c @0 @1) integer_zerop
+	 (convert? (minus (convert1? @0) (convert1? @1))))
+  (if (TYPE_UNSIGNED (TREE_TYPE (@0)) && types_match (@0, @1))))
+ /* The wrapped difference exceeds the minuend exactly when the subtraction
+    borrows, so a source that names the difference and then tests it against
+    the minuend is a saturating subtract.  */
+ (match (unsigned_integer_sat_sub @0 @1)
+  /* SAT_U_SUB = (X - Y) > X ? 0 : X - Y, and the commuted comparison.  */
+  (cond^ (gt:c (minus@2 @0 @1) @0) integer_zerop @2))
+ (match (unsigned_integer_sat_sub @0 @1)
+  /* SAT_U_SUB = (X - Y) <= X ? X - Y : 0, and the commuted comparison.  */
+  (cond^ (le:c (minus@2 @0 @1) @0) @2 integer_zerop))
+ (match (unsigned_integer_sat_sub @0 @1)
+  /* SAT_U_SUB = X - MIN (X, Y).  The MIN has to be single use: while it
+     stays live the saturating subtract is computed beside it instead of
+     replacing it, which costs an instruction.  */
+  (minus @0 (min:c@2 @0 @1))
+  (if (single_use (@2))))
  (match (unsigned_integer_sat_sub @0 @1)
   /* DIFF = SUB_OVERFLOW (X, Y)
      SAT_U_SUB = REALPART (DIFF) | (IMAGPART (DIFF) + (-1))  */
@@ -207,12 +271,19 @@ along with GCC; see the file COPYING3.  If not see
   /* SAT_U_TRUNC<NT>(MAX (0, X)) =
 	     (UT)X & ~(NT)(-1) ? (-X) >> TYPE_PRECISION(X) - 1 : X
 
-     The gimple representation uses X > ~(NT)(-1) instead of
-     using & so match on gt instead of bit_and.  */
-  (convert (cond^ (gt (nop_convert? @0) INTEGER_CST@1)
-	 (rshift:s (nop_convert? (negate (nop_convert? @0))) INTEGER_CST@2)
+     The gimple representation uses an unsigned X > ~(NT)(-1) instead of
+     using & so match on gt instead of bit_and.  The right shift must be
+     signed so that it produces -1 for values above NT_MAX.
+
+     The two sides only agree when X is not the minimum of its type.  At
+     that value the negation is its own inverse, so the shift yields -1
+     and the expression gives NT_MAX where MAX (0, X) gives 0.  */
+  (convert (cond^ (gt (nop_convert?@3 @0) INTEGER_CST@1)
+	 (rshift:s@4 (nop_convert? (negate (nop_convert? @0))) INTEGER_CST@2)
 	 @0))
-  (if (! TYPE_UNSIGNED (TREE_TYPE (@0)))
+  (if (! TYPE_UNSIGNED (TREE_TYPE (@0))
+	&& TYPE_UNSIGNED (TREE_TYPE (@3))
+	&& ! TYPE_UNSIGNED (TREE_TYPE (@4)))
    (with
     {
      unsigned itype_precision = TYPE_PRECISION (TREE_TYPE (@0));
@@ -225,8 +296,49 @@ along with GCC; see the file COPYING3.  If not see
      int cmp = 0;
      cmp = wi::cmp (int_cst_2, shift_amount, TYPE_SIGN (TREE_TYPE (@0)));
     }
-    (if (otype_precision < itype_precision && wi::eq_p (trunc_max,
-    int_cst_1) && (cmp >= 0)))))))
+    (if (otype_precision < itype_precision
+	 && wi::eq_p (trunc_max, int_cst_1)
+	 && cmp >= 0
+	 && expr_not_equal_to (@0, wi::min_value (itype_precision,
+						  SIGNED)))))))
+ (match (unsigned_integer_narrow_clip @0)
+  /* Use the sign of ~X for a source that avoids negating the minimum signed
+     value.  For a negative X, ~X is nonnegative and gives zero.  For a
+     positive X above the result range, ~X is negative and gives all ones.  */
+  (convert (cond^ (gt (nop_convert@3 @0) INTEGER_CST@1)
+	 (rshift:s (bit_not @0) INTEGER_CST@2)
+	 @0))
+  (if (!TYPE_UNSIGNED (TREE_TYPE (@0))
+       && TYPE_UNSIGNED (TREE_TYPE (@3)))
+   (with
+    {
+     unsigned itype_precision = TYPE_PRECISION (TREE_TYPE (@0));
+     unsigned otype_precision = TYPE_PRECISION (type);
+     wide_int trunc_max = wi::mask (otype_precision, false, itype_precision);
+     wide_int int_cst_1 = wi::to_wide (@1, itype_precision);
+     wide_int int_cst_2 = wi::to_wide (@2, itype_precision);
+     wide_int shift_amount = wi::uhwi (itype_precision - 1,
+				  itype_precision);
+     int cmp = wi::cmp (int_cst_2, shift_amount,
+		       TYPE_SIGN (TREE_TYPE (@0)));
+    }
+    (if (otype_precision < itype_precision
+	 && wi::eq_p (trunc_max, int_cst_1)
+	 && cmp >= 0)))))
+ (match (unsigned_integer_narrow_clip @0)
+  /* SAT_US_TRUNC = (NT)MAX (MIN (X, NT_MAX), 0).  */
+  (convert (integer_constant_clamp@3 @0 integer_zerop@1 @2))
+  (if (!TYPE_UNSIGNED (TREE_TYPE (@0))
+	&& single_use (@3))
+   (with
+    {
+     unsigned itype_precision = TYPE_PRECISION (TREE_TYPE (@0));
+     unsigned otype_precision = TYPE_PRECISION (type);
+     wide_int trunc_max = wi::mask (otype_precision, false, itype_precision);
+     wide_int hi_cst = wi::to_wide (@2, itype_precision);
+    }
+    (if (otype_precision < itype_precision
+	 && wi::eq_p (hi_cst, trunc_max)))))))
 
 /* Saturation truncate for unsigned integer.  */
 (if (INTEGRAL_TYPE_P (type) && TYPE_UNSIGNED (type))
@@ -286,7 +398,15 @@ along with GCC; see the file COPYING3.  If not see
  (match (signed_integer_sat_val @0)
   (bit_xor:c (nop_convert? (negate
 			    (nop_convert? (convert (lt @0 integer_zerop)))))
-	     max_value)))
+	     max_value))
+ /* SAT_VAL = ((T)(X >> (PRECISION (X) - 1)) ^ MAX).
+    The shift produces zero or minus one.  A signed conversion can narrow or
+    extend either value exactly.  */
+ (match (signed_integer_sat_val @0)
+  (bit_xor:c (convert? (rshift @0 INTEGER_CST@1)) max_value)
+  (if (!TYPE_UNSIGNED (TREE_TYPE (@0))
+	&& (wi::to_wide (@1)
+	    == TYPE_PRECISION (TREE_TYPE (@0)) - 1)))))
 
 /* Saturation add for signed integer.  */
 (if (INTEGRAL_TYPE_P (type) && !TYPE_UNSIGNED (type))
@@ -379,7 +499,52 @@ along with GCC; see the file COPYING3.  If not see
                    integer_zerop)
            (signed_integer_sat_val @0)
            @2)
-   (if (wi::eq_p (wi::to_wide (@1), wi::to_wide (@3))))))
+   (if (wi::eq_p (wi::to_wide (@1), wi::to_wide (@3)))))
+
+ /* A signed saturating add written as a two sided clamp on a wider
+    intermediate, which is a common source form and what the integer
+    promotions leave for a narrow type.  Both nesting orders occur:
+    an if followed by an if or an else if gives MAX then MIN, while
+    max (min (t, HI), LO) gives MIN then MAX.  */
+ (match (signed_integer_sat_add @0 @1)
+  /* WT SUM = (WT)X + (WT)Y
+     SAT_S_ADD = (T)MIN (MAX (SUM, T_MIN), T_MAX)  */
+  (convert (min@4 (max (plus (convert @0) (convert @1)) INTEGER_CST@2)
+		INTEGER_CST@3))
+  (if (types_match (type, @0, @1) && single_use (@4))
+   (with
+    {
+     unsigned precision = TYPE_PRECISION (type);
+     tree wide_type = TREE_TYPE (@2);
+     unsigned wide_precision = TYPE_PRECISION (wide_type);
+     wide_int lo = wide_int::from (wi::min_value (precision, SIGNED),
+				   wide_precision, SIGNED);
+     wide_int hi = wide_int::from (wi::max_value (precision, SIGNED),
+				   wide_precision, SIGNED);
+    }
+    /* One extra bit is enough for a sum of two values of the narrow type,
+       and at equal precision the clamp is not a saturating add at all.  */
+    (if (wide_precision > precision && !TYPE_UNSIGNED (wide_type)
+	 && wi::eq_p (wi::to_wide (@2), lo)
+	 && wi::eq_p (wi::to_wide (@3), hi))))))
+ (match (signed_integer_sat_add @0 @1)
+  /* SAT_S_ADD = (T)MAX (MIN (SUM, T_MAX), T_MIN)  */
+  (convert (max@4 (min (plus (convert @0) (convert @1)) INTEGER_CST@3)
+		INTEGER_CST@2))
+  (if (types_match (type, @0, @1) && single_use (@4))
+   (with
+    {
+     unsigned precision = TYPE_PRECISION (type);
+     tree wide_type = TREE_TYPE (@2);
+     unsigned wide_precision = TYPE_PRECISION (wide_type);
+     wide_int lo = wide_int::from (wi::min_value (precision, SIGNED),
+				   wide_precision, SIGNED);
+     wide_int hi = wide_int::from (wi::max_value (precision, SIGNED),
+				   wide_precision, SIGNED);
+    }
+    (if (wide_precision > precision && !TYPE_UNSIGNED (wide_type)
+	 && wi::eq_p (wi::to_wide (@2), lo)
+	 && wi::eq_p (wi::to_wide (@3), hi)))))))
 
 /* Saturation sub for signed integer.  */
 (if (INTEGRAL_TYPE_P (type) && !TYPE_UNSIGNED (type))
@@ -416,40 +581,140 @@ along with GCC; see the file COPYING3.  If not see
   (cond^ (ne (imagpart (IFN_SUB_OVERFLOW@2 @0 @1)) integer_zerop)
 	 (signed_integer_sat_val @0)
 	 (realpart @2))
-  (if (types_match (type, @0, @1)))))
+  (if (types_match (type, @0, @1))))
+ /* The same two sided clamp on a wider intermediate, for a subtraction.  */
+ (match (signed_integer_sat_sub @0 @1)
+  /* WT DIFF = (WT)X - (WT)Y
+     SAT_S_SUB = (T)MIN (MAX (DIFF, T_MIN), T_MAX)  */
+  (convert (min@4 (max (minus (convert @0) (convert @1)) INTEGER_CST@2)
+		INTEGER_CST@3))
+  (if (types_match (type, @0, @1) && single_use (@4))
+   (with
+    {
+     unsigned precision = TYPE_PRECISION (type);
+     tree wide_type = TREE_TYPE (@2);
+     unsigned wide_precision = TYPE_PRECISION (wide_type);
+     wide_int lo = wide_int::from (wi::min_value (precision, SIGNED),
+				   wide_precision, SIGNED);
+     wide_int hi = wide_int::from (wi::max_value (precision, SIGNED),
+				   wide_precision, SIGNED);
+    }
+    (if (wide_precision > precision && !TYPE_UNSIGNED (wide_type)
+	 && wi::eq_p (wi::to_wide (@2), lo)
+	 && wi::eq_p (wi::to_wide (@3), hi))))))
+ (match (signed_integer_sat_sub @0 @1)
+  /* SAT_S_SUB = (T)MAX (MIN (DIFF, T_MAX), T_MIN)  */
+  (convert (max@4 (min (minus (convert @0) (convert @1)) INTEGER_CST@3)
+		INTEGER_CST@2))
+  (if (types_match (type, @0, @1) && single_use (@4))
+   (with
+    {
+     unsigned precision = TYPE_PRECISION (type);
+     tree wide_type = TREE_TYPE (@2);
+     unsigned wide_precision = TYPE_PRECISION (wide_type);
+     wide_int lo = wide_int::from (wi::min_value (precision, SIGNED),
+				   wide_precision, SIGNED);
+     wide_int hi = wide_int::from (wi::max_value (precision, SIGNED),
+				   wide_precision, SIGNED);
+    }
+    (if (wide_precision > precision && !TYPE_UNSIGNED (wide_type)
+	 && wi::eq_p (wi::to_wide (@2), lo)
+	 && wi::eq_p (wi::to_wide (@3), hi)))))))
 
 /* Saturation truncate for signed integer.  */
 (if (INTEGRAL_TYPE_P (type) && !TYPE_UNSIGNED (type))
  (match (signed_integer_sat_trunc @0)
   /* SAT_S_TRUNC(X) = (unsigned)X + NT_MAX + 1  > Unsigned_MAX ? (NT)X  */
   (cond^ (gt (plus:c (convert@4 @0) INTEGER_CST@1) INTEGER_CST@2)
-	 (bit_xor:c (nop_convert?
-		     (negate (nop_convert? (convert (lt @0 integer_zerop)))))
-		    INTEGER_CST@3)
+	 (signed_integer_sat_val @0)
 	 (convert @0))
-  (if (!TYPE_UNSIGNED (TREE_TYPE (@0)) && TYPE_UNSIGNED (TREE_TYPE (@4)))
+  /* The comparison type has to be unsigned and at least as wide as X.  A
+     narrower type would examine only the low bits of X.  The result
+     conversion has to narrow X.  */
+  (if (!TYPE_UNSIGNED (TREE_TYPE (@0))
+	&& TYPE_UNSIGNED (TREE_TYPE (@4))
+	&& (TYPE_PRECISION (TREE_TYPE (@4))
+	    >= TYPE_PRECISION (TREE_TYPE (@0)))
+	&& TYPE_PRECISION (type) < TYPE_PRECISION (TREE_TYPE (@0)))
    (with
     {
-     unsigned itype_prec = TYPE_PRECISION (TREE_TYPE (@0));
      unsigned otype_prec = TYPE_PRECISION (type);
-     wide_int offset = wi::uhwi (HOST_WIDE_INT_1U << (otype_prec - 1),
-				 itype_prec); // Aka 128 for int8_t
-     wide_int limit_0 = wi::mask (otype_prec, false, itype_prec); // Aka 255
-     wide_int limit_1 = wi::uhwi ((HOST_WIDE_INT_1U << otype_prec) - 3,
-				  itype_prec); // Aka 253
-     wide_int limit_2 = wi::uhwi ((HOST_WIDE_INT_1U << otype_prec) - 2,
-				  itype_prec); // Aka 254
-     wide_int otype_max = wi::mask (otype_prec - 1, false, otype_prec);
-     wide_int itype_max = wi::mask (otype_prec - 1, false, itype_prec);
+     unsigned range_prec = TYPE_PRECISION (TREE_TYPE (@4));
+     wide_int offset = wi::set_bit_in_zero (otype_prec - 1, range_prec);
+     wide_int limit_0 = wi::mask (otype_prec, false, range_prec); // Aka 255
+     wide_int limit_1 = limit_0 - 2; // Aka 253
+     wide_int limit_2 = limit_0 - 1; // Aka 254
+     wide_int otype_max_in_range
+	= wi::mask (otype_prec - 1, false, range_prec);
      wide_int int_cst_1 = wi::to_wide (@1);
      wide_int int_cst_2 = wi::to_wide (@2);
-     wide_int int_cst_3 = wi::to_wide (@3);
     }
-    (if (((wi::eq_p (int_cst_1, offset) && wi::eq_p (int_cst_2, limit_0))
-	 || (wi::eq_p (int_cst_1, itype_max) && wi::eq_p (int_cst_2, limit_2))
+    (if ((wi::eq_p (int_cst_1, offset)
+	  && wi::eq_p (int_cst_2, limit_0))
+	 || (wi::eq_p (int_cst_1, otype_max_in_range)
+	     && wi::eq_p (int_cst_2, limit_2))
 	 || (wi::eq_p (int_cst_1, offset) && wi::eq_p (int_cst_2, limit_2))
-	 || (wi::eq_p (int_cst_1, itype_max) && wi::eq_p (int_cst_2, limit_1)))
-	 && wi::eq_p (int_cst_3, otype_max)))))))
+	 || (wi::eq_p (int_cst_1, otype_max_in_range)
+	     && wi::eq_p (int_cst_2, limit_1)))))))
+ (match (signed_integer_sat_trunc @0)
+  /* SAT_S_TRUNC = (NT)MAX (MIN (X, NT_MAX), NT_MIN).  */
+  (convert (integer_constant_clamp@3 @0 @1 @2))
+  (if (!TYPE_UNSIGNED (TREE_TYPE (@0))
+	&& single_use (@3))
+   (with
+    {
+     unsigned itype_precision = TYPE_PRECISION (TREE_TYPE (@0));
+     unsigned otype_precision = TYPE_PRECISION (type);
+     wide_int otype_min = wi::mask (otype_precision - 1, true,
+				    itype_precision);
+     wide_int otype_max = wi::mask (otype_precision - 1, false,
+				    itype_precision);
+     wide_int lo_cst = wi::to_wide (@1, itype_precision);
+     wide_int hi_cst = wi::to_wide (@2, itype_precision);
+    }
+    (if (otype_precision < itype_precision
+	 && wi::eq_p (lo_cst, otype_min)
+	 && wi::eq_p (hi_cst, otype_max)))))))
+
+/* An arithmetic right shift preserves the sign of its signed input.  The
+   saturation value can therefore use the input sign while the range check
+   and truncated result use the shifted value.  */
+(if (INTEGRAL_TYPE_P (type) && !TYPE_UNSIGNED (type))
+ (match (signed_integer_sat_trunc @0)
+  (cond^ (gt (plus:c (convert@4
+		       (rshift@0 @5 INTEGER_CST@6)) INTEGER_CST@1)
+	     INTEGER_CST@2)
+	 (signed_integer_sat_val @5)
+	 (convert @0))
+  (if (!TYPE_UNSIGNED (TREE_TYPE (@0))
+	&& TYPE_UNSIGNED (TREE_TYPE (@4))
+	&& tree_fits_uhwi_p (@6)
+	&& TYPE_PRECISION (type) < TYPE_PRECISION (TREE_TYPE (@0))
+	&& tree_to_uhwi (@6) < TYPE_PRECISION (TREE_TYPE (@0))
+	&& TYPE_PRECISION (TREE_TYPE (@4)) >= TYPE_PRECISION (type)
+	&& (TYPE_PRECISION (TREE_TYPE (@4))
+	    >= TYPE_PRECISION (TREE_TYPE (@0)) - tree_to_uhwi (@6)))
+   (with
+    {
+     unsigned otype_prec = TYPE_PRECISION (type);
+     unsigned range_prec = TYPE_PRECISION (TREE_TYPE (@4));
+     wide_int offset = wi::set_bit_in_zero (otype_prec - 1, range_prec);
+     wide_int limit_0 = wi::mask (otype_prec, false, range_prec); // Aka 255
+     wide_int limit_1 = limit_0 - 2; // Aka 253
+     wide_int limit_2 = limit_0 - 1; // Aka 254
+     wide_int otype_max_in_range
+	= wi::mask (otype_prec - 1, false, range_prec);
+     wide_int int_cst_1 = wi::to_wide (@1);
+     wide_int int_cst_2 = wi::to_wide (@2);
+    }
+    (if ((wi::eq_p (int_cst_1, offset)
+	      && wi::eq_p (int_cst_2, limit_0))
+	     || (wi::eq_p (int_cst_1, otype_max_in_range)
+		 && wi::eq_p (int_cst_2, limit_2))
+	     || (wi::eq_p (int_cst_1, offset)
+		 && wi::eq_p (int_cst_2, limit_2))
+	     || (wi::eq_p (int_cst_1, otype_max_in_range)
+		 && wi::eq_p (int_cst_2, limit_1))))))))
 
 /* Saturation mult for unsigned integer.  */
 (if (INTEGRAL_TYPE_P (type) && TYPE_UNSIGNED (type))

@@ -651,10 +651,19 @@ ASTLoweringBase::lower_path_expr_seg (AST::PathExprSegment &s)
 HIR::GenericArgsBinding
 ASTLoweringBase::lower_binding (AST::GenericArgsBinding &binding)
 {
-  HIR::Type *lowered_type = ASTLoweringType::translate (binding.get_type ());
+  auto impl_trait_allowed
+    = binding.get_kind () == AST::GenericArgsBinding::Kind::Constraint
+	? ASTLoweringType::ImplTrait::Allow
+	: ASTLoweringType::ImplTrait::Forbid;
+  HIR::Type *lowered_type
+    = ASTLoweringType::translate (binding.get_type (), false,
+				  impl_trait_allowed);
+  auto kind = binding.get_kind () == AST::GenericArgsBinding::Kind::Constraint
+		? HIR::GenericArgsBinding::Kind::Constraint
+		: HIR::GenericArgsBinding::Kind::Equality;
   return HIR::GenericArgsBinding (binding.get_identifier (),
 				  std::unique_ptr<HIR::Type> (lowered_type),
-				  binding.get_locus ());
+				  binding.get_locus (), kind);
 }
 
 HIR::GenericArgs
@@ -797,11 +806,18 @@ ASTLoweringBase::handle_outer_attributes (const ItemWrapper &item)
   for (const auto &attr : item.get_outer_attrs ())
     {
       const auto &str_path = attr.get_path ().as_string ();
-      if (!Analysis::Attributes::is_known (str_path))
+      auto known_check = Analysis::Attributes::is_known (str_path);
+      if (known_check == Analysis::Attributes::AttributeKnowledge::Unknown)
 	{
-	  rust_error_at (attr.get_locus (), "unknown attribute");
+	  rust_error_at (attr.get_locus (), "unknown attribute: %qs",
+			 str_path.c_str ());
 	  continue;
 	}
+
+      // If it is a tool attribute, the compiler can ignore it and let the tool
+      // handle it
+      if (known_check == Analysis::Attributes::AttributeKnowledge::Tool)
+	return;
 
       bool is_lang_item = str_path == Values::Attributes::LANG
 			  && attr.has_attr_input ()

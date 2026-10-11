@@ -26,7 +26,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple.h"
 #include "gimplify.h"
 #include "ssa.h"
-#include "tree-pretty-print.h"
 #include "fold-const.h"
 #include "gimple-range.h"
 #include "value-range-storage.h"
@@ -710,9 +709,9 @@ prange_storage::set_prange (const prange &r)
 {
   unsigned num_words;
   m_kind = prange_format (r, num_words);
-  m_has_bitmask = !r.get_bitmask ().unknown_p ();
+  m_has_bitmask = false;
+  m_points_to_p = false;
   m_pt = r.m_pt;
-  m_points_to_p = r.m_points_to_p;
 
   unsigned index = 0;
 
@@ -732,6 +731,9 @@ prange_storage::set_prange (const prange &r)
       default:
 	gcc_unreachable ();
     }
+
+  m_has_bitmask = !r.get_bitmask ().unknown_p ();
+  m_points_to_p = r.m_points_to_p;
 
   if (m_has_bitmask)
     {

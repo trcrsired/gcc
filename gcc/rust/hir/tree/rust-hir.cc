@@ -2387,7 +2387,9 @@ GenericArgs::to_string () const
 std::string
 GenericArgsBinding::to_string () const
 {
-  return identifier.as_string () + " = " + type->to_string ();
+  auto type_string = type->to_string ();
+  auto separator = kind == Kind::Constraint ? " : " : " = ";
+  return identifier.as_string () + separator + type_string;
 }
 
 std::string
@@ -2448,6 +2450,12 @@ SlicePatternItemsHasRest::to_string () const
 	  str += "\n  " + lower->to_string ();
 	}
     }
+
+  str += "\n Rest binding pattern: ";
+  if (rest_bind)
+    str += rest_bind->to_string ();
+  else
+    str += "none";
 
   str += "\n Upper patterns: ";
   if (upper_patterns.empty ())

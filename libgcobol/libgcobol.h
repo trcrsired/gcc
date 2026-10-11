@@ -78,13 +78,12 @@ extern "C" void __gg__float128_to_field(cblc_field_t   *tgt,
                                         GCOB_FP128       value,
                                         enum cbl_round_t  rounded,
                                       int            *compute_error);
-extern "C" void __gg__int128_to_qualified_field(cblc_field_t   *tgt,
-                                size_t          offset,
-                                size_t          length,
-                                __int128        value,
-                                int             source_rdigits,
-                                enum cbl_round_t  rounded,
-                                int            *compute_error);
+extern "C" int __gg__int128_to_qualified_field(cblc_field_t   *tgt,
+                                             size_t          offset,
+                                             size_t          length,
+                                             __int128        value,
+                                             int             source_rdigits,
+                                             enum cbl_round_t  rounded);
 extern "C" void __gg__float128_to_qualified_field(cblc_field_t   *tgt,
                                   size_t          tgt_offset,
                                   GCOB_FP128       value,
@@ -153,5 +152,17 @@ extern "C"
 void *__gg__memdup(const void *p, size_t size);
 
 enum {width_of_utf32 = 4};
+
+extern "C" __int128 __gg__int128_to_int128_rounded( cbl_round_t rounded,
+                                                    __int128    value,
+                                                    __int128    factor,
+                                                    int        *compute_error);
+
+extern "C" int __gg__move_literala( cblc_field_t *field,
+                                    size_t        field_offset,
+                                    size_t        field_size,
+                                    cbl_round_t   rounded_,
+                                    const char   *str,
+                                    size_t        strlen );
 
 #endif

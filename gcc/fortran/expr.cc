@@ -1222,7 +1222,8 @@ is_subref_array (gfc_expr * e)
 
   sym = e->symtree->n.sym;
 
-  if (sym->attr.subref_array_pointer)
+  if (sym->attr.subref_array_pointer
+      || gfc_is_span_addressed_dummy (sym))
     return true;
 
   seen_array = false;
@@ -4413,16 +4414,6 @@ gfc_check_pointer_assign (gfc_expr *lvalue, gfc_expr *rvalue,
       const char *name;
 
       attr = gfc_expr_attr (rvalue);
-      if (!((rvalue->expr_type == EXPR_NULL)
-	    || (rvalue->expr_type == EXPR_FUNCTION && attr.proc_pointer)
-	    || (rvalue->expr_type == EXPR_VARIABLE && attr.proc_pointer)
-	    || (rvalue->expr_type == EXPR_VARIABLE
-		&& attr.flavor == FL_PROCEDURE)))
-	{
-	  gfc_error ("Invalid procedure pointer assignment at %L",
-		     &rvalue->where);
-	  return false;
-	}
 
       if (rvalue->expr_type == EXPR_VARIABLE && !attr.proc_pointer)
 	{
@@ -4451,6 +4442,18 @@ gfc_check_pointer_assign (gfc_expr *lvalue, gfc_expr *rvalue,
 		  }
 	    }
 	}
+
+      if (!((rvalue->expr_type == EXPR_NULL)
+	    || (rvalue->expr_type == EXPR_FUNCTION && attr.proc_pointer)
+	    || (rvalue->expr_type == EXPR_VARIABLE && attr.proc_pointer)
+	    || (rvalue->expr_type == EXPR_VARIABLE
+		&& attr.flavor == FL_PROCEDURE)))
+	{
+	  gfc_error ("Invalid procedure pointer assignment at %L",
+		     &rvalue->where);
+	  return false;
+	}
+
       if (attr.abstract)
 	{
 	  gfc_error ("Abstract interface %qs is invalid "
@@ -6417,8 +6420,8 @@ gfc_is_simply_contiguous (gfc_expr *expr, bool strict, bool permit_element)
       if (expr->ts.type == BT_UNKNOWN)
 	return true;
       else
-	return (gfc_variable_attr (expr, NULL).contiguous
-		|| gfc_variable_attr (expr, NULL).allocatable);
+	return (gfc_variable_attr (expr).contiguous
+		|| gfc_variable_attr (expr).allocatable);
     }
 
   if (expr->expr_type == EXPR_FUNCTION)
@@ -6487,12 +6490,13 @@ gfc_is_simply_contiguous (gfc_expr *expr, bool strict, bool permit_element)
     return false;
 
   /* An associate variable may point to a non-contiguous target.  */
-  if (ar && ar->type == AR_FULL
+  if (!part_ref
       && sym->attr.associate_var && !sym->attr.contiguous
       && sym->assoc
-      && sym->assoc->target)
-    return gfc_is_simply_contiguous (sym->assoc->target, strict,
-				     permit_element);
+      && sym->assoc->target
+      && !gfc_is_simply_contiguous (sym->assoc->target, strict,
+				    permit_element))
+    return false;
 
   if (!ar || ar->type == AR_FULL)
     return true;

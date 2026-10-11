@@ -564,7 +564,9 @@ void gfc_conv_subref_array_arg (gfc_se *, gfc_expr *, int, sym_intent, bool,
 				const gfc_symbol *fsym = NULL,
 				const char *proc_name = NULL,
 				gfc_symbol *sym = NULL,
-				bool check_contiguous = false);
+				bool check_contiguous = false,
+				bool deep_copy = false,
+				bool span_only = false);
 
 void gfc_conv_is_contiguous_expr (gfc_se *, gfc_expr *);
 
@@ -640,6 +642,9 @@ tree gfc_build_array_ref (tree, tree, tree,
 
 /* Build an array ref using pointer arithmetic.  */
 tree gfc_build_spanned_array_ref (tree base, tree offset, tree span);
+
+/* Return the descriptor holding the span of a pointer array decl.  */
+tree gfc_get_span_descriptor (tree);
 
 /* Creates a label.  Decl is artificial if label_id == NULL_TREE.  */
 tree gfc_build_label_decl (tree);
@@ -1016,12 +1021,6 @@ extern GTY(()) tree gfor_fndecl_cfi_deep_copy_array;
 /* gfortran-specific declaration information, the _CONT versions denote
    arrays with CONTIGUOUS attribute.  */
 
-#define GFC_DTYPE_ELEM_LEN 0
-#define GFC_DTYPE_VERSION 1
-#define GFC_DTYPE_RANK 2
-#define GFC_DTYPE_TYPE 3
-#define GFC_DTYPE_ATTRIBUTE 4
-
 enum gfc_array_kind
 {
   GFC_ARRAY_UNKNOWN,
@@ -1057,6 +1056,8 @@ struct GTY(())	lang_type	 {
 struct GTY(()) lang_decl {
   /* Dummy variables.  */
   tree saved_descriptor;
+  /* Element spacing of a span addressed dummy, loaded once on entry.  */
+  tree span;
   /* Assigned integer nodes.  Stringlength is the IO format string's length.
      Addr is the address of the string or the target label. Stringlength is
      initialized to -2 and assigned to -1 when addr is assigned to the
@@ -1069,6 +1070,9 @@ struct GTY(()) lang_decl {
   unsigned int scalar_pointer : 1;
   unsigned int scalar_target : 1;
   unsigned int optional_arg : 1;
+  /* The element spacing of this dummy is held by the strides of its
+     descriptor rather than by its span.  */
+  unsigned int span_normalized : 1;
 };
 
 
@@ -1078,6 +1082,13 @@ struct GTY(()) lang_decl {
 #define GFC_DECL_CAF_OFFSET(node) DECL_LANG_SPECIFIC(node)->caf_offset
 #define GFC_DECL_SAVED_DESCRIPTOR(node) \
   (DECL_LANG_SPECIFIC(node)->saved_descriptor)
+#define GFC_DECL_SPAN(node) (DECL_LANG_SPECIFIC(node)->span)
+#define GFC_DECL_SPAN_NORMALIZED(node) \
+  (DECL_LANG_SPECIFIC(node)->span_normalized)
+/* Return the cached span of a span addressed dummy, or NULL_TREE.  */
+#define GFC_DECL_GET_SPAN(node) \
+  (DECL_P (node) && DECL_LANG_SPECIFIC (node) \
+   ? GFC_DECL_SPAN (node) : NULL_TREE)
 #define GFC_DECL_SCALAR_ALLOCATABLE(node) \
   (DECL_LANG_SPECIFIC (node)->scalar_allocatable)
 #define GFC_DECL_SCALAR_POINTER(node) \

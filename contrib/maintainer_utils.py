@@ -47,11 +47,11 @@ maintainer_schema = {
                 'properties': {
                     'sn': {
                         'type': 'string',
-                        'minlength': 1,
+                        'minLength': 1,
                     },
                     'cn': {
                         'type': 'string',
-                        'minlength': 1,
+                        'minLength': 1,
                     },
                     'email': {
                         'type': 'array',
@@ -59,6 +59,31 @@ maintainer_schema = {
                             'type': 'string',
                             'format': 'email',
                         },
+                        'minItems': 1,
+                    },
+                    'inactive_email': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'string',
+                            'format': 'email',
+                        },
+                        'minItems': 1,
+                    },
+                    'DCO': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'string',
+                            'format': 'email',
+                        },
+                        "minItems": 1,
+                    },
+                    'inactive_DCO': {
+                        'type': 'array',
+                        'items': {
+                            'type': 'string',
+                            'format': 'email',
+                        },
+                        "minItems": 1,
                     },
                     'roles': {
                         'type': 'array',
@@ -72,10 +97,6 @@ maintainer_schema = {
                                     'type': 'object',
                                     'properties': {
                                         'WriteAfter': {
-                                            'type': 'string',
-                                            'format': 'email',
-                                        },
-                                        'DCO': {
                                             'type': 'string',
                                             'format': 'email',
                                         },
@@ -104,27 +125,36 @@ maintainer_schema = {
                                 },
                             ],
                         },
-                        'minlength': 1,
+                        'minItems': 1,
                     },
                     'account': {
                         'type': 'string',
-                        'minlength': 1,
+                        'minLength': 1,
                         'pattern': '[a-zA-Z][a-zA-Z0-9]*',
+                    },
+                    'forgeid': {
+                        'type': 'string',
+                        'minLength': 1,
                     },
                     'aliases': {
                         'type': 'array',
-                        'minlength': 1,
                         'items': {
                             'type': 'string',
-                            'minlength': 1,
+                            'minLength': 1,
                         },
+                        'minItems': 1,
                     },
                     'inactive': {
                         'type': 'boolean',
                     },
                 },
                 'additionalProperties': False,
-                'required': ['sn', 'cn', 'email', 'roles'],
+                'required': ['sn', 'cn', 'email'],
+                'anyOf': [
+                    {'required': ['roles']},
+                    {'required': ['DCO']},
+                    {'required': ['inactive_DCO']},
+                ],
             },
         },
         'subsystems': {
@@ -134,24 +164,33 @@ maintainer_schema = {
                 'properties': {
                     'name': {
                         'type': 'string',
-                        'minlength': 1,
+                        'minLength': 1,
                     },
                     'class': {
                         'type': 'string',
-                        'minlength': 1,
+                        'minLength': 1,
                     },
                     'labels': {
                         'type': 'array',
                         # Disabled until we populate the labels
-                        # 'minlength': 1,
+                        # 'minItems': 1,
                         'items': {
                             'type': 'string',
-                            'minlength': 3,
+                            'minLength': 3,
                             'pattern': label_pattern,
+                        },
+                    },
+                    'teams': {
+                        'type': 'array',
+                        'minItems': 1,
+                        'items': {
+                            'type': 'string',
+                            'minLength': 3,
                         },
                     },
                 },
                 'additionalProperties': False,
+                # Todo, add 'team' once the data is fully populated.
                 'required': ['name', 'labels'],
             },
         },
@@ -216,6 +255,42 @@ def _check_schema(data):
     return
 
 
+def _unilower(txt):
+    """return a lower-case version of txt, mapping accented characters
+    onto their ASCII near equivalents."""
+    return unidecode.unidecode(txt).lower()
+
+
+def _check_dco(user):
+    # An email addrss in a DCO entry must also be listed in either the
+    # active emails list, or the inactive_emails list.
+    emails = user['email']
+    for dco in user.get('DCO', []):
+        if dco not in emails:
+            _error(f"User: {user['cn']} DCO {dco} not listed in emails")
+    emails = user.get('inactive_email', [])
+    for dco in user.get('inactive_DCO', []):
+        if dco not in emails:
+            _error(
+                f"User: {user['cn']} inactive_DCO {dco} not listed in inactive_emails"
+            )
+        if dco in user.get('DCO', []):
+            _error(f"User: {user['cn']} inactive_DCO {dco} also listed in DCO")
+
+
+def sort_users(user_data):
+    """Sort the user data into canonical order."""
+    return sorted(
+        user_data,
+        key = lambda k: (
+            _unilower(k['sn']),
+            _unilower(k['cn']),
+            k.get('account', ''),
+            k.get('forgeid', ''),
+        )
+    )
+
+
 def validate(data):
     """Check the data against the schema and our own consistency checks"""
     _check_schema(data)
@@ -226,12 +301,18 @@ def validate(data):
     # subsystems list; Maintainer entires must also have a class entry, though
     # that is optional for Reviewers.
     for u in data['users']:
+        if 'DCO' in u or 'inactive_DCO' in u:
+            _check_dco(u)
+        # The schema ensures that at least one of 'DCO',
+        # 'inactive_DCO' or 'roles' exists, so if roles is missing,
+        # we're done.
+        if 'roles' not in u:
+            continue
         # Users with the 'BZ' role should not have any other roles; we
         # can quickly skip the additional checks if that is the case.
         if len(u['roles']) == 1 and u['roles'][0] == 'BZ':
             continue
         seen_writeafter = False
-        only_dco = True
         for r in u['roles']:
             if isinstance(r, str):
                 if r == 'BZ':
@@ -240,14 +321,10 @@ def validate(data):
                     )
                 if r == 'WriteAfter':
                     seen_writeafter = True
-                only_dco = False
                 continue
             if 'WriteAfter' in r:
                 seen_writeafter = True
             need_class = True
-            if 'DCO' in r:
-                continue
-            only_dco = False
             n = r.get('Maintainer')
             if not n:
                 need_class = False
@@ -263,8 +340,19 @@ def validate(data):
                     _error(f"No subsystem entry for '{n}'.")
                 else:
                     _error(f"Multiple subsystem entries for '{n}'.")
-        if not seen_writeafter and not only_dco:
+        if not seen_writeafter:
             _error(f"User '{u['cn']}' lacks WriteAfter role.")
+
+    sorted = sort_users(data['users'])
+    if sorted != data['users']:
+        _error("User data is incorrectly sorted.")
+        for right, wrong in zip(sorted, data['users']):
+            if right != wrong:
+                print(
+                    f"First incorrect entry is for {wrong['cn']}",
+                    file=sys.stderr
+                )
+                break
     if error_count:
         sys.exit(1)
     return
@@ -275,6 +363,21 @@ def load(file):
         data = yaml.load(f, Loader=Loader)
     return data
 
+
+def store(data, file=None, fd=sys.stdout):
+    data['users'] = sort_users(data['users'])
+    # Make sure we don't write something that is not conformant
+    validate(data)
+    if file:
+        fd = open(file, "w", encoding="utf-8")
+    print("# If you edit this file, please validate with:",
+          file=fd)
+    print("#    contrib/maintainer_utils.py <MAINTAINERS.yml>",
+          file=fd)
+    print("# before committing.\n", file=fd)
+    yaml.dump(data, fd, allow_unicode=True, sort_keys=False)
+    if file:
+        fd.close()
 
 def main():
     if len(sys.argv) != 2:

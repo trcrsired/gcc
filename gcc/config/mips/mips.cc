@@ -7094,7 +7094,7 @@ mips_build_builtin_va_list (void)
 			   unsigned_char_type_node);
       /* Explicitly pad to the size of a pointer, so that -Wpadded won't
 	 warn on every user file.  */
-      index = build_int_cst (NULL_TREE, GET_MODE_SIZE (ptr_mode) - 2 - 1);
+      index = build_int_cst (integer_type_node, GET_MODE_SIZE (ptr_mode) - 2 - 1);
       array = build_array_type (unsigned_char_type_node,
 			        build_index_type (index));
       f_res = build_decl (BUILTINS_LOCATION,
@@ -7408,7 +7408,7 @@ mips_gimplify_va_arg_expr (tree valist, tree type, gimple_seq *pre_p,
 
       /* [5] Emit code for: off -= rsize.  We do this as a form of
 	 post-decrement not available to C.  */
-      t = fold_convert (TREE_TYPE (off), build_int_cst (NULL_TREE, rsize));
+      t = fold_convert (TREE_TYPE (off), build_int_cst (integer_type_node, rsize));
       t = build2 (POSTDECREMENT_EXPR, TREE_TYPE (off), off, t);
 
       /* [4] Emit code for:
@@ -7435,7 +7435,7 @@ mips_gimplify_va_arg_expr (tree valist, tree type, gimple_seq *pre_p,
       /* [10, 11] Emit code for:
 	 addr_rtx = ovfl + (BYTES_BIG_ENDIAN ? OSIZE - SIZE : 0)
 	 ovfl += osize.  */
-      u = fold_convert (TREE_TYPE (ovfl), build_int_cst (NULL_TREE, osize));
+      u = fold_convert (TREE_TYPE (ovfl), build_int_cst (integer_type_node, osize));
       t = build2 (POSTINCREMENT_EXPR, TREE_TYPE (ovfl), ovfl, u);
       if (BYTES_BIG_ENDIAN && osize > size)
 	t = fold_build_pointer_plus_hwi (t, osize - size);

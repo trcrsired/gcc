@@ -246,6 +246,7 @@
 ;; This code iterator allows ior and xor instructions to be generated
 ;; from the same template.
 (define_code_iterator any_or [ior xor])
+(define_code_iterator oxp [ior xor plus])
 
 ;; This code iterator allows unsigned and signed division to be generated
 ;; from the same template.
@@ -267,6 +268,9 @@
 (define_code_iterator any_lt [lt ltu])
 (define_code_iterator any_le [le leu])
 (define_code_iterator any_eq [eq ne])
+
+;; Maps GT/GTU to LE/LE.
+(define_code_attr gt_to_le [(gt "le") (gtu "leu")])
 
 ;; Iterators for conditions we can emit a sCC against 0 or a reg directly
 (define_code_iterator scc_0  [any_eq any_gt any_lt])

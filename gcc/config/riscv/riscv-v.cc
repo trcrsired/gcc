@@ -3068,13 +3068,12 @@ autovectorize_vector_modes (vector_modes *modes, bool)
       ms.safe_splice (*modes);
       modes->truncate (0);
 
-      for (machine_mode mode : ms)
+      machine_mode mode;
+      if (parse_machine_mode (riscv_autovec_mode, &mode)
+	  && ms.contains (mode))
 	{
-	  if (!strcmp (GET_MODE_NAME (mode), riscv_autovec_mode))
-	    {
-	      modes->safe_push (mode);
-	      return 0;
-	    }
+	  modes->safe_push (mode);
+	  return 0;
 	}
 
       /* Nothing found, fall back to regular handling.  */
@@ -4059,12 +4058,12 @@ shuffle_even_odd_patterns (struct expand_vec_perm_d *d)
      vnsrl instructions, each extracting the even/odd elements of one source,
      and a vslideup instruction to merge them into one vector.
 
-     PR target/124996: VLS mode subregs larger than what
-     riscv_regmode_natural_size allows cause a memory roundtrip.  Therefore, for
-     now, we only do this when the mode size is no greater than the natural size
-     of the register.  Once this is fixed, the condition should be replaced by
-     the ELEN condition.  */
-  if (known_le (GET_MODE_SIZE (vmode), riscv_regmode_natural_size (vmode)))
+     Until we have a "widening" vector concat pattern (just like slideup here
+     but with the proper modes) we still need the natural-size check for
+     LMUL > 1 cases.  */
+  unsigned int max_elen = TARGET_VECTOR_ELEN_64 ? 64 : 32;
+  if (GET_MODE_BITSIZE (GET_MODE_INNER (vmode)) * 2 <= max_elen
+      && known_le (GET_MODE_SIZE (vmode), riscv_regmode_natural_size (vmode)))
     {
       unsigned int elen = GET_MODE_BITSIZE (GET_MODE_INNER (vmode));
       unsigned int elen2x = elen * 2;
@@ -4075,6 +4074,8 @@ shuffle_even_odd_patterns (struct expand_vec_perm_d *d)
       machine_mode vmode_half = get_vector_mode (smode, vlen / 2).require ();
       unsigned int shift_amt = even ? 0 : elen;
       insn_code icode = code_for_pred_narrow_scalar (LSHIFTRT, vmode_elen2x);
+      /* TODO these lowpart subreg workarounds should go, this is actually a
+	 simple concatenation of two "half"-sized vectors.  */
       rtx tmp = gen_reg_rtx (vmode);
       rtx ops_shift1[]
 	= {gen_lowpart (vmode_half, d->target),
@@ -6519,6 +6520,22 @@ splat_to_scalar_move_p (rtx *ops)
 	 && known_ge (GET_MODE_SIZE (Pmode), GET_MODE_SIZE (GET_MODE (ops[3])));
 }
 
+static inline bool
+riscv_v_reg_group_overlap_p (unsigned int regno, machine_mode mode,
+			     unsigned int ref_regno, machine_mode ref_mode)
+{
+  gcc_checking_assert (V_REG_P (regno));
+  gcc_checking_assert (V_REG_P (ref_regno));
+
+  gcc_checking_assert (riscv_vector_mode_p (mode));
+  gcc_checking_assert (riscv_vector_mode_p (ref_mode));
+
+  unsigned int nregs = riscv_hard_regno_nregs (regno, mode);
+  unsigned int ref_nregs = riscv_hard_regno_nregs (ref_regno, ref_mode);
+
+  return !(regno + nregs <= ref_regno || ref_regno + ref_nregs <= regno);
+}
+
 /* Return true if REGNO in MODE can be used as source in a widening
    instruction with destination WIDE_REGNO in WIDE_MODE.
    This is true if either there is no overlap at all, or the overlap
@@ -6551,18 +6568,15 @@ riscv_v_widen_constraint_ok (unsigned int regno, machine_mode mode,
   unsigned int wide_nregs = riscv_hard_regno_nregs (wide_regno, wide_mode);
   unsigned int nregs = riscv_hard_regno_nregs (regno, mode);
 
-  if (wide_nregs == nregs) /* Dest LMUL <= 1.  */
-    {
-      gcc_checking_assert (nregs == 1);
+  if (wide_nregs == nregs)
+    return nregs == 1;   /* Only allow dest LMUL <= 1.  */
+  else if (wide_nregs < nregs)
+    return false;
 
-      return true;
-    }
-
-  gcc_checking_assert (wide_nregs > nregs);
   gcc_checking_assert ((wide_nregs % nregs) == 0);
 
   /* No overlap.  */
-  if (regno + nregs <= wide_regno || wide_regno + wide_nregs <= regno)
+  if (!riscv_v_reg_group_overlap_p (regno, mode, wide_regno, wide_mode))
     return true;
 
   if (is_frac_vlmul_p (mode)) /* Source LMUL < 1.  */
@@ -6571,6 +6585,33 @@ riscv_v_widen_constraint_ok (unsigned int regno, machine_mode mode,
   unsigned int highest_num = wide_nregs - nregs;
 
   return (regno % wide_nregs) == highest_num;
+}
+
+/* Return true if REGNO in MODE does not overlap the vector register group
+   starting at REF_REGNO in REF_MODE.
+
+   The widening reductions vwredsum[u].vs / vfwred[o|u]sum.vs read vs1 with
+   EEW = 2 * SEW (EMUL = 1) and vs2 with EEW = SEW (EMUL = LMUL).  Section 5.2
+   of the vector spec reserves any encoding in which one vector register
+   supplies source operands with two or more different EEWs, so vs1 must not
+   fall inside the vs2 group.  See
+   https://github.com/riscv/riscv-isa-manual/issues/2350.  */
+
+bool
+riscv_v_widen_non_overlap_constraint_ok (unsigned int regno, machine_mode mode,
+					 unsigned int ref_regno,
+					 machine_mode ref_mode)
+{
+  if (ref_regno == INVALID_REGNUM)
+    return true;
+
+  if (!V_REG_P (regno) || !V_REG_P (ref_regno))
+    return false;
+
+  if (riscv_tuple_mode_p (mode) || ref_mode == mode)
+    return false;
+
+  return !riscv_v_reg_group_overlap_p (regno, mode, ref_regno, ref_mode);
 }
 
 } // namespace riscv_vector

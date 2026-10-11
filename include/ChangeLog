@@ -1,3 +1,9 @@
+2026-09-06  Matt Turner  <mattst88@gmail.com>
+
+	* longlong.h [__i370__, __s390__, __mvs__] (sdiv_qrnnd): Wrap
+	the n1 and n0 macro parameters in parentheses.
+	[__vax__] (sdiv_qrnnd): Likewise.
+
 2026-07-22  Tobias Burnus  <tburnus@baylibre.com>
 	    Andrew Stubbs  <ams@baylibre.com>
 	    supers1ngular  <supers1ngular@baylibre.com>

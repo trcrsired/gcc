@@ -182,10 +182,14 @@ GRS_OBJS = \
     rust/rust-borrow-checker-diagnostics.o\
     rust/rust-bir-builder-expr-stmt.o \
     rust/rust-bir-builder-pattern.o \
+    rust/rust-bir-drop-analysis.o \
     rust/rust-bir-dump.o \
     rust/rust-polonius.o\
     rust/rust-hir-dot-operator.o \
     rust/rust-hir-path-probe.o \
+    rust/rust-hir-path-probe-expr.o \
+    rust/rust-hir-path-probe-impl-trait.o \
+    rust/rust-hir-path-probe-type.o \
     rust/rust-hir-path.o \
     rust/rust-hir-type.o \
     rust/rust-hir-expr.o \
@@ -225,6 +229,7 @@ GRS_OBJS = \
     rust/rust-compile-type.o \
     rust/rust-compile-block.o \
     rust/rust-compile-struct-field-expr.o \
+    rust/rust-compile-platform-intrinsic.o \
     rust/rust-constexpr.o \
     rust/rust-compile-base.o \
     rust/rust-compile-drop-builder.o \
@@ -269,10 +274,10 @@ LIBFORMAT_PARSER = ../libgrust/libformat_parser/debug/liblibformat_parser.a
 LIBFFI_POLONIUS = rust/libffi_polonius.a
 
 # The compiler itself is called crab1
-crab1$(exeext): $(RUST_ALL_OBJS) attribs.o $(BACKEND) $(LIBDEPS) $(LIBPROC_MACRO_INTERNAL) $(LIBFORMAT_PARSER) $(LIBFFI_POLONIUS) $(rust.prev)
+crab1$(exeext): $(RUST_ALL_OBJS) attribs.o attr-handlers.o $(BACKEND) $(LIBDEPS) $(LIBPROC_MACRO_INTERNAL) $(LIBFORMAT_PARSER) $(LIBFFI_POLONIUS) $(rust.prev)
 	@$(call LINK_PROGRESS,$(INDEX.rust),start)
 	+$(LLINKER) $(ALL_LINKERFLAGS) $(LDFLAGS) -o $@ \
-	      $(RUST_ALL_OBJS) attribs.o $(BACKEND) \
+	      $(RUST_ALL_OBJS) attribs.o attr-handlers.o $(BACKEND) \
 	      $(LIBS) $(CRAB1_LIBS) $(LIBPROC_MACRO_INTERNAL) $(LIBFORMAT_PARSER) $(LIBFFI_POLONIUS) \
  		  $(BACKENDLIBS)
 	@$(call LINK_PROGRESS,$(INDEX.rust),end)

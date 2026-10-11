@@ -1656,6 +1656,7 @@ namespace __format
 	}
 
       template<typename _OutIter, typename _FormatContext>
+	[[__gnu__::__always_inline__]]
 	_OutIter
 	_M_subsecs(const _ChronoData<_CharT>& __t, _OutIter __out,
 		   _FormatContext& __ctx) const
@@ -3449,7 +3450,7 @@ namespace __detail
       year_month_day _M_ymd{};
       weekday _M_wd{};
       __format::_ChronoParts _M_need;
-      unsigned _M_is_leap_second : 1 {};
+      unsigned _M_60th_second : 1 {};
       unsigned _M_reserved : 15 {};
 
       template<typename _CharT, typename _Traits, typename _Alloc>
@@ -3635,6 +3636,23 @@ namespace __detail
       return std::__ostream_insert(__os, __s.data(), __s.size());
     }
 
+  // Wrapper around __chrono_write that skips locale for
+  // integer-second time_points.
+  template<size_t _BufSize, typename _TimePoint, typename _CharT,
+	   typename _Traits>
+    [[__gnu__::__always_inline__]]
+    inline basic_ostream<_CharT, _Traits>&
+    __chrono_write_time(basic_ostream<_CharT, _Traits>& __os,
+			const _TimePoint& __tp)
+    {
+      using _Duration = typename _TimePoint::duration;
+      if constexpr (!treat_as_floating_point_v<typename _Duration::rep>
+		    && _Duration::period::den == 1)
+	return __chrono_write<_BufSize>(__os, __tp);
+      else
+	return __chrono_write<_BufSize>(__os, __tp, __os.getloc());
+    }
+
 } // namespace __detail
 /// @endcond
 
@@ -3740,7 +3758,7 @@ namespace __detail
     operator<<(basic_ostream<_CharT, _Traits>& __os,
 	       const weekday_last& __wdl)
     { return __detail::__chrono_write<128>(__os, __wdl, __os.getloc()); }
-    
+
   template<typename _CharT, typename _Traits>
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os, const month_day& __md)
@@ -3846,7 +3864,13 @@ namespace __detail
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os,
 	       const hh_mm_ss<_Duration>& __hms)
-    { return __detail::__chrono_write<64>(__os, __hms, __os.getloc()); }
+    {
+      if constexpr (!treat_as_floating_point_v<typename _Duration::rep>
+		    && _Duration::period::den == 1)
+	return __detail::__chrono_write<64>(__os, __hms);
+      else
+	return __detail::__chrono_write<64>(__os, __hms, __os.getloc());
+    }
 
 #if _GLIBCXX_USE_CXX11_ABI || ! _GLIBCXX_USE_DUAL_ABI
   /// Writes a sys_info object to an ostream in an unspecified format.
@@ -3866,7 +3890,7 @@ namespace __detail
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os,
 	       const zoned_time<_Duration, _TimeZonePtr>& __t)
-    { return __detail::__chrono_write<128>(__os, __t, __os.getloc()); }
+    { return __detail::__chrono_write_time<128>(__os, __t); }
 #endif
 
   template<typename _CharT, typename _Traits, typename _Duration>
@@ -3875,12 +3899,12 @@ namespace __detail
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os,
 	       const sys_time<_Duration>& __tp)
-    { return __detail::__chrono_write<64>(__os, __tp, __os.getloc()); }
+    { return __detail::__chrono_write_time<64>(__os, __tp); }
 
   template<typename _CharT, typename _Traits>
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os, const sys_days& __dp)
-    { return __detail::__chrono_write<32>(__os, __dp); };
+    { return __detail::__chrono_write<32>(__os, __dp); }
 
   template<typename _CharT, typename _Traits, typename _Duration,
 	   typename _Alloc = allocator<_CharT>>
@@ -3899,7 +3923,7 @@ namespace __detail
       __detail::_Parser_t<_Duration> __p(__need);
       if (__p(__is, __fmt, __abbrev, __offset))
 	{
-	  if (__p._M_is_leap_second)
+	  if (__p._M_60th_second)
 	    __is.setstate(ios_base::failbit);
 	  else
 	    {
@@ -3914,7 +3938,7 @@ namespace __detail
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os,
 	       const utc_time<_Duration>& __t)
-    { return __detail::__chrono_write<64>(__os, __t, __os.getloc()); }
+    { return __detail::__chrono_write_time<64>(__os, __t); }
 
   template<typename _CharT, typename _Traits, typename _Duration,
 	   typename _Alloc = allocator<_CharT>>
@@ -3937,7 +3961,13 @@ namespace __detail
 	  // "23:59:60" to correctly produce a time within a leap second.
 	  auto __ut = utc_clock::from_sys(__p._M_sys_days) + __p._M_time
 			- *__offset;
-	  __tp = __detail::__round<_Duration>(__ut);
+	  // Reject ":60" seconds unless the utc_time is a known leap second.
+	  if (__p._M_60th_second
+		&& (chrono::floor<seconds>(__p._M_time - *__offset) != hours(24)
+		      || !chrono::get_leap_second_info(__ut).is_leap_second))
+	    __is.setstate(ios_base::failbit);
+	  else
+	    __tp = __detail::__round<_Duration>(__ut);
 	}
       return __is;
     }
@@ -3946,7 +3976,7 @@ namespace __detail
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os,
 	       const tai_time<_Duration>& __t)
-    { return __detail::__chrono_write<64>(__os, __t, __os.getloc()); }
+    { return __detail::__chrono_write_time<64>(__os, __t); }
 
   template<typename _CharT, typename _Traits, typename _Duration,
 	   typename _Alloc = allocator<_CharT>>
@@ -3965,7 +3995,7 @@ namespace __detail
       __detail::_Parser_t<_Duration> __p(__need);
       if (__p(__is, __fmt, __abbrev, __offset))
 	{
-	  if (__p._M_is_leap_second)
+	  if (__p._M_60th_second)
 	    __is.setstate(ios_base::failbit);
 	  else
 	    {
@@ -3982,7 +4012,7 @@ namespace __detail
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os,
 	       const gps_time<_Duration>& __t)
-    { return __detail::__chrono_write<64>(__os, __t, __os.getloc()); }
+    { return __detail::__chrono_write_time<64>(__os, __t); }
 
   template<typename _CharT, typename _Traits, typename _Duration,
 	   typename _Alloc = allocator<_CharT>>
@@ -4000,7 +4030,7 @@ namespace __detail
       __detail::_Parser_t<_Duration> __p(__need);
       if (__p(__is, __fmt, __abbrev, __offset))
 	{
-	  if (__p._M_is_leap_second)
+	  if (__p._M_60th_second)
 	    __is.setstate(ios_base::failbit);
 	  else
 	    {
@@ -4017,7 +4047,7 @@ namespace __detail
     inline basic_ostream<_CharT, _Traits>&
     operator<<(basic_ostream<_CharT, _Traits>& __os,
 	       const file_time<_Duration>& __t)
-    { return __detail::__chrono_write<64>(__os, __t, __os.getloc()); }
+    { return __detail::__chrono_write_time<64>(__os, __t); }
 
   template<typename _CharT, typename _Traits, typename _Duration,
 	   typename _Alloc = allocator<_CharT>>
@@ -4040,7 +4070,7 @@ namespace __detail
     // _GLIBCXX_RESOLVE_LIB_DEFECTS
     // 4257. Stream insertion for chrono::local_time should be constrained
     requires requires(const sys_time<_Duration>& __st) { __os << __st; }
-    { return __detail::__chrono_write<64>(__os, __lt, __os.getloc()); }
+    { return __detail::__chrono_write_time<64>(__os, __lt); }
 
   template<typename _CharT, typename _Traits, typename _Duration,
 	   typename _Alloc = allocator<_CharT>>
@@ -4745,7 +4775,7 @@ namespace __detail
 		      __h = hours(__val);
 
 		      __val = __read_unsigned(2);
-		      if (__val == -1 || __val > 60) [[unlikely]]
+		      if (__val == -1 || __val > 59) [[unlikely]]
 			if ((_M_need & _ChronoParts::_TimeOfDay) != 0)
 			  {
 			    __err |= ios_base::failbit;
@@ -4778,10 +4808,12 @@ namespace __detail
 				       && !__is_floating)
 		    {
 		      auto __val = __read_unsigned(__num ? __num : 2);
-		      if (0 <= __val && __val <= 59) [[likely]]
+		      if (0 <= __val && __val <= 60) [[likely]]
 			__s = seconds(__val);
 		      else
 			{
+			  // Not a valid second, but we only fail if we're
+			  // parsing into a type that cares about that.
 			  if ((_M_need & _ChronoParts::_TimeOfDay) != 0)
 			    __err |= ios_base::failbit;
 			  break;
@@ -5427,7 +5459,9 @@ namespace __detail
 		    {
 		      __ok = true;
 		      __t += __s;
-		      _M_is_leap_second = __s >= seconds(60);
+		      // Record that we had "60" or "60.ddd" for seconds.
+		      // Caller checks for valid leap second, if needed.
+		      _M_60th_second = __s >= seconds(60);
 		    }
 
 		  if (__ok)

@@ -124,6 +124,7 @@ extern bool riscv_legitimize_move (machine_mode, rtx, rtx);
 extern rtx riscv_subword (rtx, bool);
 extern bool riscv_split_64bit_move_p (rtx, rtx);
 extern void riscv_split_doubleword_move (rtx, rtx);
+extern void riscv_split_quadword_move (rtx, rtx);
 extern const char *riscv_output_move (rtx, rtx);
 extern const char *riscv_output_return ();
 extern void riscv_declare_function_name (FILE *, const char *, tree);
@@ -223,8 +224,7 @@ extern bool vsetvl_insn_p (rtx_insn *);
 
 /* Routines implemented in riscv-string.c.  */
 extern bool riscv_expand_block_compare (rtx, rtx, rtx, rtx);
-extern bool riscv_expand_block_move (rtx, rtx, rtx);
-extern bool riscv_expand_block_clear (rtx, rtx);
+extern bool riscv_expand_block_move (rtx, rtx, rtx, bool);
 
 /* Information about one CPU we know about.  */
 struct riscv_cpu_info {
@@ -767,7 +767,7 @@ void expand_popcount (rtx *);
 void expand_rawmemchr (machine_mode, rtx, rtx, rtx, bool = false);
 bool expand_strcmp (rtx, rtx, rtx, rtx, unsigned HOST_WIDE_INT, bool);
 void emit_vec_extract (rtx, rtx, rtx);
-bool expand_vec_setmem (rtx, rtx, rtx);
+bool expand_vec_setmem (rtx, rtx, rtx, bool);
 bool expand_vec_cmpmem (rtx, rtx, rtx, rtx);
 void expand_strided_load (machine_mode, rtx *);
 void expand_strided_store (machine_mode, rtx *);
@@ -828,6 +828,8 @@ bool splat_to_scalar_move_p (rtx *);
 rtx get_fp_rounding_coefficient (machine_mode);
 bool riscv_v_widen_constraint_ok (unsigned int, machine_mode, unsigned int,
 				  machine_mode);
+bool riscv_v_widen_non_overlap_constraint_ok (unsigned int, machine_mode,
+					      unsigned int, machine_mode);
 }
 
 /* We classify builtin types into two classes:
@@ -848,30 +850,30 @@ const unsigned int RISCV_BUILTIN_CLASS = (1 << RISCV_BUILTIN_SHIFT) - 1;
 /* Routines implemented in riscv-string.cc.  */
 extern bool riscv_expand_strcmp (rtx, rtx, rtx, rtx, rtx);
 extern bool riscv_expand_strlen (rtx, rtx, rtx, rtx);
+extern bool riscv_expand_setmem (rtx, rtx, rtx, bool);
 
 /* Routines implemented in riscv-fusion.cc.  */
 enum riscv_fusion_pairs
 {
   RISCV_FUSE_NOTHING = 0,
-  RISCV_FUSE_ZEXTW = (1 << 0),
-  RISCV_FUSE_ZEXTH = (1 << 1),
-  RISCV_FUSE_ZEXTWS = (1 << 2),
-  RISCV_FUSE_LDINDEXED = (1 << 3),
-  RISCV_FUSE_LUI_ADDI = (1 << 4),
-  RISCV_FUSE_AUIPC_ADDI = (1 << 5),
-  RISCV_FUSE_LUI_LD = (1 << 6),
-  RISCV_FUSE_AUIPC_LD = (1 << 7),
-  RISCV_FUSE_LDPREINCREMENT = (1 << 8),
-  RISCV_FUSE_ALIGNED_STD = (1 << 9),
-  RISCV_FUSE_CACHE_ALIGNED_STD = (1 << 10),
-  RISCV_FUSE_BFEXT = (1 << 11),
-  RISCV_FUSE_EXPANDED_LD = (1 << 12),
-  RISCV_FUSE_B_ALUI = (1 << 13),
+  RISCV_FUSE_ZEXTW = HOST_WIDE_INT_1U << 0,
+  RISCV_FUSE_ZEXTH = HOST_WIDE_INT_1U << 1,
+  RISCV_FUSE_ZEXTWS = HOST_WIDE_INT_1U << 2,
+  RISCV_FUSE_LDINDEXED = HOST_WIDE_INT_1U << 3,
+  RISCV_FUSE_LUI_ADDI = HOST_WIDE_INT_1U << 4,
+  RISCV_FUSE_AUIPC_ADDI = HOST_WIDE_INT_1U << 5,
+  RISCV_FUSE_LUI_LD = HOST_WIDE_INT_1U << 6,
+  RISCV_FUSE_AUIPC_LD = HOST_WIDE_INT_1U << 7,
+  RISCV_FUSE_LDPREINCREMENT = HOST_WIDE_INT_1U << 8,
+  RISCV_FUSE_ALIGNED_STD = HOST_WIDE_INT_1U << 9,
+  RISCV_FUSE_BFEXT = HOST_WIDE_INT_1U << 10,
+  RISCV_FUSE_EXPANDED_LD = HOST_WIDE_INT_1U << 11,
+  RISCV_FUSE_B_ALUI = HOST_WIDE_INT_1U << 12,
 };
 
 extern bool riscv_macro_fusion_p (void);
 extern bool riscv_macro_fusion_pair_p (rtx_insn *, rtx_insn *);
-extern unsigned int riscv_get_fusible_ops (void);
+extern unsigned HOST_WIDE_INT riscv_get_fusible_ops (void);
 
 /* Routines implemented in thead.cc.  */
 extern bool extract_base_offset_in_addr (rtx, rtx *, rtx *);
@@ -941,6 +943,8 @@ struct riscv_tune_info {
 const struct riscv_tune_info *
 riscv_parse_tune (const char *, bool);
 const cpu_vector_cost *get_vector_costs ();
+unsigned int get_vector_units ();
+unsigned int get_scalar_units ();
 int get_gr2vr_cost ();
 int get_vr2gr_cost ();
 int get_fr2vr_cost ();

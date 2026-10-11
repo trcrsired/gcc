@@ -149,14 +149,14 @@ package body Freeze is
    --  that if a foreign convention is specified, and no specific size
    --  is given, then the size must be at least Integer'Size.
 
-   procedure Freeze_Expr_Types
+   procedure Freeze_Full_Expression
      (Expr   : Node_Id;
       N      : Node_Id;
       Def_Id : Entity_Id;
       Result : in out List_Id;
       Before : Boolean := False;
       Typ    : Entity_Id := Empty);
-   --  Same as Freeze_Expr_Types_Before if Before is True, but appends the
+   --  Same as Freeze_Full_Expression_Before if Before is True, but appends the
    --  resulting list of nodes to Result if Before is False, modifying Result
    --  from No_List if necessary.
 
@@ -2746,16 +2746,12 @@ package body Freeze is
 
    procedure Freeze_Before
      (N                 : Node_Id;
-      T                 : Entity_Id;
+      E                 : Entity_Id;
       Do_Freeze_Profile : Boolean := True)
    is
-      --  Freeze T, then insert the generated Freeze nodes before the node N.
-      --  Flag Freeze_Profile is used when T is an overloadable entity, and
-      --  indicates whether its profile should be frozen at the same time.
-
       Freeze_Nodes : constant List_Id :=
-                       Freeze_Entity (T, N, Do_Freeze_Profile);
-      Pack         : constant Entity_Id := Scope (T);
+                       Freeze_Entity (E, N, Do_Freeze_Profile);
+      Scop         : constant Entity_Id := Scope (E);
 
    begin
       if Is_Non_Empty_List (Freeze_Nodes) then
@@ -2766,12 +2762,12 @@ package body Freeze is
          --  which may include generated subprograms such as predicate
          --  functions, etc.
 
-         if Is_Type (T) and then From_Nested_Package (T) then
-            Push_Scope (Pack);
-            Install_Visible_Declarations (Pack);
-            Install_Private_Declarations (Pack);
+         if Is_Type (E) and then From_Nested_Package (E) then
+            Push_Scope (Scop);
+            Install_Visible_Declarations (Scop);
+            Install_Private_Declarations (Scop);
             Insert_Actions (N, Freeze_Nodes);
-            End_Package_Scope (Pack);
+            End_Package_Scope (Scop);
 
          else
             Insert_Actions (N, Freeze_Nodes);
@@ -5039,7 +5035,7 @@ package body Freeze is
          --  Accumulates total Esize values of all elementary components. Used
          --  for processing of Implicit_Packing.
 
-         Final_Storage_Only : Boolean := True;
+         Final_Storage_Only : Boolean;
          --  Used to compute the Finalize_Storage_Only flag
 
          Placed_Component : Boolean := False;
@@ -5047,7 +5043,7 @@ package body Freeze is
          --  clause (used to warn about useless Bit_Order pragmas, and also
          --  to detect cases where Implicit_Packing may have an effect).
 
-         Relaxed_Finalization : Boolean := True;
+         Relaxed_Finalization : Boolean;
          --  Used to compute the Has_Relaxed_Finalization flag
 
          Sized_Component_Total_RM_Size : Uint := Uint_0;
@@ -5834,6 +5830,17 @@ package body Freeze is
                Freeze_And_Append (Corresponding_Remote_Type (Rec), N, Result);
             end if;
 
+            --  Initialize Final_Storage_Only and Relaxed_Finalization from the
+            --  current state if we have inherited controlled components.
+
+            if Has_Controlled_Component (Rec) then
+               Final_Storage_Only := Finalize_Storage_Only (Rec);
+               Relaxed_Finalization := Has_Relaxed_Finalization (Rec);
+            else
+               Final_Storage_Only := True;
+               Relaxed_Finalization := True;
+            end if;
+
             --  Check for tasks, protected and controlled components, unchecked
             --  unions, and type invariants.
 
@@ -5841,22 +5848,12 @@ package body Freeze is
             while Present (Comp) loop
                Propagate_Concurrent_Flags (Rec, Etype (Comp));
 
-               --  Do not set Has_Controlled_Component on a class-wide
-               --  equivalent type. See Make_CW_Equivalent_Type.
+               --  Do not set Has_Controlled_Component on a CW equivalent type,
+               --  see Exp_Util.Make_CW_Equivalent_Type.
 
                if not Is_Class_Wide_Equivalent_Type (Rec)
-                 and then
-                   (Has_Controlled_Component (Etype (Comp))
-                     or else
-                       (Chars (Comp) /= Name_uParent
-                         and then Is_Controlled (Etype (Comp)))
-                     or else
-                       (Is_Protected_Type (Etype (Comp))
-                         and then
-                           Present (Corresponding_Record_Type (Etype (Comp)))
-                         and then
-                           Has_Controlled_Component
-                             (Corresponding_Record_Type (Etype (Comp)))))
+                 and then Chars (Comp) /= Name_uParent
+                 and then Needs_Finalization (Etype (Comp))
                then
                   Set_Has_Controlled_Component (Rec);
                   Final_Storage_Only :=
@@ -5900,7 +5897,7 @@ package body Freeze is
             --  For a type that is not directly controlled but has controlled
             --  components, Finalize_Storage_Only is set if all the controlled
             --  components are Finalize_Storage_Only. The same processing is
-            --  appled to Has_Relaxed_Finalization.
+            --  applied to Has_Relaxed_Finalization.
 
             if not Is_Controlled (Rec) and then Has_Controlled_Component (Rec)
             then
@@ -8274,7 +8271,7 @@ package body Freeze is
                      if Is_Expression_Function (Subp) then
                         Freeze_And_Append
                           (Subp, N, Result, Do_Freeze_Profile => False);
-                        Freeze_Expr_Types
+                        Freeze_Full_Expression
                           (Expr   => Expression_Of_Expression_Function (Subp),
                            N      => N,
                            Def_Id => Subp,
@@ -9227,7 +9224,7 @@ package body Freeze is
          --  Freeze types in expression function (RM 13.14(10.1, 10.2, 10.3))
 
          if Is_Expression_Function (Nam) then
-            Freeze_Expr_Types_Before
+            Freeze_Full_Expression_Before
               (N      => P,
                Expr   => Expression_Of_Expression_Function (Nam),
                Def_Id => Nam);
@@ -9239,11 +9236,11 @@ package body Freeze is
       In_Spec_Expression := In_Spec_Exp;
    end Freeze_Expression;
 
-   -----------------------
-   -- Freeze_Expr_Types --
-   -----------------------
+   ----------------------------
+   -- Freeze_Full_Expression --
+   ----------------------------
 
-   procedure Freeze_Expr_Types
+   procedure Freeze_Full_Expression
      (Expr   : Node_Id;
       N      : Node_Id;
       Def_Id : Entity_Id;
@@ -9257,9 +9254,6 @@ package body Freeze is
 
       procedure Explain_Error;
       --  Output an explanation of the error as continuation messages
-
-      procedure Find_Incomplete_Constant (Node : Node_Id);
-      --  Search for a deferred constant without completion
 
       function Freeze_Type_Refs (Node : Node_Id) return Traverse_Result;
       --  Freeze all types referenced in the subtree rooted at Node
@@ -9348,41 +9342,6 @@ package body Freeze is
          end if;
       end Explain_Error;
 
-      ------------------------------
-      -- Find_Incomplete_Constant --
-      ------------------------------
-
-      procedure Find_Incomplete_Constant (Node : Node_Id) is
-      begin
-         --  When a constant is initialized with the result of a dispatching
-         --  call, the constant declaration is rewritten as a renaming of the
-         --  displaced function result. This scenario is not a premature use of
-         --  a constant even though the Has_Completion flag is not set.
-
-         if Is_Entity_Name (Node)
-           and then Present (Entity (Node))
-           and then Ekind (Entity (Node)) = E_Constant
-           and then Scope (Entity (Node)) = Current_Scope
-           and then Nkind (Declaration_Node (Entity (Node))) =
-                                                         N_Object_Declaration
-           and then not Is_Imported (Entity (Node))
-           and then not Has_Completion (Entity (Node))
-           and then not
-             (Present (Full_View (Entity (Node)))
-               and then (Has_Completion (Full_View (Entity (Node)))
-                          or else
-                            Declaration_Node (Full_View (Entity (Node))) = N))
-         then
-            Error_Msg_NE
-              ("deferred constant& is frozen before completion",
-               N, Entity (Node));
-
-            Explain_Error;
-
-            Set_Is_Frozen (Entity (Node));
-         end if;
-      end Find_Incomplete_Constant;
-
       ----------------------
       -- Freeze_Type_Refs --
       ----------------------
@@ -9441,22 +9400,59 @@ package body Freeze is
          --  Check that a type referenced by an entity can be frozen
 
          if Is_Entity_Name (Node) and then Present (Entity (Node)) then
-            --  The entity itself may be a type, as in a membership test
-            --  or an attribute reference. Freezing its own type would be
-            --  incomplete if the entity is derived or an extension.
+            declare
+               E : constant Entity_Id := Entity (Node);
 
-            if Is_Type (Entity (Node)) then
-               Check_And_Freeze_Type (Entity (Node));
+            begin
+               --  The entity itself may be a type, as in a membership test
+               --  or an attribute reference. Freezing its own type would be
+               --  incomplete if the entity is derived or an extension.
 
-            else
-               Check_And_Freeze_Type (Etype (Entity (Node)));
-            end if;
+               if Is_Type (E) then
+                  Check_And_Freeze_Type (E);
+               else
+                  Check_And_Freeze_Type (Etype (E));
+               end if;
 
-            --  Check that the enclosing record type can be frozen
+               --  Check that the enclosing record type can be frozen
 
-            if Ekind (Entity (Node)) in E_Component | E_Discriminant then
-               Check_And_Freeze_Type (Scope (Entity (Node)));
-            end if;
+               if Ekind (E) in E_Component | E_Discriminant then
+                  Check_And_Freeze_Type (Scope (E));
+               end if;
+
+               --  Freeze stand-alone objects declared in the current scope
+
+               if Ekind (E) in E_Constant | E_Variable
+                 and then Nkind (Declaration_Node (E)) = N_Object_Declaration
+                 and then Scope (E) = Current_Scope
+                 and then not Is_Frozen (E)
+               then
+                  --  The completion of a deferred constant declaration must
+                  --  occur before the constant is frozen (RM 7.4(9)). Give a
+                  --  better error message here than at the completion point.
+
+                  if Ekind (E) = E_Constant
+                    and then not Is_Imported (E)
+                    and then not Has_Completion (E)
+                    and then not (Present (Full_View (E))
+                                   and then Has_Completion (Full_View (E)))
+                  then
+                     Error_Msg_NE
+                       ("deferred constant& is frozen before completion",
+                        N, E);
+
+                     Explain_Error;
+
+                     Set_Is_Frozen (E);
+
+                  elsif Before then
+                     Freeze_Before (N, E);
+
+                  else
+                     Freeze_And_Append (E, N, Result);
+                  end if;
+               end if;
+            end;
 
          --  Freezing an access type does not freeze the designated type, but
          --  freezing conversions between access to interfaces requires that
@@ -9513,20 +9509,14 @@ package body Freeze is
             end;
          end if;
 
-         Find_Incomplete_Constant (Node);
-
          --  No point in posting several errors on the same expression
 
-         if Serious_Errors_Detected > 0 then
-            return Abandon;
-         else
-            return OK;
-         end if;
+         return (if Serious_Errors_Detected > 0 then Abandon else OK);
       end Freeze_Type_Refs;
 
       procedure Freeze_References is new Traverse_Proc (Freeze_Type_Refs);
 
-   --  Start of processing for Freeze_Expr_Types
+   --  Start of processing for Freeze_Full_Expression
 
    begin
       --  Preanalyze a duplicate of the expression to have available the
@@ -9577,13 +9567,13 @@ package body Freeze is
       else
          Freeze_References (Expr);
       end if;
-   end Freeze_Expr_Types;
+   end Freeze_Full_Expression;
 
-   ------------------------------
-   -- Freeze_Expr_Types_Before --
-   ------------------------------
+   -----------------------------------
+   -- Freeze_Full_Expression_Before --
+   -----------------------------------
 
-   procedure Freeze_Expr_Types_Before
+   procedure Freeze_Full_Expression_Before
      (N      : Node_Id;
       Expr   : Node_Id;
       Def_Id : Entity_Id;
@@ -9592,14 +9582,14 @@ package body Freeze is
       Dummy : List_Id := No_List;
 
    begin
-      Freeze_Expr_Types
+      Freeze_Full_Expression
         (Expr   => Expr,
          N      => N,
          Def_Id => Def_Id,
          Result => Dummy,
          Before => True,
          Typ    => Typ);
-   end Freeze_Expr_Types_Before;
+   end Freeze_Full_Expression_Before;
 
    -----------------------------
    -- Freeze_Fixed_Point_Type --

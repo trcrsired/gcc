@@ -4816,15 +4816,22 @@ simplify_cobound (gfc_expr *array, gfc_expr *dim, gfc_expr *kind, int upper)
 {
   gfc_ref *ref;
   gfc_array_spec *as;
+  gfc_symbol *sym;
   int d;
 
   if (array->expr_type != EXPR_VARIABLE)
     return NULL;
 
-  /* Follow any component references.  */
-  as = (array->ts.type == BT_CLASS && CLASS_DATA (array))
-       ? CLASS_DATA (array)->as
-       : array->symtree->n.sym->as;
+  /* Do not attempt to resolve if an error has already been issued.  */
+  if (array->symtree->n.sym->error)
+    return NULL;
+
+  /* Follow any component references, starting from the base symbol's array
+     spec; ARRAY itself may be a subobject of the coarray.  */
+  sym = array->symtree->n.sym;
+  as = (sym->ts.type == BT_CLASS && sym->attr.class_ok && CLASS_DATA (sym))
+       ? CLASS_DATA (sym)->as
+       : sym->as;
   for (ref = array->ref; ref; ref = ref->next)
     {
       switch (ref->type)
@@ -4835,7 +4842,7 @@ simplify_cobound (gfc_expr *array, gfc_expr *dim, gfc_expr *kind, int upper)
 	    case AR_ELEMENT:
 	      if (ref->u.ar.as->corank > 0)
 		{
-		  gcc_assert (as == ref->u.ar.as);
+		  as = ref->u.ar.as;
 		  goto done;
 		}
 	      as = NULL;
@@ -4866,12 +4873,9 @@ simplify_cobound (gfc_expr *array, gfc_expr *dim, gfc_expr *kind, int upper)
 	}
     }
 
-  if (!as)
-    gcc_unreachable ();
-
  done:
 
-  if (as->cotype == AS_DEFERRED || as->cotype == AS_ASSUMED_SHAPE)
+  if (!as || as->cotype == AS_DEFERRED || as->cotype == AS_ASSUMED_SHAPE)
     return NULL;
 
   if (dim == NULL)
@@ -7035,7 +7039,8 @@ gfc_simplify_null (gfc_expr *mold)
 
 
 gfc_expr *
-gfc_simplify_num_images (gfc_expr *team_or_team_number ATTRIBUTE_UNUSED)
+gfc_simplify_num_images (gfc_expr *team ATTRIBUTE_UNUSED,
+			 gfc_expr *team_number ATTRIBUTE_UNUSED)
 {
   gfc_expr *result;
 
@@ -9227,7 +9232,8 @@ gfc_simplify_trim (gfc_expr *e)
 
 gfc_expr *
 gfc_simplify_image_index (gfc_expr *coarray, gfc_expr *sub,
-			  gfc_expr *team_or_team_number ATTRIBUTE_UNUSED)
+			  gfc_expr *team ATTRIBUTE_UNUSED,
+			  gfc_expr *team_number ATTRIBUTE_UNUSED)
 {
   gfc_expr *result;
   gfc_ref *ref;
