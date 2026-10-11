@@ -987,3 +987,210 @@ genericize_herbceptions_body (tree fndecl)
       DECL_SAVED_TREE (fndecl) = l;
     }
 }
+
+/* --------------------------------------------------------------------
+ * Herbceptions channel traits (`__is_herbceptions_*' / `__has_*').
+ * These mirror the `__is_nothrow_*'/'__has_nothrow_*' family: the
+ * operation is resolved with the same machinery, then the resolved
+ * function's spec is checked for the `throws' channel.
+ * -------------------------------------------------------------------- */
+
+/* True if TYPE is a `return_failure{E}' function type (or ptr/ref to
+   one).  */
+
+bool
+hb_is_return_failure_fn (tree type)
+{
+  if (!type)
+    return false;
+  if (TYPE_REF_P (type) || POINTER_TYPE_P (type))
+    type = TREE_TYPE (type);
+  if (!FUNC_OR_METHOD_TYPE_P (type))
+    return false;
+  tree spec_list = TYPE_RAISES_EXCEPTIONS (type);
+  tree hspec = HERBCEPTION_SPEC_P (spec_list)
+    ? TREE_PURPOSE (spec_list) : NULL_TREE;
+  return (hspec
+	  && HERBCEPTION_SPEC_KIND (hspec) == hsk_return_failure);
+}
+
+/* Walk cb for hb_expr_call_fntype.  */
+
+static tree
+hb_find_call (tree *tp, int *walk_subtrees, void *data)
+{
+  tree *out = (tree *) data;
+  tree t = *tp;
+  if ((TREE_CODE (t) == CALL_EXPR || TREE_CODE (t) == AGGR_INIT_EXPR)
+      && !*out)
+    *out = t;
+  return NULL_TREE;
+}
+
+/* The resolved callee's function type inside EXPR (the result of a
+   `constructible'/'invocable'/'assignable'-style resolution), or
+   NULL_TREE.  */
+
+static tree
+hb_expr_call_fntype (tree expr)
+{
+  if (!expr || expr == error_mark_node)
+    return NULL_TREE;
+  tree call = NULL_TREE;
+  cp_walk_tree (&expr, hb_find_call, &call, NULL);
+  if (!call)
+    return NULL_TREE;
+  tree fn = (TREE_CODE (call) == AGGR_INIT_EXPR
+	     ? AGGR_INIT_EXPR_FN (call) : CALL_EXPR_FN (call));
+  if (!fn)
+    return NULL_TREE;
+  tree ft = TREE_TYPE (fn);
+  if (POINTER_TYPE_P (ft))
+    ft = TREE_TYPE (ft);
+  return FUNC_OR_METHOD_TYPE_P (ft) ? ft : NULL_TREE;
+}
+
+/* True if the resolved operation EXPR calls a function declared with a
+   `throws' or `return_failure{E}' spec.  */
+
+bool
+hb_op_throws (tree expr)
+{
+  return type_herbceptions_p (hb_expr_call_fntype (expr));
+}
+
+/* `__is_herbceptions_throwsable(T)': T can be thrown via `throw throws'
+   — a complete `std::error_domain<T>' exists.  Looks the domain
+   template up in `std' and requires the instantiation to be complete;
+   an undefined primary template (incomplete type) means "not
+   throwsable".  */
+
+bool
+hb_throwsable_p (tree type)
+{
+  if (!flag_herbceptions || !type || type == error_mark_node
+      || dependent_type_p (type))
+    return false;
+  /* The implicit channel type (and any `std::error'-shaped record) is
+     always throwsable.  */
+  if (herbceptions_cxx_std_error_node
+      && (same_type_p (type, herbceptions_cxx_std_error_node)
+	  || cxx_std_error_type_p (type)))
+    return true;
+  if (!std_node)
+    return false;
+  tree d = lookup_qualified_name (std_node, "error_domain");
+  if (!d || !DECL_CLASS_TEMPLATE_P (d))
+    return false;
+  tree args = make_tree_vec (1);
+  TREE_VEC_ELT (args, 0) = type;
+  tree inst = lookup_template_class (d, args, NULL_TREE, NULL_TREE,
+				     tf_none);
+  if (!inst || inst == error_mark_node)
+    return false;
+  /* A complete, non-dependent error_domain<T> means T is throwsable.  */
+  inst = complete_type (inst);
+  return inst && TREE_CODE (inst) == RECORD_TYPE
+	 && COMPLETE_TYPE_P (inst);
+}
+
+/* `__has_herbceptions_throws_{constructor,copy,assign,move_assign}(T)':
+   the relevant special member of T is declared `throws'.  Trivial and
+   implicitly-declared members never carry the channel; non-class types
+   cannot.  */
+
+static bool
+hb_throws_spec_fn_p (tree fn)
+{
+  return (fn && TREE_CODE (fn) == FUNCTION_DECL
+	  && FUNC_OR_METHOD_TYPE_P (TREE_TYPE (fn))
+	  && type_herbceptions_p (TREE_TYPE (fn)));
+}
+
+bool
+hb_has_throws_member (tree type, special_function_kind sfk)
+{
+  if (!CLASS_TYPE_P (type))
+    return false;
+
+  if (sfk == sfk_copy_assignment || sfk == sfk_move_assignment)
+    {
+      /* operator= overloads.  */
+      tree fns = lookup_fnfields (TYPE_BINFO (type),
+				  ovl_op_identifier (false, NOP_EXPR),
+				  0, tf_none);
+      for (ovl_iterator it (fns); it; ++it)
+	if (hb_throws_spec_fn_p (*it)
+	    && special_function_p (*it) == sfk)
+	  return true;
+      return false;
+    }
+
+  /* Constructors (sfk_constructor for a usable default ctor,
+     sfk_copy_constructor for the copy).  */
+  for (tree fn : ovl_range (CLASSTYPE_CONSTRUCTORS (type)))
+    {
+      if (!hb_throws_spec_fn_p (fn))
+	continue;
+      if (sfk == sfk_copy_constructor)
+	{
+	  if (copy_fn_p (fn) > 0)
+	    return true;
+	}
+      else if (sfk == sfk_constructor)
+	{
+	  /* `isDefaultConstructor': callable with no args — no
+	     required user parameters.  */
+	  if (!copy_fn_p (fn) && !move_fn_p (fn)
+	      && (!FUNCTION_FIRST_USER_PARMTYPE (fn)
+		  || FUNCTION_FIRST_USER_PARMTYPE (fn)
+		     == void_list_node))
+	    return true;
+	}
+    }
+  return false;
+}
+
+/* `__invoke_herbceptions_return_failure_result<F>': the synthetic
+   `struct { value_type; error_type; }' carrying F's success return
+   type and its `return_failure{E}' error type (`void' when F is not a
+   `return_failure' function).  The members are typedefs like
+   `std::invoke_result's.  */
+
+tree
+hb_invoke_return_failure_result (tree type)
+{
+  tree fntype = type;
+  if (TYPE_REF_P (fntype) || POINTER_TYPE_P (fntype))
+    fntype = TREE_TYPE (fntype);
+
+  tree value_type = void_type_node;
+  tree error_type = void_type_node;
+  if (FUNC_OR_METHOD_TYPE_P (fntype))
+    {
+      value_type = TREE_TYPE (fntype);
+      tree spec_list = TYPE_RAISES_EXCEPTIONS (fntype);
+      tree hspec = HERBCEPTION_SPEC_P (spec_list)
+	? TREE_PURPOSE (spec_list) : NULL_TREE;
+      if (hspec
+	  && HERBCEPTION_SPEC_KIND (hspec) == hsk_return_failure)
+	error_type = HERBCEPTION_SPEC_ERROR_TYPE (hspec);
+    }
+
+  location_t loc = BUILTINS_LOCATION;
+  tree etype = lang_hooks.types.make_type (RECORD_TYPE);
+  etype = begin_class_definition (etype);
+  tree vtd = build_decl (loc, TYPE_DECL, get_identifier ("value_type"),
+			 value_type);
+  tree etd = build_decl (loc, TYPE_DECL, get_identifier ("error_type"),
+			 error_type);
+  DECL_CONTEXT (vtd) = etype;
+  DECL_CONTEXT (etd) = etype;
+  DECL_CHAIN (vtd) = etd;
+  TYPE_FIELDS (etype) = vtd;
+  TYPE_BINFO (etype) = make_tree_binfo (0);
+  BINFO_OFFSET (TYPE_BINFO (etype)) = size_zero_node;
+  BINFO_TYPE (TYPE_BINFO (etype)) = etype;
+  etype = finish_struct (etype, NULL_TREE);
+  return etype;
+}

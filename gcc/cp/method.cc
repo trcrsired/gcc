@@ -2529,6 +2529,27 @@ is_xible (enum tree_code code, tree to, tree from, bool explain/*=false*/)
   return !!expr;
 }
 
+static tree is_convertible_helper (tree, tree, bool);
+
+/* Return the resolved initialization/assignment/destruction
+   expression for a `throws'-channel trait check — same machinery as
+   `is_xible', but yields the expression so the caller can inspect the
+   resolved function's spec.  */
+
+tree
+hb_resolve_op (enum tree_code code, tree to, tree from)
+{
+  return is_xible_helper (code, to, from, /*explain=*/false);
+}
+
+/* Return the resolved conversion expression from FROM to TO.  */
+
+tree
+hb_resolve_convertible (tree from, tree to)
+{
+  return is_convertible_helper (from, to, /*explain=*/false);
+}
+
 /* Return true iff T is a reference type, and the initialization
      T t(VAL<U>); // DIRECT_INIT_P
    or

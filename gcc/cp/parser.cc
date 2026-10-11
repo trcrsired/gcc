@@ -1383,14 +1383,17 @@ cp_lexer_peek_trait (cp_lexer *lexer)
       && UNLIKELY (IDENTIFIER_TRAIT_P (token1->u.value)))
     {
       const cp_trait &trait = cp_traits[IDENTIFIER_CP_INDEX (token1->u.value)];
-      const bool is_pack_element = (trait.kind == CPTK_TYPE_PACK_ELEMENT);
+      const bool uses_template_syntax
+	= (trait.kind == CPTK_TYPE_PACK_ELEMENT
+	   || trait.kind == CPTK_INVOKE_HERBCEPTIONS_RETURN_FAILURE_RESULT);
 
       /* Check if the subsequent token is a `<' token to
-	 __type_pack_element or is a `(' token to everything else.  */
+	 __type_pack_element/__invoke_herbceptions_return_failure_result
+	 or is a `(' token to everything else.  */
       const cp_token *token2 = cp_lexer_peek_nth_token (lexer, 2);
-      if (is_pack_element && token2->type != CPP_LESS)
+      if (uses_template_syntax && token2->type != CPP_LESS)
 	return nullptr;
-      if (!is_pack_element && token2->type != CPP_OPEN_PAREN)
+      if (!uses_template_syntax && token2->type != CPP_OPEN_PAREN)
 	return nullptr;
 
       return &trait;
@@ -12875,7 +12878,10 @@ cp_parser_trait (cp_parser* parser, const cp_trait* trait)
   cp_lexer_consume_token (parser->lexer);
 
   matching_parens parens;
-  if (kind == CPTK_TYPE_PACK_ELEMENT)
+  const bool template_syntax
+    = (kind == CPTK_TYPE_PACK_ELEMENT
+       || kind == CPTK_INVOKE_HERBCEPTIONS_RETURN_FAILURE_RESULT);
+  if (template_syntax)
     cp_parser_require (parser, CPP_LESS, RT_LESS);
   else
     parens.require_open (parser);
@@ -12906,7 +12912,9 @@ cp_parser_trait (cp_parser* parser, const cp_trait* trait)
   if (type1 == error_mark_node)
     return error_mark_node;
 
-  if (kind == CPTK_TYPE_PACK_ELEMENT)
+  if (kind == CPTK_INVOKE_HERBCEPTIONS_RETURN_FAILURE_RESULT)
+    cp_parser_require (parser, CPP_GREATER, RT_GREATER);
+  else if (kind == CPTK_TYPE_PACK_ELEMENT)
     {
       cp_parser_require (parser, CPP_COMMA, RT_COMMA);
       tree trailing = cp_parser_enclosed_template_argument_list (parser);
@@ -12956,9 +12964,9 @@ cp_parser_trait (cp_parser* parser, const cp_trait* trait)
     }
 
   location_t finish_loc = cp_lexer_peek_token (parser->lexer)->location;
-  if (kind == CPTK_TYPE_PACK_ELEMENT)
-    /* cp_parser_enclosed_template_argument_list above already took care
-       of parsing the closing '>'.  */;
+  if (kind == CPTK_TYPE_PACK_ELEMENT
+      || kind == CPTK_INVOKE_HERBCEPTIONS_RETURN_FAILURE_RESULT)
+    /* The closing `>' was consumed inline.  */;
   else
     parens.require_close (parser);
 

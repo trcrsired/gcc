@@ -121,6 +121,36 @@ DEFTRAIT_EXPR (TYPE_ORDER, "__builtin_type_order", 2)
 DEFTRAIT_TYPE (TYPE_PACK_ELEMENT, "__type_pack_element", -1)
 DEFTRAIT_TYPE (UNDERLYING_TYPE, "__underlying_type", 1)
 
+/* Herbceptions channel traits.  The `__is_herbceptions_throws_*'
+   family answers "does the resolved operation propagate through the
+   `throws' channel" — same resolution as the `__is_nothrow_'/'__is_*'
+   peers, then a spec check on the resolved function.  The
+   `return_failure{E}' pair inspects a function type's explicit
+   channel.  */
+DEFTRAIT_EXPR (IS_HERBCEPTIONS_THROWSABLE, "__is_herbceptions_throwsable", 1)
+DEFTRAIT_EXPR (IS_INVOKE_HERBCEPTIONS_RETURN_FAILURE,
+	       "__is_invoke_herbceptions_return_failure", 1)
+DEFTRAIT_TYPE (INVOKE_HERBCEPTIONS_RETURN_FAILURE_RESULT,
+	       "__invoke_herbceptions_return_failure_result", 1)
+DEFTRAIT_EXPR (IS_HERBCEPTIONS_THROWS_CONSTRUCTIBLE,
+	       "__is_herbceptions_throws_constructible", -1)
+DEFTRAIT_EXPR (IS_HERBCEPTIONS_THROWS_INVOCABLE,
+	       "__is_herbceptions_throws_invocable", -1)
+DEFTRAIT_EXPR (IS_HERBCEPTIONS_THROWS_INVOCABLE_R,
+	       "__is_herbceptions_throws_invocable_r", -1)
+DEFTRAIT_EXPR (IS_HERBCEPTIONS_THROWS_ASSIGNABLE,
+	       "__is_herbceptions_throws_assignable", 2)
+DEFTRAIT_EXPR (IS_HERBCEPTIONS_THROWS_CONVERTIBLE,
+	       "__is_herbceptions_throws_convertible", 2)
+DEFTRAIT_EXPR (HAS_HERBCEPTIONS_THROWS_CONSTRUCTOR,
+	       "__has_herbceptions_throws_constructor", 1)
+DEFTRAIT_EXPR (HAS_HERBCEPTIONS_THROWS_COPY,
+	       "__has_herbceptions_throws_copy", 1)
+DEFTRAIT_EXPR (HAS_HERBCEPTIONS_THROWS_ASSIGN,
+	       "__has_herbceptions_throws_assign", 1)
+DEFTRAIT_EXPR (HAS_HERBCEPTIONS_THROWS_MOVE_ASSIGN,
+	       "__has_herbceptions_throws_move_assign", 1)
+
 /* FIXME Added space to avoid direct usage in GCC 13.  */
 DEFTRAIT_EXPR (IS_DEDUCIBLE, "__is_deducible ", 2)
 

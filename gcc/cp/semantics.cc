@@ -14406,6 +14406,55 @@ trait_expr_value (cp_trait_kind kind, tree type1, tree type2)
     case CPTK_IS_INVOCABLE:
       return !error_operand_p (build_invoke (type1, type2, tf_none));
 
+    /* Herbceptions channel traits — resolve the operation the same
+       way the `__is_*' peers do, then check the resolved function's
+       spec for the `throws' channel.  */
+    case CPTK_IS_HERBCEPTIONS_THROWSABLE:
+      return hb_throwsable_p (type1);
+
+    case CPTK_IS_INVOKE_HERBCEPTIONS_RETURN_FAILURE:
+      return hb_is_return_failure_fn (type1);
+
+    case CPTK_HAS_HERBCEPTIONS_THROWS_CONSTRUCTOR:
+      return hb_has_throws_member (type1, sfk_constructor);
+
+    case CPTK_HAS_HERBCEPTIONS_THROWS_COPY:
+      return hb_has_throws_member (type1, sfk_copy_constructor);
+
+    case CPTK_HAS_HERBCEPTIONS_THROWS_ASSIGN:
+      return hb_has_throws_member (type1, sfk_copy_assignment);
+
+    case CPTK_HAS_HERBCEPTIONS_THROWS_MOVE_ASSIGN:
+      return hb_has_throws_member (type1, sfk_move_assignment);
+
+    case CPTK_IS_HERBCEPTIONS_THROWS_CONSTRUCTIBLE:
+      return hb_op_throws (hb_resolve_op (INIT_EXPR, type1, type2));
+
+    case CPTK_IS_HERBCEPTIONS_THROWS_INVOCABLE:
+      return hb_op_throws (build_invoke (type1, type2, tf_none));
+
+    case CPTK_IS_HERBCEPTIONS_THROWS_INVOCABLE_R:
+      {
+	/* Args are (R, F, A...): type1 = R, type2 = vec (F, A...).  */
+	tree f = TREE_VEC_ELT (type2, 0);
+	tree a = make_tree_vec (TREE_VEC_LENGTH (type2) - 1);
+	for (int i = 1; i < TREE_VEC_LENGTH (type2); ++i)
+	  TREE_VEC_ELT (a, i - 1) = TREE_VEC_ELT (type2, i);
+	tree invoke = build_invoke (f, a, tf_none);
+	if (!hb_op_throws (invoke))
+	  return false;
+	if (!type1 || VOID_TYPE_P (type1))
+	  return true;
+	/* The call's result must be convertible to R.  */
+	return is_convertible (TREE_TYPE (invoke), type1);
+      }
+
+    case CPTK_IS_HERBCEPTIONS_THROWS_ASSIGNABLE:
+      return hb_op_throws (hb_resolve_op (MODIFY_EXPR, type1, type2));
+
+    case CPTK_IS_HERBCEPTIONS_THROWS_CONVERTIBLE:
+      return hb_op_throws (hb_resolve_convertible (type1, type2));
+
     case CPTK_IS_LAYOUT_COMPATIBLE:
       return layout_compatible_type_p (type1, type2);
 
@@ -14769,6 +14818,27 @@ finish_trait_expr (location_t loc, cp_trait_kind kind, tree type1, tree type2,
     case CPTK_IS_UNBOUNDED_ARRAY:
     case CPTK_IS_UNION:
     case CPTK_IS_VOLATILE:
+    /* The herbceptions channel traits don't require completeness —
+       they inspect specs/members and report `false' when the type is
+       incomplete, matching the `is_void'-style category traits.  */
+    case CPTK_IS_HERBCEPTIONS_THROWSABLE:
+    case CPTK_IS_INVOKE_HERBCEPTIONS_RETURN_FAILURE:
+    case CPTK_HAS_HERBCEPTIONS_THROWS_CONSTRUCTOR:
+    case CPTK_HAS_HERBCEPTIONS_THROWS_COPY:
+    case CPTK_HAS_HERBCEPTIONS_THROWS_ASSIGN:
+    case CPTK_HAS_HERBCEPTIONS_THROWS_MOVE_ASSIGN:
+      break;
+
+    /* The operation traits resolve a `T args...' call — the operand
+       types must be complete like their `__is_*' peers.  */
+    case CPTK_IS_HERBCEPTIONS_THROWS_CONSTRUCTIBLE:
+    case CPTK_IS_HERBCEPTIONS_THROWS_INVOCABLE:
+    case CPTK_IS_HERBCEPTIONS_THROWS_INVOCABLE_R:
+    case CPTK_IS_HERBCEPTIONS_THROWS_ASSIGNABLE:
+    case CPTK_IS_HERBCEPTIONS_THROWS_CONVERTIBLE:
+      if (!check_trait_type (type1, /*kind=*/1, complain)
+	  || !check_trait_type (type2, /*kind=*/1, complain))
+	return error_mark_node;
       break;
 
     case CPTK_RANK:
@@ -14911,6 +14981,9 @@ finish_trait_type (cp_trait_kind kind, tree type1, tree type2,
 
     case CPTK_UNDERLYING_TYPE:
       return finish_underlying_type (type1);
+
+    case CPTK_INVOKE_HERBCEPTIONS_RETURN_FAILURE_RESULT:
+      return hb_invoke_return_failure_result (type1);
 
 #define DEFTRAIT_EXPR(CODE, NAME, ARITY) \
     case CPTK_##CODE:
