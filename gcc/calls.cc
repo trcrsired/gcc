@@ -513,6 +513,14 @@ emit_call_1 (rtx funexp, tree fntree ATTRIBUTE_UNUSED, tree fndecl ATTRIBUTE_UNU
       cfun->calls_setjmp = 1;
     }
 
+  /* Herbceptions: the callee leaves the error discriminant in a
+     processor flag register.  Capture it now, before the argument
+     popping adjustment below can clobber the flags.  */
+  if (flag_herbceptions && !(ecf_flags & ECF_SIBCALL)
+      && fn_has_herbceptions_spec_p (funtype))
+    cfun->herbceptions_captured_failed
+      = targetm.calls.herbceptions_capture_failed (funtype);
+
   CALL_INSN_ABI_ID (call_insn) = (funtype ? fntype_abi (funtype).id () : 0);
   SIBLING_CALL_P (call_insn) = ((ecf_flags & ECF_SIBCALL) != 0);
 

@@ -3511,8 +3511,29 @@ expand_HERBCEPTION_FAILED (internal_fn, gcall *stmt)
   tree lhs = gimple_call_lhs (stmt);
   /* See expand_HERBCEPTION_RESULT: the discriminant can be unused.  */
   if (lhs == NULL_TREE)
-    return;
+    {
+      cfun->herbceptions_captured_failed = NULL_RTX;
+      return;
+    }
   rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
+  /* The flag was captured into a pseudo right after the call, before the
+     caller's argument-popping adjustment could clobber it.  */
+  if (cfun->herbceptions_captured_failed != NULL_RTX)
+    {
+      rtx captured = cfun->herbceptions_captured_failed;
+      cfun->herbceptions_captured_failed = NULL_RTX;
+      if (GET_MODE (captured) != GET_MODE (target))
+	captured = gen_lowpart (GET_MODE (target), captured);
+      if (!REG_P (target))
+	{
+	  rtx tmp = gen_reg_rtx (GET_MODE (target));
+	  emit_move_insn (tmp, captured);
+	  emit_move_insn (target, tmp);
+	}
+      else
+	emit_move_insn (target, captured);
+      return;
+    }
   /* Some targets (e.g. aarch64) can only materialize the flag into a
      register, so bounce through a scratch when the result is wanted in
      memory.  */

@@ -1325,6 +1325,12 @@ default_return_pops_args (tree, tree, poly_int64)
   return 0;
 }
 
+rtx
+default_herbceptions_capture_failed (tree)
+{
+  return NULL_RTX;
+}
+
 reg_class_t
 default_ira_change_pseudo_allocno_class (int regno ATTRIBUTE_UNUSED,
 					 reg_class_t cl,

@@ -5702,6 +5702,13 @@ number of arguments.",
  poly_int64, (tree fundecl, tree funtype, poly_int64 size),
  default_return_pops_args)
 
+/* Capture the herbceptions failure discriminant from the target's flag
+   register immediately after a call to a herbceptions function.  */
+DEFHOOK
+(herbceptions_capture_failed,
+ "On targets that carry the result of a @code{throws} or @code{return_failure} function in a processor flag register, this hook is invoked immediately after the call instruction and before the caller's argument-popping adjustment.  The popping adjustment can clobber the flag register, so the discriminant must be captured first.  The hook should emit an instruction reading the flag into a fresh pseudo register and return that register, which generic code reuses when expanding @code{.HERBCEPTION_FAILED}.  Return @code{NULL_RTX} on targets that do not use a flag register.",
+ rtx, (tree funtype), default_herbceptions_capture_failed)
+
 /* Return a mode wide enough to copy any function value that might be
    returned.  */
 DEFHOOK

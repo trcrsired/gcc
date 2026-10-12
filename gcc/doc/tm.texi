@@ -4256,6 +4256,10 @@ nothing (the caller pops all).  When this convention is in use,
 number of arguments.
 @end deftypefn
 
+@deftypefn {Target Hook} rtx TARGET_HERBCEPTIONS_CAPTURE_FAILED (tree @var{funtype})
+On targets that carry the result of a @code{throws} or @code{return_failure} function in a processor flag register, this hook is invoked immediately after the call instruction and before the caller's argument-popping adjustment.  The popping adjustment can clobber the flag register, so the discriminant must be captured first.  The hook should emit an instruction reading the flag into a fresh pseudo register and return that register, which generic code reuses when expanding @code{.HERBCEPTION_FAILED}.  Return @code{NULL_RTX} on targets that do not use a flag register.
+@end deftypefn
+
 @defmac CALL_POPS_ARGS (@var{cum})
 A C expression that should indicate the number of bytes a call sequence
 pops off the stack.  It is added to the value of @code{RETURN_POPS_ARGS}

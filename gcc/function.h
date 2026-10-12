@@ -312,6 +312,12 @@ struct GTY(()) function {
   tree herbceptions_error_slot;
   tree herbceptions_failed_slot;
 
+  /* Herbceptions: a pseudo holding the failure discriminant captured
+     right after the most recent call to a herbceptions function, before
+     the caller's argument-popping adjustment (which may clobber the
+     target's flag register).  Consumed by expand_HERBCEPTION_FAILED.  */
+  rtx herbceptions_captured_failed;
+
   /* Used types hash table.  */
   hash_set<tree> *GTY (()) used_types_hash;
 

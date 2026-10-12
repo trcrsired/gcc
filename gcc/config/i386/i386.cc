@@ -3291,6 +3291,20 @@ ix86_herbceptions_empty_p (const_tree type)
   return type != NULL_TREE && is_empty_type (type);
 }
 
+/* Herbceptions: the callee leaves the error discriminant in the carry
+   flag.  Capture it into a fresh pseudo immediately after the call, so
+   that the caller's argument-popping adjustment (which is an `add' and
+   clobbers EFLAGS) cannot destroy it before .HERBCEPTION_FAILED reads
+   it.  */
+
+static rtx
+ix86_herbceptions_capture_failed (tree)
+{
+  rtx tmp = gen_reg_rtx (QImode);
+  emit_insn (gen_herbceptions_failed (tmp));
+  return tmp;
+}
+
 static int
 function_arg_advance_ms_64 (CUMULATIVE_ARGS *cum, HOST_WIDE_INT bytes,
 			    HOST_WIDE_INT words)
@@ -29210,6 +29224,9 @@ static const scoped_attribute_specs *const ix86_attribute_table[] =
 #define TARGET_TRAMPOLINE_INIT ix86_trampoline_init
 #undef TARGET_RETURN_POPS_ARGS
 #define TARGET_RETURN_POPS_ARGS ix86_return_pops_args
+
+#undef TARGET_HERBCEPTIONS_CAPTURE_FAILED
+#define TARGET_HERBCEPTIONS_CAPTURE_FAILED ix86_herbceptions_capture_failed
 
 #undef TARGET_WARN_FUNC_RETURN
 #define TARGET_WARN_FUNC_RETURN ix86_warn_func_return
