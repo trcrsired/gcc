@@ -10491,6 +10491,41 @@ ix86_expand_epilogue (int style)
 	 jump to it.  */
       restore_stub_is_tail = !(pop_incoming_args || frame.nregs || style != 1);
       ix86_emit_outlined_ms2sysv_restore (frame, !restore_stub_is_tail, style);
+      /* The stub call clobbers r11; reload the herbceptions flag
+	 from its stack slot.  The slot's DECL_RTL still carries the
+	 virtual frame register here (epilogue generation runs after
+	 register elimination), so rewrite it against the hard frame
+	 or stack pointer — both still address the live frame at this
+	 point, before the remaining teardown.  */
+      if (cfun->herbceptions_failed_slot != NULL_TREE)
+	{
+	  rtx flag = DECL_RTL (cfun->herbceptions_failed_slot);
+	  if (MEM_P (flag))
+	    {
+	      rtx addr = XEXP (flag, 0);
+	      if (GET_CODE (addr) == PLUS
+		  && REG_P (XEXP (addr, 0))
+		  && REGNO (XEXP (addr, 0)) == FRAME_POINTER_REGNUM
+		  && CONST_INT_P (XEXP (addr, 1)))
+		{
+		  int to = (frame_pointer_needed
+			    ? HARD_FRAME_POINTER_REGNUM
+			    : STACK_POINTER_REGNUM);
+		  rtx base = (frame_pointer_needed
+			      ? hard_frame_pointer_rtx
+			      : stack_pointer_rtx);
+		  HOST_WIDE_INT off
+		    = ix86_initial_elimination_offset (FRAME_POINTER_REGNUM,
+						       to)
+		      + INTVAL (XEXP (addr, 1));
+		  flag = gen_rtx_MEM (GET_MODE (flag),
+				      plus_constant (Pmode, base, off));
+		}
+	    }
+	  if (GET_MODE (flag) != QImode)
+	    flag = gen_lowpart (QImode, flag);
+	  emit_move_insn (gen_rtx_REG (QImode, R11_REG), flag);
+	}
     }
 
   /* If using out-of-line stub that is a tail-call, then...*/
@@ -10779,24 +10814,8 @@ ix86_expand_epilogue (int style)
 	  emit_jump_insn (gen_simple_return_indirect_internal (ecx));
 	}
       else if (cfun->herbceptions_failed_slot != NULL_TREE)
-	{
-	  rtx flag = DECL_RTL (cfun->herbceptions_failed_slot);
-	  if (MEM_P (flag))
-	    {
-	      rtx addr = XEXP (flag, 0);
-	      if (GET_CODE (addr) == PLUS
-		  && REG_P (XEXP (addr, 0))
-		  && REGNO (XEXP (addr, 0)) == FRAME_POINTER_REGNUM
-		  && CONST_INT_P (XEXP (addr, 1)))
-		flag = gen_rtx_MEM (GET_MODE (flag),
-				    plus_constant (Pmode,
-						   hard_frame_pointer_rtx,
-						   INTVAL (XEXP (addr, 1))));
-	    }
-	  if (GET_MODE (flag) != QImode)
-	    flag = gen_lowpart (QImode, flag);
-	  emit_jump_insn (gen_herbceptions_return (flag));
-	}
+	emit_jump_insn (gen_herbceptions_return
+			(gen_rtx_REG (QImode, R11_REG)));
       else
 	emit_jump_insn (gen_simple_return_internal ());
     }

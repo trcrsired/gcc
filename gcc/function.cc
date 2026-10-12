@@ -5568,6 +5568,20 @@ expand_function_end (void)
       else
 	emit_move_insn (valreg, src);
     }
+  /* A herbceptions function's failure discriminant is an ordinary
+     stack slot during the body — calls and scope-exit cleanups freely
+     clobber call-clobbered registers.  Load it into the
+     architecture's flag register here, on the shared return edge
+     after all cleanups have run; the epilogue fuses that register
+     into the carry flag at ret.  */
+  if (cfun->herbceptions_failed_slot != NULL_TREE)
+    {
+#ifdef HAVE_herbceptions_load_failed
+      if (HAVE_herbceptions_load_failed)
+	emit_insn (gen_herbceptions_load_failed
+		   (DECL_RTL (cfun->herbceptions_failed_slot)));
+#endif
+    }
   /* If scalar return value was computed in a pseudo-reg, or was a named
      return value that got dumped to the stack, copy that to the hard
      return register.  */

@@ -126,6 +126,36 @@ clone_body (tree clone, tree fn, void *arg_map)
     }
 
   append_to_statement_list_force (stmts, &DECL_SAVED_TREE (clone));
+
+  /* cp_genericize early-returns for DECL_CLONED_FUNCTION_P, so
+     genericize_herbceptions_body never records the channel slots for
+     clones.  The clone's copies of __hb_result/__hb_failed live in the
+     copied body's BIND_EXPR_VARS — record them on the clone's cfun
+     directly so its epilogue emits the fused negb;ret.  */
+  {
+    struct function *src = DECL_STRUCT_FUNCTION (fn);
+    if (src && src->herbceptions_failed_slot)
+      {
+	if (!DECL_STRUCT_FUNCTION (clone))
+	  allocate_struct_function (clone, /*abstract_p=*/false);
+	struct function *dst = DECL_STRUCT_FUNCTION (clone);
+	tree bind = TREE_CODE (stmts) == BIND_EXPR
+		    ? stmts
+		    : (TREE_CODE (stmts) == STATEMENT_LIST
+		       ? tsi_stmt (tsi_start (stmts)) : NULL_TREE);
+	for (tree v = bind && TREE_CODE (bind) == BIND_EXPR
+		    ? BIND_EXPR_VARS (bind) : NULL_TREE;
+	     v; v = DECL_CHAIN (v))
+	  if (DECL_ARTIFICIAL (v) && DECL_NAME (v))
+	    {
+	      const char *n = IDENTIFIER_POINTER (DECL_NAME (v));
+	      if (!strcmp (n, "__hb_result"))
+		dst->herbceptions_error_slot = v;
+	      else if (!strcmp (n, "__hb_failed"))
+		dst->herbceptions_failed_slot = v;
+	    }
+      }
+  }
 }
 
 /* DELETE_DTOR is a delete destructor whose body will be built.

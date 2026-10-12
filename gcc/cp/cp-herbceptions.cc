@@ -248,6 +248,8 @@ hb_fabricate_error (tree target, tree expr, location_t loc)
 		"%<std::error_domain%> specialization", type);
       return error_mark_node;
     }
+  mark_used (domain_fn);
+  mark_used (code_fn);
 
   tree dcall = build_call_expr_loc (loc, domain_fn, 0);
   tree ccall = build_call_expr_loc (loc, code_fn, 1, expr);
@@ -387,9 +389,8 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
   tree fntype = NULL_TREE;
   if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
     {
-      tree fn = CALL_EXPR_FN (call);
-      if (!fn && TREE_CODE (call) == AGGR_INIT_EXPR)
-	fn = AGGR_INIT_EXPR_FN (call);
+      tree fn = (TREE_CODE (call) == AGGR_INIT_EXPR
+		 ? AGGR_INIT_EXPR_FN (call) : CALL_EXPR_FN (call));
       if (fn)
 	{
 	  fntype = TREE_TYPE (fn);
@@ -542,7 +543,13 @@ hb_lower_fail (hb_ctx *ctx, tree stmt, bool is_throw, location_t loc)
 static tree
 hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
 {
-  tree call = TREE_OPERAND (stmt, 0);
+  /* stmt is normally a HERBCEPTION_TRY_EXPR wrapping the call, but
+     raw CALL_EXPR/AGGR_INIT_EXPR nodes arrive here directly from
+     hb_lower_r when a spec'd call bypassed the parser's auto-wrap
+     (ctor-init, desugared calls, coroutine machinery).  */
+  tree call = (TREE_CODE (stmt) == CALL_EXPR
+	       || TREE_CODE (stmt) == AGGR_INIT_EXPR)
+	      ? stmt : TREE_OPERAND (stmt, 0);
   tree ctype = TREE_TYPE (call);
   tree fntype = NULL_TREE;
 
@@ -553,9 +560,8 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
 
   if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
     {
-      tree fn = CALL_EXPR_FN (call);
-      if (!fn && TREE_CODE (call) == AGGR_INIT_EXPR)
-	fn = AGGR_INIT_EXPR_FN (call);
+      tree fn = (TREE_CODE (call) == AGGR_INIT_EXPR
+		 ? AGGR_INIT_EXPR_FN (call) : CALL_EXPR_FN (call));
       if (fn)
 	{
 	  fntype = TREE_TYPE (fn);
@@ -854,6 +860,29 @@ hb_lower_r (tree *stmt_p, int *walk_subtrees, void *data)
       *walk_subtrees = 0;
       break;
 
+    case CALL_EXPR:
+    case AGGR_INIT_EXPR:
+      {
+	/* A spec'd call that reached here unwrapped — the parser only
+	   auto-wraps calls built through postfix-expression handling;
+	   constructor/initialization calls (L::L(&l,1) inside a decl's
+	   DECL_INITIAL), builtin desugars, and coroutine machinery
+	   produce raw CALL_EXPR/AGGR_INIT_EXPR nodes that would
+	   otherwise sail through with their channel result unchecked.  */
+	tree fn = (TREE_CODE (stmt) == CALL_EXPR
+		   ? CALL_EXPR_FN (stmt) : AGGR_INIT_EXPR_FN (stmt));
+	tree fntype = fn ? TREE_TYPE (fn) : NULL_TREE;
+	if (fntype && POINTER_TYPE_P (fntype))
+	  fntype = TREE_TYPE (fntype);
+	if (fntype && FUNC_OR_METHOD_TYPE_P (fntype)
+	    && type_herbceptions_p (fntype))
+	  {
+	    *stmt_p = hb_lower_try (ctx, stmt, loc);
+	    *walk_subtrees = 0;
+	  }
+	break;
+      }
+
     case DECL_EXPR:
       /* A decl's initializer carries expression-level nodes that the
 	 default walk doesn't reach (DECL_EXPR_DECL's DECL_INITIAL).  */
@@ -1116,13 +1145,12 @@ genericize_herbceptions_body (tree fndecl)
 	 integral part of the call/return model.  */
       TREE_THIS_VOLATILE (ctx.result_var) = 1;
       TREE_THIS_VOLATILE (ctx.failed_var) = 1;
-      /* The failure discriminant is read after the frame teardown,
-	 when a stack slot would be dead: bind it to a hard register so
-	 `negb <reg>' runs against a live location.  r11 is
-	 call-clobbered and untouched by `leave'/`pop'.  */
-      DECL_REGISTER (ctx.failed_var) = 1;
-      set_user_assembler_name (ctx.failed_var, "r11");
-      DECL_HARD_REGISTER (ctx.failed_var) = 1;
+      /* __hb_failed stays a plain stack slot: any register the body
+	 writes it through can be clobbered by calls and scope-exit
+	 cleanups between the store and the return.  expand_function_end
+	 loads it into the architecture's flag register on the shared
+	 return edge — after all cleanups — and the epilogue fuses that
+	 register into the carry flag at ret.  */
 
       cfun->herbceptions_error_slot = ctx.result_var;
       cfun->herbceptions_failed_slot = ctx.failed_var;
