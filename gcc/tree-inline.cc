@@ -6523,6 +6523,18 @@ tree_function_versioning (tree old_decl, tree new_decl,
   copy_body (&id, ENTRY_BLOCK_PTR_FOR_FN (cfun), EXIT_BLOCK_PTR_FOR_FN (cfun),
 	     new_entry);
 
+  /* Herbceptions: propagate the error-channel slots to the clone.  The
+     source function's slot decls were remapped into the clone's body by
+     copy_body, so look the clone's copies up in the decl map.  Without
+     this the clone's epilogue would not read the failure flag, making
+     every store look dead and silently reporting success.  */
+  if (id.src_cfun->herbceptions_error_slot)
+    if (tree *slot = id.decl_map->get (id.src_cfun->herbceptions_error_slot))
+      cfun->herbceptions_error_slot = *slot;
+  if (id.src_cfun->herbceptions_failed_slot)
+    if (tree *slot = id.decl_map->get (id.src_cfun->herbceptions_failed_slot))
+      cfun->herbceptions_failed_slot = *slot;
+
   /* Renumber the lexical scoping (non-code) blocks consecutively.  */
   number_blocks (new_decl);
 

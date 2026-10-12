@@ -3477,6 +3477,17 @@ compute_fn_summary (struct cgraph_node *node, bool early)
 	   no_signature = true;
 	 }
 
+       /* Herbceptions functions deliver their payload through the error
+	  channel, not an ordinary return value.  Moving or removing a
+	  parameter would change how the payload registers are laid out and
+	  break the caller's .HERBCEPTION_RESULT read.  */
+       if (fn_has_herbceptions_spec_p (TREE_TYPE (node->decl)))
+	 {
+	   if (dump_file)
+	     fprintf (dump_file, "No signature change:"
+		      " herbceptions specification.\n");
+	   no_signature = true;
+	 }
        /* Type attributes can use parameter indices to describe them.
 	  Special case fn spec since we can safely preserve them in
 	  modref summaries.  */
