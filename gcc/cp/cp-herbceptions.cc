@@ -499,10 +499,12 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
   append_to_statement_list (build_stmt (loc, DECL_EXPR, f), &ctx->pre);
   append_to_statement_list (build_stmt (loc, DECL_EXPR, r), &ctx->pre);
 
-  /* A materialized (aggregate/sret) call writes into a temporary
-     bound by the peeled TARGET_EXPR — materialize into a
-     channel-local instead so r.value reads an ordinary
-     function-scope object.  */
+  /* The call and member binds stay inline at the catch-expr's
+     position so operands produced by earlier elements of an
+     enclosing COMPOUND stay visible.  A materialized (aggregate/sret)
+     call goes into a channel-local — the peeled TARGET_EXPR's slot
+     only binds inside that node.  */
+  tree seq;
   tree valslot;
   if (TREE_CODE (call) == AGGR_INIT_EXPR
       || targetm.calls.return_in_memory (ctype, fntype))
@@ -512,34 +514,30 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
       DECL_CONTEXT (v) = ctx->fndecl;
       append_to_statement_list (build_stmt (loc, DECL_EXPR, v),
 				&ctx->pre);
-      tree mat;
       if (TREE_CODE (call) == AGGR_INIT_EXPR)
 	{
 	  AGGR_INIT_EXPR_SLOT (call) = v;
-	  mat = build_stmt (loc, EXPR_STMT, call);
+	  seq = call;
 	}
       else
-	mat = build_stmt (loc, EXPR_STMT,
-			  build2 (INIT_EXPR, void_type_node, v, call));
-      append_to_statement_list (mat, &ctx->pre);
+	seq = build2 (INIT_EXPR, void_type_node, v, call);
       valslot = v;
     }
   else
     {
-      append_to_statement_list (build_stmt (loc, EXPR_STMT, call),
-				&ctx->pre);
+      seq = call;
       valslot = hb_value_view (u, ctype);
     }
-  append_to_statement_list
-    (hb_assign (loc, u,
-		build_call_expr_internal_loc (loc, IFN_HERBCEPTION_RESULT,
-					      TREE_TYPE (u), 0)),
-     &ctx->pre);
-  append_to_statement_list
-    (hb_assign (loc, f,
-		build_call_expr_internal_loc (loc, IFN_HERBCEPTION_FAILED,
-					      TREE_TYPE (f), 0)),
-     &ctx->pre);
+  seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		hb_assign (loc, u,
+			   build_call_expr_internal_loc
+			   (loc, IFN_HERBCEPTION_RESULT,
+			    TREE_TYPE (u), 0)));
+  seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		hb_assign (loc, f,
+			   build_call_expr_internal_loc
+			   (loc, IFN_HERBCEPTION_FAILED,
+			    TREE_TYPE (f), 0)));
 
   /* Bind the either members: r.value = u.value, r.error = u.error,
      r.failed = f.  */
@@ -549,22 +547,20 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
   tree rv = hb_named_field (etype, "value");
   tree re = hb_named_field (etype, "error");
   tree rf = hb_named_field (etype, "failed");
-  append_to_statement_list
-    (hb_assign (loc,
-		build3 (COMPONENT_REF, ctype, r, rv, NULL_TREE),
-		valslot),
-     &ctx->pre);
-  append_to_statement_list
-    (hb_assign (loc,
-		build3 (COMPONENT_REF, err, r, re, NULL_TREE),
-		errslot),
-     &ctx->pre);
-  append_to_statement_list
-    (hb_assign (loc,
-		build3 (COMPONENT_REF, boolean_type_node, r, rf, NULL_TREE),
-		f),
-     &ctx->pre);
-  return r;
+  seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		hb_assign (loc,
+			   build3 (COMPONENT_REF, ctype, r, rv, NULL_TREE),
+			   valslot));
+  seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		hb_assign (loc,
+			   build3 (COMPONENT_REF, err, r, re, NULL_TREE),
+			   errslot));
+  seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		hb_assign (loc,
+			   build3 (COMPONENT_REF, boolean_type_node, r,
+				   rf, NULL_TREE),
+			   f));
+  return build2 (COMPOUND_EXPR, etype, seq, r);
 }
 
 /* Lower HERBCEPTION_THROW_EXPR / HERBCEPTION_FAIL_EXPR.  Returns a
@@ -779,9 +775,12 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
 	 the channel checks into the initializer makes the gimplifier
 	 elide the copy to the consumer.  Materialize into a
 	 channel-local instead, declared alongside u/f so the value is
-	 an ordinary function-scope object in every context:
-	 { DECL v; v = call; u = RESULT; f = FAILED; if (f) route; v }.
-	 The TARGET_EXPR itself is replaced by v.  */
+	 an ordinary function-scope object in every context — the
+	 whole sequence stays inline at the try-expr's position so
+	 operands produced by earlier elements of an enclosing
+	 COMPOUND (the `new' comma-expansion's allocation temp) are
+	 visible:
+	 { v = call; u = RESULT; f = FAILED; if (f) route; v }.  */
       tree v = build_decl (loc, VAR_DECL, NULL_TREE, ctype);
       DECL_ARTIFICIAL (v) = 1;
       DECL_CONTEXT (v) = ctx->fndecl;
@@ -791,22 +790,21 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
       if (TREE_CODE (call) == AGGR_INIT_EXPR)
 	{
 	  AGGR_INIT_EXPR_SLOT (call) = v;
-	  mat = build_stmt (loc, EXPR_STMT, call);
+	  mat = call;
 	}
       else
-	mat = build_stmt (loc, EXPR_STMT,
-			  build2 (INIT_EXPR, void_type_node, v, call));
-      append_to_statement_list (mat, &ctx->pre);
-      append_to_statement_list
-	(hb_assign (loc, u,
-		    build_call_expr_internal_loc
-		    (loc, IFN_HERBCEPTION_RESULT, TREE_TYPE (u), 0)),
-	 &ctx->pre);
-      append_to_statement_list
-	(hb_assign (loc, f,
-		    build_call_expr_internal_loc
-		    (loc, IFN_HERBCEPTION_FAILED, TREE_TYPE (f), 0)),
-	 &ctx->pre);
+	mat = build2 (INIT_EXPR, void_type_node, v, call);
+      tree seq
+	= build2 (COMPOUND_EXPR, void_type_node, mat,
+		  hb_assign (loc, u,
+			     build_call_expr_internal_loc
+			     (loc, IFN_HERBCEPTION_RESULT,
+			      TREE_TYPE (u), 0)));
+      seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		    hb_assign (loc, f,
+			       build_call_expr_internal_loc
+			       (loc, IFN_HERBCEPTION_FAILED,
+				TREE_TYPE (f), 0)));
       {
 	tree body = alloc_stmt_list ();
 	tree errf = hb_error_field (union_type, err);
@@ -814,28 +812,29 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
 	  ? build3 (COMPONENT_REF, err, u, errf, NULL_TREE) : u;
 	hb_emit_route (body, ctx, errslot, loc,
 		       /*call_p=*/true, TREE_NO_WARNING (stmt));
-	tree cond = build3 (COND_EXPR, void_type_node, f,
-			    body ? body : void_node, NULL_TREE);
-	append_to_statement_list (cond, &ctx->pre);
+	seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		      build3 (COND_EXPR, void_type_node, f,
+			      body ? body : void_node, NULL_TREE));
       }
-      return discarded ? void_node : v;
+      if (discarded)
+	return seq;
+      return build2 (COMPOUND_EXPR, ctype, seq, v);
     }
 
-  append_to_statement_list (build_stmt (loc, EXPR_STMT, call), &ctx->pre);
-
-  /* u = .HERBCEPTION_RESULT (); f = .HERBCEPTION_FAILED (); */
-  append_to_statement_list
-    (hb_assign (loc, u,
-		build_call_expr_internal_loc (loc, IFN_HERBCEPTION_RESULT,
-					      TREE_TYPE (u), 0)),
-     &ctx->pre);
-  append_to_statement_list
-    (hb_assign (loc, f,
-		build_call_expr_internal_loc (loc, IFN_HERBCEPTION_FAILED,
-					      TREE_TYPE (f), 0)),
-     &ctx->pre);
-
-  /* if (f) <route> */
+  /* The same inline sequence for a register-channel call:
+     { call; u = RESULT; f = FAILED; if (f) route; <value> } — only
+     the u/f declarations hoist to ctx->pre.  */
+  tree seq
+    = build2 (COMPOUND_EXPR, void_type_node, call,
+	      hb_assign (loc, u,
+			 build_call_expr_internal_loc
+			 (loc, IFN_HERBCEPTION_RESULT,
+			  TREE_TYPE (u), 0)));
+  seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		hb_assign (loc, f,
+			   build_call_expr_internal_loc
+			   (loc, IFN_HERBCEPTION_FAILED,
+			    TREE_TYPE (f), 0)));
   {
     tree body = alloc_stmt_list ();
     tree errf = hb_error_field (union_type, err);
@@ -843,9 +842,9 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
       ? build3 (COMPONENT_REF, err, u, errf, NULL_TREE) : u;
     hb_emit_route (body, ctx, errslot, loc,
 		   /*call_p=*/true, TREE_NO_WARNING (stmt));
-    tree cond = build3 (COND_EXPR, void_type_node, f,
-			body ? body : void_node, NULL_TREE);
-    append_to_statement_list (cond, &ctx->pre);
+    seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		  build3 (COND_EXPR, void_type_node, f,
+			  body ? body : void_node, NULL_TREE));
   }
 
   /* The try-expr's value: u.value for scalar calls, the operand
@@ -853,24 +852,25 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
      whose materialization binds in a later TARGET_EXPR marker
      (expression-statement position) must not yield that slot.  */
   if (VOID_TYPE_P (ctype) || discarded)
-    return void_node;
+    return seq;
   if (indir)
     {
       /* The dereference now applies to the channel's pointer slot —
 	 *u.value is the referent lvalue the try-expr yields.  */
       TREE_OPERAND (indir, 0) = hb_value_slot (u, rettype);
-      return indir;
+      return build2 (COMPOUND_EXPR, ctype, seq, indir);
     }
   if (TREE_CODE (call) == AGGR_INIT_EXPR)
-    return AGGR_INIT_EXPR_SLOT (call);
-  if (TREE_CODE (call) == TARGET_EXPR)
-    return TARGET_EXPR_SLOT (call);
+    return build2 (COMPOUND_EXPR, ctype, seq,
+		   AGGR_INIT_EXPR_SLOT (call));
   if (targetm.calls.return_in_memory (rettype, fntype)
       && TREE_CODE (call) == CALL_EXPR)
     /* An sret callee wrote the value into the hidden return-slot
        argument.  */
-    return build1 (INDIRECT_REF, ctype, CALL_EXPR_ARG (call, 0));
-  return hb_value_view (u, rettype);
+    return build2 (COMPOUND_EXPR, ctype, seq,
+		   build1 (INDIRECT_REF, ctype,
+			   CALL_EXPR_ARG (call, 0)));
+  return build2 (COMPOUND_EXPR, ctype, seq, hb_value_view (u, rettype));
 }
 
 /* Lower a TRY_BLOCK whose handlers may include HERBCEPTION_HANDLERs.
