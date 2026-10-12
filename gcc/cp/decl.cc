@@ -5668,6 +5668,11 @@ cxx_init_decl_processing (void)
       TYPE_FIELDS (type) = domain;
       layout_type (type);
       mark_herbceptions_cxx_std_error (type);
+      /* The record is a trivially-destructible, trivially-copyable
+	 two-word POD — a literal type so it can live in constexpr
+	 promises and consteval domain tables; finish_struct never
+	 runs here so set the flag directly.  */
+      CLASSTYPE_LITERAL_P (type) = 1;
       /* Member access needs CLASS_TYPE_P: mark the record as a
 	 class type, like begin_class_definition would.  */
       TYPE_LANG_FLAG_5 (type) = 1;
