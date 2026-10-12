@@ -20566,6 +20566,12 @@ use_eh_spec_block (tree fn)
 	     and we avoid spurious warnings about unreachable
 	     code.  */
 	  && !DECL_DEFAULTED_FN (fn)
+	  /* A Herbceptions spec is not a legacy exception list: the
+	     function's boundary catch-all converts an escaping legacy
+	     exception into the channel instead of calling
+	     __cxa_call_unexpected.  */
+	  && !HERBCEPTION_SPEC_P (TYPE_RAISES_EXCEPTIONS
+				  (TREE_TYPE (fn)))
 	  && !type_throw_all_p (TREE_TYPE (fn)));
 }
 

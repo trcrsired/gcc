@@ -873,6 +873,165 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
   return build2 (COMPOUND_EXPR, ctype, seq, hb_value_view (u, rettype));
 }
 
+/* ----------------------------------------------------------------
+ * Legacy-EH boundary conversion (hosted targets only): a `throws'
+ * function or a `catch throws' handler catches a legacy C++
+ * exception escaping its scope and converts it through the
+ * itanium-exception-ptr error domain — the {domain, code} pair the
+ * runtime's __cxa_error_domain_itanium_exception_ptr /
+ * __cxa_error_code_itanium_exception_ptr entry points fabricate —
+ * exactly like clang's herbceptions lowering.  A `return_failure{E}'
+ * function cannot fabricate an arbitrary E, so an escaping legacy
+ * exception terminates (matching clang's __clang_call_terminate).
+ * ---------------------------------------------------------------- */
+
+static tree hb_begin_catch_fn, hb_end_catch_fn;
+static tree hb_exc_dom_fn, hb_exc_code_fn;
+
+static void
+hb_eh_fndecls (void)
+{
+  if (hb_begin_catch_fn)
+    return;
+  hb_begin_catch_fn
+    = push_library_fn (get_identifier ("__cxa_begin_catch"),
+		       build_function_type_list (ptr_type_node,
+						 ptr_type_node, NULL_TREE),
+		       empty_except_spec, ECF_NOTHROW);
+  /* __cxa_end_catch deliberately carries no exception spec: the
+     libsupc++ declaration is unannotated, and declaring it noexcept
+     here would warn on the mismatch.  */
+  hb_end_catch_fn
+    = push_library_fn (get_identifier ("__cxa_end_catch"),
+		       build_function_type_list (void_type_node,
+						 NULL_TREE),
+		       NULL_TREE, 0);
+  hb_exc_dom_fn
+    = push_library_fn
+      (get_identifier ("__cxa_error_domain_itanium_exception_ptr"),
+       build_function_type_list (ptr_type_node, NULL_TREE),
+       empty_except_spec, ECF_NOTHROW);
+  hb_exc_code_fn
+    = push_library_fn
+      (get_identifier ("__cxa_error_code_itanium_exception_ptr"),
+       build_function_type_list (uintptr_type_node,
+				 uintptr_type_node, ptr_type_node,
+				 ptr_type_node, ptr_type_node,
+				 NULL_TREE),
+       empty_except_spec, ECF_NOTHROW);
+}
+
+/* __cxa_begin_catch (__builtin_eh_pointer (0)) — the caught
+   exception's object pointer.  */
+
+static tree
+hb_begin_catch_expr (location_t loc)
+{
+  hb_eh_fndecls ();
+  return build_call_expr_loc (loc, hb_begin_catch_fn, 1,
+			      build_exc_ptr ());
+}
+
+/* Emit the std::error fabrication for the exception caught by
+   __cxa_begin_catch: a channel-local pair bound to
+   { __cxa_error_domain_itanium_exception_ptr (),
+     __cxa_error_code_itanium_exception_ptr (1, obj, 0, 0) }.
+   The pair is an explicit local — assigning an aggregate
+   constructor of the ADDRESSABLE channel record would need a
+   temporary create_tmp_var refuses to make for it.  Returns the
+   pair decl after appending the sequence to LIST.  */
+
+static tree
+hb_emit_fab_pair (tree *list, location_t loc)
+{
+  hb_eh_fndecls ();
+  tree fabtype = herbceptions_cxx_std_error_node;
+  tree pairv = build_decl (loc, VAR_DECL, NULL_TREE, fabtype);
+  DECL_ARTIFICIAL (pairv) = 1;
+  DECL_CONTEXT (pairv) = current_function_decl;
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, pairv), list);
+  tree df = hb_named_field (fabtype, "domain");
+  tree cf = hb_named_field (fabtype, "code");
+  append_to_statement_list
+    (hb_assign (loc,
+		build3 (COMPONENT_REF, const_ptr_type_node, pairv,
+			df, NULL_TREE),
+		build_call_expr_loc (loc, hb_exc_dom_fn, 0)),
+     list);
+  append_to_statement_list
+    (hb_assign (loc,
+		build3 (COMPONENT_REF, uintptr_type_node, pairv,
+			cf, NULL_TREE),
+		build_call_expr_loc (loc, hb_exc_code_fn, 4,
+				     integer_one_node,
+				     hb_begin_catch_expr (loc),
+				     null_pointer_node,
+				     null_pointer_node)),
+     list);
+  return pairv;
+}
+
+/* Build a catch-all CATCH_EXPR running STMTS with the implicit
+   __cxa_end_catch cleanup.  For a `catch throws' conversion STMTS
+   fabricate the handler variable and jump to the dispatch label; for
+   a `throws' function boundary they write the channel and return.
+   Emit GENERIC CATCH_EXPR directly — the earlier HANDLER form let
+   build_stmt leave void_type_node in HANDLER_TYPE, producing a
+   `catch (void)' filter (_ZTIv) that matches nothing.  */
+
+static tree
+hb_legacy_catch_all (location_t loc, tree stmts)
+{
+  hb_eh_fndecls ();
+  tree endc
+    = build_stmt (loc, EXPR_STMT,
+		  build_call_expr_loc (loc, hb_end_catch_fn, 0));
+  tree body = build_stmt (loc, TRY_FINALLY_EXPR, stmts, endc);
+  return build2 (CATCH_EXPR, void_type_node, NULL_TREE, body);
+}
+
+/* The synthesized boundary for a `throws' function: an escaping
+   legacy exception is caught by a catch-all that fabricates the
+   std::error pair and returns it on the channel.  For a
+   `return_failure{E}' function the channel cannot represent an
+   arbitrary legacy exception — catch it and terminate.  */
+
+static tree
+hb_fn_boundary (hb_ctx *ctx, tree body, location_t loc, bool fabricate)
+{
+  tree action = alloc_stmt_list ();
+  if (fabricate)
+    {
+      tree pairv = hb_emit_fab_pair (&action, loc);
+      tree errf = hb_error_field (ctx->union_type, ctx->error_type);
+      tree errslot = errf
+	? build3 (COMPONENT_REF, ctx->error_type, ctx->result_var,
+		  errf, NULL_TREE) : ctx->result_var;
+      append_to_statement_list (hb_assign (loc, errslot, pairv),
+				&action);
+      append_to_statement_list (hb_assign (loc, ctx->failed_var,
+					   boolean_true_node), &action);
+      append_to_statement_list
+	(build_stmt (loc, RETURN_EXPR, NULL_TREE), &action);
+    }
+  else
+    {
+      append_to_statement_list
+	(build_stmt (loc, EXPR_STMT, hb_begin_catch_expr (loc)), &action);
+      append_to_statement_list
+	(build_stmt (loc, EXPR_STMT,
+		     build_call_expr_loc
+		     (loc,
+		      builtin_decl_explicit (BUILT_IN_ABORT), 0)),
+	 &action);
+    }
+  tree h = hb_legacy_catch_all (loc, action);
+  tree tc = build_stmt (loc, TRY_CATCH_EXPR, body, h);
+  tree list = alloc_stmt_list ();
+  append_to_statement_list (tc, &list);
+  return list;
+}
+
 /* Lower a TRY_BLOCK whose handlers may include HERBCEPTION_HANDLERs.
    Builds
 
@@ -911,10 +1070,16 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
 	    hb_handler = h;
 	}
       else
-	append_to_statement_list
-	  (build_stmt (EXPR_LOCATION (h), HANDLER,
-		       HANDLER_PARMS (h), HANDLER_BODY (h)),
-	   &legacy);
+	{
+	  /* Rebuild the HANDLER — build_stmt leaves void_type_node in
+	     TREE_TYPE, which HANDLER_TYPE reads as the caught type:
+	     a `catch (int)' would degenerate into `catch (void)'.
+	     Preserve the type.  */
+	  tree nh = build_stmt (EXPR_LOCATION (h), HANDLER,
+				HANDLER_PARMS (h), HANDLER_BODY (h));
+	  TREE_TYPE (nh) = HANDLER_TYPE (h);
+	  append_to_statement_list (nh, &legacy);
+	}
     }
 
   if (!hb_handler)
@@ -940,6 +1105,33 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
   hb_lower_stmt (&stmts, ctx);
   ctx->disp_label = save_disp;
   ctx->handler_var = save_hvar;
+
+  /* `catch throws' also catches legacy C++ exceptions — append a
+     catch-all (after any typed legacy catches) that fabricates the
+     handler's error from the exception object and jumps to the same
+     dispatch.  Hosted targets only; under -fno-exceptions legacy
+     throws can't exist here anyway.  */
+  if (flag_exceptions)
+    {
+      tree fab = alloc_stmt_list ();
+      if (handler_var)
+	{
+	  tree pairv = hb_emit_fab_pair (&fab, loc);
+	  tree v = hb_to_error (TREE_TYPE (handler_var), pairv, loc);
+	  append_to_statement_list (hb_assign (loc, handler_var, v),
+				    &fab);
+	}
+      else
+	append_to_statement_list
+	  (build_stmt (loc, EXPR_STMT, hb_begin_catch_expr (loc)),
+	   &fab);
+      append_to_statement_list
+	(build_stmt (loc, GOTO_EXPR, disp), &fab);
+      if (!legacy)
+	legacy = alloc_stmt_list ();
+      append_to_statement_list (hb_legacy_catch_all (loc, fab),
+				&legacy);
+    }
 
   tree list = alloc_stmt_list ();
   if (handler_var)
@@ -1535,6 +1727,29 @@ genericize_herbceptions_body (tree fndecl)
       append_to_statement_list (ctx.pre, &l);
       append_to_statement_list_force (DECL_SAVED_TREE (fndecl), &l);
       DECL_SAVED_TREE (fndecl) = l;
+    }
+
+  /* The legacy-EH boundary: a spec'd function wraps its (now
+     channel-lowered) body in a catch-all so a legacy exception
+     escaping it converts to the std::error channel — or terminates
+     for return_failure{E}, which cannot fabricate an arbitrary E.
+     Hosted only: under -fno-exceptions a legacy throw can't be
+     raised or caught at all.  */
+  if (hspec && flag_exceptions)
+    {
+      bool fabricate
+	= HERBCEPTION_SPEC_KIND (hspec) != hsk_return_failure;
+      tree body = DECL_SAVED_TREE (fndecl);
+      location_t bloc = DECL_SOURCE_LOCATION (fndecl);
+      if (TREE_CODE (body) == BIND_EXPR)
+	{
+	  tree inner = BIND_EXPR_BODY (body);
+	  BIND_EXPR_BODY (body)
+	    = hb_fn_boundary (&ctx, inner, bloc, fabricate);
+	}
+      else
+	DECL_SAVED_TREE (fndecl)
+	  = hb_fn_boundary (&ctx, body, bloc, fabricate);
     }
 }
 
