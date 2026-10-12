@@ -36,6 +36,6 @@ main ()
     }
   catch throws (std::error e)
     {
-      return (int) e.code;
+      return e.code == 21 ? 0 : 5;
     }
 }
