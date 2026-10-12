@@ -3486,7 +3486,11 @@ static void
 expand_HERBCEPTION_RESULT (internal_fn, gcall *stmt)
 {
   tree lhs = gimple_call_lhs (stmt);
-  gcc_assert (lhs != NULL_TREE);
+  /* The payload can be dead when only the failure discriminant is
+     used; DCE then drops the lhs but keeps the call.  Nothing to
+     materialize in that case.  */
+  if (lhs == NULL_TREE)
+    return;
   rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
   rtx valreg = hard_function_value (TREE_TYPE (lhs), NULL_TREE,
 				    NULL_TREE, 1);
@@ -3505,7 +3509,9 @@ static void
 expand_HERBCEPTION_FAILED (internal_fn, gcall *stmt)
 {
   tree lhs = gimple_call_lhs (stmt);
-  gcc_assert (lhs != NULL_TREE);
+  /* See expand_HERBCEPTION_RESULT: the discriminant can be unused.  */
+  if (lhs == NULL_TREE)
+    return;
   rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
   /* Some targets (e.g. aarch64) can only materialize the flag into a
      register, so bounce through a scratch when the result is wanted in

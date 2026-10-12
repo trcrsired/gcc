@@ -2,8 +2,9 @@
 // { dg-options "-fherbceptions" }
 // { dg-final { scan-assembler "setc" } }
 // { dg-final { scan-assembler "negb" } }
-// x86-64 SysV error-channel lowering: the callee fuses its failure
-// flag into `negb; ret' and the caller reads CF via `setc'.
+// x86-64 SysV error-channel lowering: the callee sets CF from its
+// failure slot with `negb' (the epilogue teardown is flag-preserving)
+// and the caller reads CF via `setc'.
 
 namespace std {
 struct error {

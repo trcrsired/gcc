@@ -7997,8 +7997,11 @@ pro_epilogue_adjust_stack (rtx dest, rtx src, rtx offset,
     }
 
   /*  Shrink wrap separate may insert prologue between TEST and JMP.  In order
-      not to affect EFlags, emit add without reg clobbering.  */
-  if (crtl->shrink_wrapped_separate)
+      not to affect EFlags, emit add without reg clobbering.  Likewise a
+      herbceptions function keeps its failure discriminant in CF across the
+      whole epilogue, so the stack adjust must not touch the flags.  */
+  if (crtl->shrink_wrapped_separate
+      || cfun->herbceptions_failed_slot != NULL_TREE)
     insn = emit_insn (gen_pro_epilogue_adjust_stack_add_nocc
 		      (Pmode, dest, src, addend));
   else
@@ -10597,13 +10600,17 @@ ix86_expand_epilogue (int style)
 	 jump to it.  */
       restore_stub_is_tail = !(pop_incoming_args || frame.nregs || style != 1);
       ix86_emit_outlined_ms2sysv_restore (frame, !restore_stub_is_tail, style);
-      /* The stub call clobbers r11; reload the herbceptions flag
-	 from its stack slot.  The slot's DECL_RTL still carries the
-	 virtual frame register here (epilogue generation runs after
-	 register elimination), so rewrite it against the hard frame
-	 or stack pointer — both still address the live frame at this
-	 point, before the remaining teardown.  */
-      if (cfun->herbceptions_failed_slot != NULL_TREE)
+      /* A stub call clobbers the carry flag, so re-set it from the
+	 stack slot afterwards.  A tail stub is reached by `jmp' and
+	 leaves CF alone, so there we rely on the value set at the end
+	 of the body (and must not append an insn after the `jmp').
+	 The slot's DECL_RTL still carries the virtual frame register
+	 here (epilogue generation runs after register elimination), so
+	 rewrite it against the hard frame or stack pointer — both still
+	 address the live frame at this point, before the remaining
+	 teardown.  */
+      if (!restore_stub_is_tail
+	  && cfun->herbceptions_failed_slot != NULL_TREE)
 	{
 	  rtx flag = DECL_RTL (cfun->herbceptions_failed_slot);
 	  if (MEM_P (flag))
@@ -10630,7 +10637,7 @@ ix86_expand_epilogue (int style)
 	    }
 	  if (GET_MODE (flag) != QImode)
 	    flag = gen_lowpart (QImode, flag);
-	  emit_move_insn (gen_rtx_REG (QImode, R11_REG), flag);
+	  emit_insn (gen_herbceptions_load_failed (flag));
 	}
     }
 
@@ -10920,8 +10927,7 @@ ix86_expand_epilogue (int style)
 	  emit_jump_insn (gen_simple_return_indirect_internal (ecx));
 	}
       else if (cfun->herbceptions_failed_slot != NULL_TREE)
-	emit_jump_insn (gen_herbceptions_return
-			(gen_rtx_REG (QImode, R11_REG)));
+	emit_jump_insn (gen_herbceptions_return ());
       else
 	emit_jump_insn (gen_simple_return_internal ());
     }
