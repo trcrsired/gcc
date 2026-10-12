@@ -1547,11 +1547,16 @@ check_redeclaration_exception_specification (tree new_decl,
 	   specified to have exception specifications (just behave as if they
 	   have them), but some implementations include them.  */
 	complained = pedwarn (new_loc, OPT_Wsystem_headers, msg, new_decl);
-      else if (!flag_exceptions)
+      else if (!flag_exceptions
+	       && !HERBCEPTION_SPEC_P (new_exceptions)
+	       && !HERBCEPTION_SPEC_P (old_exceptions))
 	/* We used to silently permit mismatched eh specs with
-	   -fno-exceptions, so only complain if -pedantic.  */
+	   -fno-exceptions, so only complain if -pedantic.  A
+	   herbceptions spec changes the calling convention — a
+	   mismatch is a hard error even without legacy EH.  */
 	complained = pedwarn (new_loc, OPT_Wpedantic, msg, new_decl);
-      else if (!new_exceptions || global_new)
+      else if ((!new_exceptions || global_new)
+	       && !HERBCEPTION_SPEC_P (old_exceptions))
 	/* Reduce to pedwarn for omitted exception specification.  No warning
 	   flag for this; silence the warning by correcting the code.  */
 	complained = pedwarn (new_loc, 0, msg, new_decl);

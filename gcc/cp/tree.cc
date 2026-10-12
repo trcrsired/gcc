@@ -71,6 +71,13 @@ lvalue_kind (const_tree ref)
   if (REFERENCE_REF_P (ref))
     return lvalue_kind (TREE_OPERAND (ref, 0));
 
+  /* Herbceptions wrappers forward their operand's value (and its
+     value category) through the channel — a `try(int& ())' call is
+     still an lvalue.  */
+  if (TREE_CODE (ref) == HERBCEPTION_TRY_EXPR
+      || TREE_CODE (ref) == HERBCEPTION_CATCH_EXPR)
+    return lvalue_kind (TREE_OPERAND (ref, 0));
+
   if (TREE_TYPE (ref)
       && TYPE_REF_P (TREE_TYPE (ref)))
     {

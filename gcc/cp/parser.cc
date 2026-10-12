@@ -9376,9 +9376,11 @@ cp_parser_postfix_expression (cp_parser *parser, bool address_p, bool cast_p,
 		       the caller's/ctor's frame — the failure routes
 		       there, so the check defers to that context
 		       (local_variables_forbidden_p is set in both).  */
-		    if (parser->herbception_operand_depth == 0
-			&& !parser->local_variables_forbidden_p
-			&& !herbceptions_failure_allowed_here ())
+		    bool allowed
+		      = (parser->herbception_operand_depth != 0
+			 || parser->local_variables_forbidden_p
+			 || herbceptions_failure_allowed_here ());
+		    if (!allowed)
 		      error_at (loc, "call to a %<throws%> or "
 				     "%<return_failure{E}%> function must "
 				     "be handled by an enclosing %<try { } "
@@ -9388,6 +9390,12 @@ cp_parser_postfix_expression (cp_parser *parser, bool address_p, bool cast_p,
 				     "propagate");
 		    postfix_expression
 		      = build_herbceptions_try (loc, postfix_expression);
+		    /* The diagnostic above already covers this call —
+		       mark the wrap so the lowering pass does not
+		       re-diagnose the same unhandled failure.  */
+		    if (!allowed
+			&& postfix_expression != error_mark_node)
+		      TREE_NO_WARNING (postfix_expression.get_value ()) = 1;
 		  }
 	      }
 

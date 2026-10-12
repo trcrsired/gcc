@@ -14,3 +14,5 @@ void e6() { try {} catch return_failure(int) {} }      // { dg-error "expression
 void e7() { throw throws; }                           // { dg-error "rethrows the caught error" }
 void e8() { try { f(); } catch throws(int e) { (void)e; } } // { dg-error "std::error" }
 void e9() { return_failure(1); }                      // { dg-error "only valid inside" }
+void e10() { auto e = catch return_failure(f()); (void)e; } // { dg-error "requires a call to a function declared" }
+int e11() return_failure{int} { return try(f()); }    // { dg-error "error_domain" }

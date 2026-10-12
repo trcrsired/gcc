@@ -76,8 +76,21 @@ hb_error_type_for (tree hspec)
   return herbceptions_cxx_std_error_node;
 }
 
-/* Build union { T value; P error; }.  If T is void or returns in
-   memory, the payload is just P.  */
+/* The type the channel stores for a `T' success value: a pointer for
+   reference returns (the ABI collapses T&/T&&/T* to the same
+   {ptr, i64} slot), T otherwise.  */
+
+static tree
+hb_channel_type (tree rettype)
+{
+  if (TREE_CODE (rettype) == REFERENCE_TYPE)
+    return build_pointer_type (TREE_TYPE (rettype));
+  return rettype;
+}
+
+/* Build union { C value; P error; } where C is the channel type of
+   the success value (T, or T* for reference returns).  If T is void
+   or returns in memory, the payload is just P.  */
 
 static tree
 hb_result_type (tree rettype, tree etype, tree fntype)
@@ -91,7 +104,8 @@ hb_result_type (tree rettype, tree etype, tree fntype)
     return etype;
   tree t = lang_hooks.types.make_type (UNION_TYPE);
   tree valuef = build_decl (BUILTINS_LOCATION, FIELD_DECL,
-			    get_identifier ("value"), rettype);
+			    get_identifier ("value"),
+			    hb_channel_type (rettype));
   tree errorf = build_decl (BUILTINS_LOCATION, FIELD_DECL,
 			    get_identifier ("error"), etype);
   DECL_FIELD_CONTEXT (valuef) = t;
@@ -139,13 +153,28 @@ hb_error_view (tree result, tree etype)
 	   : result;
 }
 
-/* The success-value view of RESULT for value type T.  */
+/* The raw storage slot (lvalue) holding a `T' success value in
+   RESULT — the pointer field for reference types, the field itself
+   otherwise.  */
+
+static tree
+hb_value_slot (tree result, tree t)
+{
+  tree ct = hb_channel_type (t);
+  tree f = hb_value_field (TREE_TYPE (result), ct);
+  return f ? build3 (COMPONENT_REF, ct, result, f, NULL_TREE) : result;
+}
+
+/* The success-value view of RESULT for value type T — the stored
+   pointer dereferenced for reference types.  */
 
 static tree
 hb_value_view (tree result, tree t)
 {
-  tree f = hb_value_field (TREE_TYPE (result), t);
-  return f ? build3 (COMPONENT_REF, t, result, f, NULL_TREE) : result;
+  tree slot = hb_value_slot (result, t);
+  if (TREE_CODE (t) == REFERENCE_TYPE)
+    return build1 (INDIRECT_REF, TREE_TYPE (t), slot);
+  return slot;
 }
 
 /* Create an artificial local of TYPE named NAME.  */
@@ -313,15 +342,21 @@ hb_emit_return (tree list, hb_ctx *ctx, tree init, location_t loc)
    - in main(): trap — an escaped error hits the main boundary;
    - otherwise an unhandled-failure error.  CALL_P marks the route as
      coming from a call failure; `throw throws' escaping a plain
-     function is a hard error even in main.  */
+     function is a hard error even in main.  DIAGNOSED suppresses the
+     unhandled-failure diagnostic when the parser already rejected
+     the call site.  */
 
 static void
 hb_emit_route (tree list, hb_ctx *ctx, tree e, location_t loc,
-	       bool call_p = true)
+	       bool call_p = true, bool diagnosed = false)
 {
   if (ctx->disp_label)
     {
-      if (ctx->handler_var)
+      /* A handler variable of the wrong type was already diagnosed
+	 by finish_herbceptions_handler_parms — do not cascade an
+	 error_domain fabrication failure on top of it.  */
+      if (ctx->handler_var
+	  && cxx_std_error_type_p (TREE_TYPE (ctx->handler_var)))
 	{
 	  tree v = hb_to_error (TREE_TYPE (ctx->handler_var), e, loc);
 	  if (v == error_mark_node)
@@ -344,9 +379,10 @@ hb_emit_route (tree list, hb_ctx *ctx, tree e, location_t loc,
 	     &list);
 	  return;
 	}
-      error_at (loc,
-		"an unhandled herbceptions failure cannot leave a "
-		"function without a herbceptions specification");
+      if (!diagnosed)
+	error_at (loc,
+		  "an unhandled herbceptions failure cannot leave a "
+		  "function without a herbceptions specification");
       return;
     }
   e = hb_to_error (ctx->error_type, e, loc);
@@ -432,7 +468,9 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
     }
 
   tree err = HERBCEPTION_SPEC_ERROR_TYPE (hspec);
-  tree ctype = TREE_TYPE (call);
+  /* A call's TREE_TYPE strips the reference off a reference
+     return — the declared return type carries it.  */
+  tree ctype = TREE_TYPE (fntype);
   if (VOID_TYPE_P (ctype))
     ctype = err;
 
@@ -477,9 +515,7 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
   tree errf = hb_error_field (union_type, err);
   tree errslot = errf
     ? build3 (COMPONENT_REF, err, u, errf, NULL_TREE) : u;
-  tree valf = hb_value_field (union_type, ctype);
-  tree valslot = valf
-    ? build3 (COMPONENT_REF, ctype, u, valf, NULL_TREE) : u;
+  tree valslot = hb_value_view (u, ctype);
   tree rv = hb_named_field (etype, "value");
   tree re = hb_named_field (etype, "error");
   tree rf = hb_named_field (etype, "failed");
@@ -522,17 +558,26 @@ hb_lower_fail (hb_ctx *ctx, tree stmt, bool is_throw, location_t loc)
       if (e == error_mark_node)
 	return build_stmt (loc, EXPR_STMT, error_mark_node);
     }
-  else
+  else if (is_throw)
     {
       /* Bare `throw throws': rethrow the caught error through the
 	 enclosing context.  */
-      gcc_assert (is_throw);
       e = ctx->rethrow_var;
       if (!e)
 	{
 	  error_at (loc, "no caught error to rethrow");
 	  return build_stmt (loc, EXPR_STMT, error_mark_node);
 	}
+    }
+  else
+    {
+      /* Bare `return_failure;': a value-initialized E.  */
+      e = build_value_init (ctx->error_type
+			    ? ctx->error_type
+			    : herbceptions_cxx_std_error_node,
+			    tf_warning_or_error);
+      if (!e || e == error_mark_node)
+	return build_stmt (loc, EXPR_STMT, error_mark_node);
     }
   hb_emit_route (list, ctx, e, loc, /*call_p=*/false);
   return list;
@@ -553,6 +598,7 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
 	       || TREE_CODE (stmt) == AGGR_INIT_EXPR)
 	      ? stmt : TREE_OPERAND (stmt, 0);
   tree ctype = TREE_TYPE (call);
+  tree rettype = ctype;
   tree fntype = NULL_TREE;
 
   /* `try(call)' wraps an already auto-wrapped call — peel the
@@ -571,6 +617,16 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
       call = TARGET_EXPR_INITIAL (call);
     }
 
+  /* For a reference-returning call the parser wraps the dereference:
+     try_expr<indirect_ref<call>> — the call yields the referent
+     pointer, the INDIRECT_REF is its reference-ness.  */
+  tree indir = NULL_TREE;
+  if (TREE_CODE (call) == INDIRECT_REF)
+    {
+      indir = call;
+      call = TREE_OPERAND (call, 0);
+    }
+
   if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
     {
       tree fn = (TREE_CODE (call) == AGGR_INIT_EXPR
@@ -587,6 +643,9 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
   if (!fntype || !FUNC_OR_METHOD_TYPE_P (fntype)
       || !type_herbceptions_p (fntype))
     return call;
+  /* The declared return type carries the reference that the call's
+     TREE_TYPE strips.  */
+  rettype = TREE_TYPE (fntype);
 
   /* Nested herbceptions nodes inside the call's arguments (a wrapped
      default argument, `f(g())') lower into ctx->pre and must precede
@@ -605,12 +664,12 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
   tree err = hb_error_type_for (hspec);
 
   tree union_type;
-  if (VOID_TYPE_P (ctype) || TREE_CODE (call) == AGGR_INIT_EXPR
+  if (VOID_TYPE_P (rettype) || TREE_CODE (call) == AGGR_INIT_EXPR
       || TREE_CODE (call) == TARGET_EXPR
-      || targetm.calls.return_in_memory (ctype, fntype))
+      || targetm.calls.return_in_memory (rettype, fntype))
     union_type = err;
   else
-    union_type = hb_result_type (ctype, err, fntype);
+    union_type = hb_result_type (rettype, err, fntype);
 
   tree u = build_decl (loc, VAR_DECL, NULL_TREE, union_type);
   DECL_ARTIFICIAL (u) = 1;
@@ -649,7 +708,8 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
 	tree errf = hb_error_field (union_type, err);
 	tree errslot = errf
 	  ? build3 (COMPONENT_REF, err, u, errf, NULL_TREE) : u;
-	hb_emit_route (body, ctx, errslot, loc);
+	hb_emit_route (body, ctx, errslot, loc,
+		       /*call_p=*/true, TREE_NO_WARNING (stmt));
 	seq = build2 (COMPOUND_EXPR, void_type_node, seq,
 		      build3 (COND_EXPR, void_type_node, f,
 			      body ? body : void_node, NULL_TREE));
@@ -678,7 +738,8 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
     tree errf = hb_error_field (union_type, err);
     tree errslot = errf
       ? build3 (COMPONENT_REF, err, u, errf, NULL_TREE) : u;
-    hb_emit_route (body, ctx, errslot, loc);
+    hb_emit_route (body, ctx, errslot, loc,
+		   /*call_p=*/true, TREE_NO_WARNING (stmt));
     tree cond = build3 (COND_EXPR, void_type_node, f,
 			body ? body : void_node, NULL_TREE);
     append_to_statement_list (cond, &ctx->pre);
@@ -688,16 +749,23 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
      itself for sret materializations, void otherwise.  */
   if (VOID_TYPE_P (ctype))
     return void_node;
+  if (indir)
+    {
+      /* The dereference now applies to the channel's pointer slot —
+	 *u.value is the referent lvalue the try-expr yields.  */
+      TREE_OPERAND (indir, 0) = hb_value_slot (u, rettype);
+      return indir;
+    }
   if (TREE_CODE (call) == AGGR_INIT_EXPR)
     return AGGR_INIT_EXPR_SLOT (call);
   if (TREE_CODE (call) == TARGET_EXPR)
     return TARGET_EXPR_SLOT (call);
-  if (targetm.calls.return_in_memory (ctype, fntype)
+  if (targetm.calls.return_in_memory (rettype, fntype)
       && TREE_CODE (call) == CALL_EXPR)
     /* An sret callee wrote the value into the hidden return-slot
        argument.  */
     return build1 (INDIRECT_REF, ctype, CALL_EXPR_ARG (call, 0));
-  return hb_value_view (u, ctype);
+  return hb_value_view (u, rettype);
 }
 
 /* Lower a TRY_BLOCK whose handlers may include HERBCEPTION_HANDLERs.
@@ -825,14 +893,57 @@ hb_lower_return (hb_ctx *ctx, tree ret, location_t loc)
       tree lhs = TREE_OPERAND (op, 0);
       if (DECL_P (lhs) && lhs == DECL_RESULT (ctx->fndecl))
 	{
-	  if (ctx->union_type != ctx->error_type)
+	  tree rtype = TREE_TYPE (TREE_TYPE (ctx->fndecl));
+	  if (!VOID_TYPE_P (rtype)
+	      && !targetm.calls.return_in_memory (rtype,
+						  TREE_TYPE (ctx->fndecl)))
 	    {
-	      /* Register-sized return: write into the union's value
-		 field so the epilogue can forward it.  */
-	      tree slot = hb_value_view (ctx->result_var,
-					 TREE_TYPE (lhs));
+	      /* Register-sized return: write into the result local's
+		 value slot so the epilogue can forward it — the bare
+		 payload local when T and the error type coincide.
+		 For a reference-returning function the slot holds a
+		 pointer — store the referent's address.  The union was
+		 built from the declared return type; DECL_RESULT's own
+		 type is the referent for reference returns.  */
+	      tree slot = hb_value_slot (ctx->result_var, rtype);
+	      tree rhs = TREE_OPERAND (op, 1);
+	      if (TREE_CODE (rtype) == REFERENCE_TYPE)
+		{
+		  /* A reference RESULT_DECL takes its operand through
+		     convert_to_reference — (T&) X where X is `&expr'
+		     of a (possibly INDIRECT_REF'd) referent — and
+		     convert_from_reference marks implicit derefs with
+		     INDIRECT_REF over a T& operand.  Peel the wrappers
+		     down to the pointer that already represents the
+		     reference and store it; only materialize `&expr'
+		     when the operand is the referent lvalue itself.
+		     Taking `&' of a reference-typed VAR_DECL yields
+		     the address of its hidden pointer storage, not
+		     the referent's address.  */
+		  for (;;)
+		    {
+		      tree_code code = TREE_CODE (rhs);
+		      if (code == NOP_EXPR || code == NON_LVALUE_EXPR
+			  || code == VIEW_CONVERT_EXPR
+			  || code == CONVERT_EXPR)
+			rhs = TREE_OPERAND (rhs, 0);
+		      else if (code == ADDR_EXPR
+			       && TREE_CODE (TREE_OPERAND (rhs, 0))
+				  == INDIRECT_REF)
+			rhs = TREE_OPERAND (TREE_OPERAND (rhs, 0), 0);
+		      else
+			break;
+		    }
+		  if (INDIRECT_REF_P (rhs))
+		    rhs = TREE_OPERAND (rhs, 0);
+		  if (TREE_CODE (TREE_TYPE (rhs)) != REFERENCE_TYPE
+		      && !POINTER_TYPE_P (TREE_TYPE (rhs)))
+		    rhs = build1 (ADDR_EXPR, TREE_TYPE (slot), rhs);
+		  if (!same_type_p (TREE_TYPE (slot), TREE_TYPE (rhs)))
+		    rhs = fold_convert (TREE_TYPE (slot), rhs);
+		}
 	      tree init = build2 (TREE_CODE (op), TREE_TYPE (slot),
-				  slot, TREE_OPERAND (op, 1));
+				  slot, rhs);
 	      hb_emit_return (list, ctx, init, loc);
 	      return list;
 	    }
@@ -889,10 +1000,25 @@ hb_lower_r (tree *stmt_p, int *walk_subtrees, void *data)
       }
 
     case HERBCEPTION_FAIL_EXPR:
-      hb_emit_route (ctx->pre ? ctx->pre : (ctx->pre = alloc_stmt_list ()),
-		     ctx, TREE_OPERAND (stmt, 0), loc, /*call_p=*/false);
-      *stmt_p = void_node;
-      *walk_subtrees = 0;
+      {
+	/* Bare `return_failure;' carries a value-initialized E.  */
+	tree e = TREE_OPERAND (stmt, 0);
+	if (!e)
+	  e = build_value_init (ctx->error_type
+				? ctx->error_type
+				: herbceptions_cxx_std_error_node,
+				tf_warning_or_error);
+	if (!e || e == error_mark_node)
+	  {
+	    *stmt_p = error_mark_node;
+	    *walk_subtrees = 0;
+	    break;
+	  }
+	hb_emit_route (ctx->pre ? ctx->pre : (ctx->pre = alloc_stmt_list ()),
+		       ctx, e, loc, /*call_p=*/false);
+	*stmt_p = void_node;
+	*walk_subtrees = 0;
+      }
       break;
 
     case HERBCEPTION_CATCH_EXPR:

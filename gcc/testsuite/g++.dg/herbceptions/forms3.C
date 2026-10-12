@@ -7,9 +7,9 @@ int f() throws;
 
 template<class T> T g() throws { throw throws(std::error{}); }
 template<class T> void h() { try { f(); } catch throws(std::error e) { (void)e; } }
-template<class T> void i() { if constexpr (sizeof(T) > 0) { f(); } else { f(); } }
+template<class T> void i() throws { if constexpr (sizeof(T) > 0) { f(); } else { f(); } }
 
 void use() throws { g<int>(); }
 void use2() { try { g<char>(); } catch throws(std::error) {} }
 void use3() { h<double>(); }
-void use4() { i<long>(); }
+void use4() throws { i<long>(); }
