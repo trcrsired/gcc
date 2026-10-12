@@ -600,6 +600,8 @@ static char *d_demangle (const char *, int, size_t *);
     case DEMANGLE_COMPONENT_XOBJ_MEMBER_FUNCTION:	\
     case DEMANGLE_COMPONENT_TRANSACTION_SAFE:		\
     case DEMANGLE_COMPONENT_NOEXCEPT:			\
+    case DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS:		\
+    case DEMANGLE_COMPONENT_HERBCEPTIONS_RETURN_FAILURE:	\
     case DEMANGLE_COMPONENT_THROW_SPEC
 
 /* True iff TYPE is a demangling component representing a
@@ -2493,7 +2495,8 @@ next_is_type_qual (struct d_info *di)
   if (peek == 'D')
     {
       peek = d_peek_next_char (di);
-      if (peek == 'x' || peek == 'o' || peek == 'O' || peek == 'w')
+      if (peek == 'x' || peek == 'o' || peek == 'O' || peek == 'w'
+	  || peek == 'r' || peek == 'E' || peek == 'g')
 	return 1;
     }
   return 0;
@@ -2958,6 +2961,34 @@ d_cv_qualifiers (struct d_info *di,
 	      t = DEMANGLE_COMPONENT_THROW_SPEC;
 	      di->expansion += sizeof "throw";
 	      right = d_parmlist (di);
+	      if (right == NULL)
+		return NULL;
+	      if (! d_check_char (di, 'E'))
+		return NULL;
+	    }
+	  else if (peek == 'r')
+	    {
+	      /* Herbceptions `throws'.  */
+	      t = DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS;
+	      di->expansion += sizeof "throws";
+	    }
+	  else if (peek == 'E')
+	    {
+	      /* Herbceptions `return_failure{T}'.  */
+	      t = DEMANGLE_COMPONENT_HERBCEPTIONS_RETURN_FAILURE;
+	      di->expansion += sizeof "return_failure";
+	      right = cplus_demangle_type (di);
+	      if (right == NULL)
+		return NULL;
+	      if (! d_check_char (di, 'E'))
+		return NULL;
+	    }
+	  else if (peek == 'g')
+	    {
+	      /* Herbceptions dependent `throws(expr)'.  */
+	      t = DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS;
+	      di->expansion += sizeof "throws";
+	      right = d_expression (di);
 	      if (right == NULL)
 		return NULL;
 	      if (! d_check_char (di, 'E'))
@@ -6565,6 +6596,24 @@ d_print_mod (struct d_print_info *dpi, int options,
 	  d_append_char (dpi, '(');
 	  d_print_comp (dpi, options, d_right (mod));
 	  d_append_char (dpi, ')');
+	}
+      return;
+    case DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS:
+      d_append_string (dpi, " throws");
+      if (d_right (mod))
+	{
+	  d_append_char (dpi, '(');
+	  d_print_comp (dpi, options, d_right (mod));
+	  d_append_char (dpi, ')');
+	}
+      return;
+    case DEMANGLE_COMPONENT_HERBCEPTIONS_RETURN_FAILURE:
+      d_append_string (dpi, " return_failure");
+      if (d_right (mod))
+	{
+	  d_append_char (dpi, '{');
+	  d_print_comp (dpi, options, d_right (mod));
+	  d_append_char (dpi, '}');
 	}
       return;
     case DEMANGLE_COMPONENT_THROW_SPEC:

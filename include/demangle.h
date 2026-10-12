@@ -456,6 +456,11 @@ enum demangle_component_type
   DEMANGLE_COMPONENT_FRIEND,
   DEMANGLE_COMPONENT_NOEXCEPT,
   DEMANGLE_COMPONENT_THROW_SPEC,
+  /* A herbceptions `throws' / `throws(expr)' spec — d_right NULL or
+     the dependent expression.  */
+  DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS,
+  /* A herbceptions `return_failure{T}' spec — d_right is the type.  */
+  DEMANGLE_COMPONENT_HERBCEPTIONS_RETURN_FAILURE,
 
   DEMANGLE_COMPONENT_STRUCTURED_BINDING,
 

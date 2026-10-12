@@ -1716,3 +1716,16 @@ foo({lambda()#1})
 # P2115R0 unnamed enums
 _Z3fooUei1ES_
 foo({enum:int{E}}, {enum:int{E}})
+
+# Herbceptions throws / return_failure / dependent throws
+_Z1fDrv
+f() throws
+
+_Z1gDEiEv
+g() return_failure{int}
+
+_Z5use_aPDrFvvE
+use_a(void (*)() throws)
+
+_Z5use_bPDEiEFiiE
+use_b(int (*)(int) return_failure{int})
