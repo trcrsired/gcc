@@ -1817,7 +1817,20 @@ comptypes_internal (const_tree type1, const_tree type2,
       return comptypes_internal (TREE_TYPE (t1), TREE_TYPE (t2), data);
 
     case FUNCTION_TYPE:
-      return function_types_compatible_p (t1, t2, data);
+      {
+	/* Functions declared with a `return_failure{E}' specifier are
+	   only compatible with functions using the same specifier and
+	   the same error type.  This is not enforced by
+	   comp_type_attributes because the spec is stored as a generic
+	   type attribute which most targets ignore.  */
+	tree e1 = c_herbceptions_error_type (t1);
+	tree e2 = c_herbceptions_error_type (t2);
+	if ((e1 == NULL_TREE) != (e2 == NULL_TREE))
+	  return false;
+	if (e1 != NULL_TREE && !comptypes_internal (e1, e2, data))
+	  return false;
+	return function_types_compatible_p (t1, t2, data);
+      }
 
     case ARRAY_TYPE:
       {

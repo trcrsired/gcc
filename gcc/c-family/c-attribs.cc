@@ -271,7 +271,7 @@ const struct attribute_spec c_common_gnu_attributes[] =
 			      handle_herbceptions_cxx_std_error_attribute,
 			      NULL },
   { "herbceptions_return_failure", 0, 1, false, true, false, false,
-			      handle_generic_attribute, NULL },
+			      NULL, NULL },
   { "nocommon",               0, 0, true,  false, false, false,
 			      handle_nocommon_attribute,
 	                      attr_common_exclusions },

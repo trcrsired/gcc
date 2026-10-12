@@ -459,6 +459,7 @@ extern machine_mode c_default_pointer_mode;
 #define D_CXX_MODULES	0x20000  /* In C++, only with modules.  */
 #define D_CXX26         0x40000	/* In C++, C++26 only.  */
 #define D_HERBCEPTIONS  0x80000	/* Only with -fherbceptions.  */
+#define D_HERBCEPTIONS_C 0x100000 /* In C, only with -fherbceptions.  */
 
 #define D_CXX_CONCEPTS_FLAGS D_CXXONLY | D_CXX_CONCEPTS
 #define D_CXX_CHAR8_T_FLAGS D_CXXONLY | D_CXX_CHAR8_T

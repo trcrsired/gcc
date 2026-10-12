@@ -510,7 +510,7 @@ const struct c_common_resword c_common_reswords[] =
   { "bool",		RID_BOOL,	D_C23 | D_CXXWARN },
   { "break",		RID_BREAK,	0 },
   { "case",		RID_CASE,	0 },
-  { "catch",		RID_CATCH,	D_CXX_OBJC | D_CXXWARN },
+  { "catch",		RID_CATCH,	D_CXXWARN | D_HERBCEPTIONS_C },
   { "char",		RID_CHAR,	0 },
   { "char8_t",		RID_CHAR8,	D_CXX_CHAR8_T_FLAGS | D_CXXWARN },
   { "char16_t",		RID_CHAR16,	D_CXXONLY | D_CXX11 | D_CXXWARN },
@@ -571,7 +571,7 @@ const struct c_common_resword c_common_reswords[] =
   { "throw",		RID_THROW,	D_CXX_OBJC | D_CXXWARN },
   { "throws",		RID_THROWS,	D_CXXONLY | D_HERBCEPTIONS | D_CXXWARN },
   { "true",		RID_TRUE,	D_C23 | D_CXXWARN },
-  { "try",		RID_TRY,	D_CXX_OBJC | D_CXXWARN },
+  { "try",		RID_TRY,	D_CXXWARN | D_HERBCEPTIONS_C },
   { "typedef",		RID_TYPEDEF,	0 },
   { "typename",		RID_TYPENAME,	D_CXXONLY | D_CXXWARN },
   { "typeid",		RID_TYPEID,	D_CXXONLY | D_CXXWARN },
@@ -730,7 +730,8 @@ c_hb_result_type (tree rettype, tree etype, tree fntype)
   if (VOID_TYPE_P (rettype)
       || (fntype && targetm.calls.return_in_memory (rettype, fntype)))
     return etype;
-  if (same_type_p (rettype, etype))
+  if (rettype && etype
+      && TYPE_MAIN_VARIANT (rettype) == TYPE_MAIN_VARIANT (etype))
     return etype;
   tree t = make_node (UNION_TYPE);
   tree valuef = build_decl (BUILTINS_LOCATION, FIELD_DECL,
