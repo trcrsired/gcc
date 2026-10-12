@@ -1507,10 +1507,15 @@
 )
 
 ;; Herbceptions error-channel discriminant: NZCV.C carries the failure
-;; flag.  Reading it materializes a bool via `cset'; the return side must
-;; set NZCV.C as late as possible, so the flag is fused into the return
-;; (a free `cmp' placed earlier could be separated from the `ret' by the
-;; epilogue's stack-protector or writeback flag use).
+;; flag.  Reading it materializes a bool via `cset'.  On the return side
+;; the flag is set from the slot at the end of the body: aarch64 has no
+;; compare-with-memory form, so the byte is loaded into the intra-
+;; procedure scratch x16 and `cmp'ed *locally*, while frame addressing is
+;; still valid.  The aarch64 epilogue is flag-preserving (non-setting
+;; `add sp'/`ldp'/`mov'/`ret' and pointer-auth), so NZCV.C survives to the
+;; `ret'; the stack-protector canary check runs earlier still.  This is
+;; preferable to keeping x16 live across the whole epilogue, and it also
+;; lets the operand be a promoted (register) slot.
 
 (define_insn "herbceptions_failed"
   [(set (match_operand:QI 0 "register_operand" "=r")
@@ -1520,26 +1525,43 @@
   "cset\t%w0, cs"
   [(set_attr "type" "csel")])
 
-;; The failure flag is an ordinary stack slot during the body; load it
-;; into a caller-saved scratch (x16, untouched by the aarch64 epilogue's
-;; x12/x13 stack-adjustment helpers) so the `cmp' can be glued to the
-;; `ret'.  This is emitted by expand_function_end before the epilogue.
+;; The failure flag is an ordinary stack slot during the body.  Set
+;; NZCV.C from it at the end of the body, forcing the operand into a
+;; register when SRA/CSE promoted the slot.
 
-(define_insn "herbceptions_load_failed"
-  [(set (reg:QI R16_REGNUM)
-	(match_operand:QI 0 "memory_operand" "m"))]
+(define_expand "herbceptions_load_failed"
+  [(match_operand:QI 0 "general_operand")]
   ""
-  "ldrb\tw16, %0"
-  [(set_attr "type" "load_byte")])
+{
+  rtx op = operands[0];
+  if (GET_MODE (op) != QImode)
+    op = gen_lowpart (QImode, op);
+  if (!register_operand (op, QImode) && !memory_operand (op, QImode))
+    op = force_reg (QImode, op);
+  emit_insn (gen_herbceptions_load_failed_1 (op));
+  DONE;
+})
+
+(define_insn "herbceptions_load_failed_1"
+  [(set (reg:CC_C CC_REGNUM)
+	(unspec_volatile:CC_C
+	  [(match_operand:QI 0 "nonimmediate_operand" "r,m")]
+	  UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  {
+    if (REG_P (operands[0]))
+      return "cmp\t%w0, #1";
+    else
+      return "ldrb\tw16, %0\;cmp\tw16, #1";
+  }
+  [(set_attr "type" "branch")
+   (set_attr "sls_length" "retbr")])
 
 (define_insn "herbceptions_return"
   [(parallel [(simple_return)
-	      (set (reg:CC_C CC_REGNUM)
-		   (unspec_volatile:CC_C
-		     [(match_operand:QI 0 "register_operand" "r")]
-		     UNSPECV_HERBCEPTIONS_SETF))])]
+	      (use (reg:CC_C CC_REGNUM))])]
   ""
-  "cmp\t%w0, #1\n\tret"
+  "ret"
   [(set_attr "type" "branch")
    (set_attr "sls_length" "retbr")])
 

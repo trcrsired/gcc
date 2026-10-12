@@ -11302,11 +11302,10 @@ aarch64_expand_epilogue (rtx_call_insn *sibcall)
   if (!sibcall)
     {
       if (cfun->herbceptions_failed_slot != NULL_TREE)
-	/* The failure discriminant is carried in NZCV.C: set it from the
-	   scratch loaded by herbceptions_load_failed immediately before
-	   the return so no epilogue instruction can clobber it.  */
-	emit_jump_insn (gen_herbceptions_return
-			(gen_rtx_REG (QImode, R16_REGNUM)));
+	/* The failure discriminant is carried in NZCV.C; it was set from
+	   the slot at the end of the body and the epilogue is
+	   flag-preserving, so the return just has to keep FLAGS live.  */
+	emit_jump_insn (gen_herbceptions_return ());
       else
 	emit_jump_insn (ret_rtx);
     }
