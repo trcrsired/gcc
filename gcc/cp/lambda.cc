@@ -1934,6 +1934,10 @@ prune_lambda_captures (tree body)
 		     && TREE_CODE (bind_expr) == MUST_NOT_THROW_EXPR);
   if (noexcept_p)
     bind_expr = expr_single (TREE_OPERAND (bind_expr, 0));
+  /* A `throws'-spec'd operator() wraps its body in an EH_SPEC_BLOCK;
+     unwrap it to find the BIND_EXPR like above.  */
+  if (bind_expr && TREE_CODE (bind_expr) == EH_SPEC_BLOCK)
+    bind_expr = expr_single (EH_SPEC_STMTS (bind_expr));
 
   tree *fieldp = &TYPE_FIELDS (LAMBDA_EXPR_CLOSURE (lam));
   for (tree *capp = &LAMBDA_EXPR_CAPTURE_LIST (lam); *capp; )

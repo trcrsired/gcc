@@ -898,9 +898,17 @@ flags_from_decl_or_type (const_tree exp)
 
   if (TREE_THIS_VOLATILE (exp))
     {
-      flags |= ECF_NORETURN;
-      if (flags & (ECF_CONST|ECF_PURE))
-	flags |= ECF_LOOPING_CONST_OR_PURE;
+      /* A herbceptions-spec'd function exits through its deterministic
+	 error channel — that is a normal return for control-flow
+	 purposes, so it must not mark the call ECF_NORETURN or the
+	 caller's post-call channel check gets deleted as dead code.  */
+      const_tree spec_type = DECL_P (exp) ? TREE_TYPE (exp) : exp;
+      if (!fn_has_herbceptions_spec_p (spec_type))
+	{
+	  flags |= ECF_NORETURN;
+	  if (flags & (ECF_CONST|ECF_PURE))
+	    flags |= ECF_LOOPING_CONST_OR_PURE;
+	}
     }
 
   return flags;

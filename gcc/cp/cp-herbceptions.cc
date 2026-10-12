@@ -887,6 +887,32 @@ hb_splice_pre (tree *tp, hb_ctx *ctx)
   ctx->pre = NULL_TREE;
 }
 
+/* Fold the hoisted statements in ctx->pre into a COMPOUND_EXPR chain
+   ending in EXPR — for expression positions (loop conditions and
+   iterate expressions, if/switch conditions, ?: operands, &&/||
+   operands, comma, initializers) where the lowered machinery must run
+   inline with the expression rather than being hoisted to statement
+   level.  The gimplifier treats each operand statement (DECL_EXPR,
+   EXPR_STMT, MODIFY_EXPR, COND_EXPR holding the if(f) route) as an
+   expression and evaluates them in order.  Returns EXPR unchanged
+   when nothing was hoisted.  */
+
+static tree
+hb_pre_compound (hb_ctx *ctx, tree expr)
+{
+  if (!ctx->pre)
+    return expr;
+  tree acc = NULL_TREE;
+  for (tree_stmt_iterator i = tsi_start (ctx->pre); !tsi_end_p (i);
+       tsi_next (&i))
+    {
+      tree s = tsi_stmt (i);
+      acc = acc ? build2 (COMPOUND_EXPR, TREE_TYPE (s), acc, s) : s;
+    }
+  ctx->pre = NULL_TREE;
+  return build2 (COMPOUND_EXPR, TREE_TYPE (expr), acc, expr);
+}
+
 /* The recursive statement walker.  */
 
 static void
@@ -928,7 +954,10 @@ hb_lower_stmt (tree *tp, hb_ctx *ctx)
 
     case IF_STMT:
       if (IF_COND (stmt))
-	cp_walk_tree (&IF_COND (stmt), hb_lower_r, ctx, NULL);
+	{
+	  cp_walk_tree (&IF_COND (stmt), hb_lower_r, ctx, NULL);
+	  IF_COND (stmt) = hb_pre_compound (ctx, IF_COND (stmt));
+	}
       hb_splice_pre (tp, ctx);
       hb_lower_stmt (&THEN_CLAUSE (stmt), ctx);
       hb_lower_stmt (&ELSE_CLAUSE (stmt), ctx);
@@ -937,23 +966,35 @@ hb_lower_stmt (tree *tp, hb_ctx *ctx)
     case WHILE_STMT:
       hb_lower_stmt (&WHILE_BODY (stmt), ctx);
       if (WHILE_COND (stmt))
-	cp_walk_tree (&WHILE_COND (stmt), hb_lower_r, ctx, NULL);
+	{
+	  cp_walk_tree (&WHILE_COND (stmt), hb_lower_r, ctx, NULL);
+	  WHILE_COND (stmt) = hb_pre_compound (ctx, WHILE_COND (stmt));
+	}
       hb_splice_pre (tp, ctx);
       break;
 
     case DO_STMT:
       hb_lower_stmt (&DO_BODY (stmt), ctx);
       if (DO_COND (stmt))
-	cp_walk_tree (&DO_COND (stmt), hb_lower_r, ctx, NULL);
+	{
+	  cp_walk_tree (&DO_COND (stmt), hb_lower_r, ctx, NULL);
+	  DO_COND (stmt) = hb_pre_compound (ctx, DO_COND (stmt));
+	}
       hb_splice_pre (tp, ctx);
       break;
 
     case FOR_STMT:
       hb_lower_stmt (&FOR_INIT_STMT (stmt), ctx);
       if (FOR_COND (stmt))
-	cp_walk_tree (&FOR_COND (stmt), hb_lower_r, ctx, NULL);
+	{
+	  cp_walk_tree (&FOR_COND (stmt), hb_lower_r, ctx, NULL);
+	  FOR_COND (stmt) = hb_pre_compound (ctx, FOR_COND (stmt));
+	}
       if (FOR_EXPR (stmt))
-	cp_walk_tree (&FOR_EXPR (stmt), hb_lower_r, ctx, NULL);
+	{
+	  cp_walk_tree (&FOR_EXPR (stmt), hb_lower_r, ctx, NULL);
+	  FOR_EXPR (stmt) = hb_pre_compound (ctx, FOR_EXPR (stmt));
+	}
       hb_splice_pre (tp, ctx);
       hb_lower_stmt (&FOR_BODY (stmt), ctx);
       break;
@@ -965,7 +1006,11 @@ hb_lower_stmt (tree *tp, hb_ctx *ctx)
 
     case SWITCH_STMT:
       if (SWITCH_STMT_COND (stmt))
-	cp_walk_tree (&SWITCH_STMT_COND (stmt), hb_lower_r, ctx, NULL);
+	{
+	  cp_walk_tree (&SWITCH_STMT_COND (stmt), hb_lower_r, ctx, NULL);
+	  SWITCH_STMT_COND (stmt)
+	    = hb_pre_compound (ctx, SWITCH_STMT_COND (stmt));
+	}
       hb_splice_pre (tp, ctx);
       hb_lower_stmt (&SWITCH_STMT_BODY (stmt), ctx);
       break;
