@@ -1649,12 +1649,13 @@ build_herbceptions_catch (location_t loc, tree expr)
   tree call = expr;
   while (TREE_CODE (call) == HERBCEPTION_TRY_EXPR)
     call = TREE_OPERAND (call, 0);
+  if (TREE_CODE (call) == TARGET_EXPR)
+    call = TARGET_EXPR_INITIAL (call);
   tree fntype = NULL_TREE;
   if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
     {
-      tree fn = CALL_EXPR_FN (call);
-      if (!fn && TREE_CODE (call) == AGGR_INIT_EXPR)
-	fn = AGGR_INIT_EXPR_FN (call);
+      tree fn = (TREE_CODE (call) == AGGR_INIT_EXPR
+		 ? AGGR_INIT_EXPR_FN (call) : CALL_EXPR_FN (call));
       if (fn)
 	{
 	  fntype = TREE_TYPE (fn);
