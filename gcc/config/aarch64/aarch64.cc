@@ -11300,7 +11300,16 @@ aarch64_expand_epilogue (rtx_call_insn *sibcall)
 
   emit_use (gen_rtx_REG (DImode, LR_REGNUM));
   if (!sibcall)
-    emit_jump_insn (ret_rtx);
+    {
+      if (cfun->herbceptions_failed_slot != NULL_TREE)
+	/* The failure discriminant is carried in NZCV.C: set it from the
+	   scratch loaded by herbceptions_load_failed immediately before
+	   the return so no epilogue instruction can clobber it.  */
+	emit_jump_insn (gen_herbceptions_return
+			(gen_rtx_REG (QImode, R16_REGNUM)));
+      else
+	emit_jump_insn (ret_rtx);
+    }
 }
 
 /* Output code to add DELTA to the first argument, and then jump

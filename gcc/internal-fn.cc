@@ -3507,7 +3507,17 @@ expand_HERBCEPTION_FAILED (internal_fn, gcall *stmt)
   tree lhs = gimple_call_lhs (stmt);
   gcc_assert (lhs != NULL_TREE);
   rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
-  emit_insn (gen_herbceptions_failed (target));
+  /* Some targets (e.g. aarch64) can only materialize the flag into a
+     register, so bounce through a scratch when the result is wanted in
+     memory.  */
+  if (!REG_P (target))
+    {
+      rtx tmp = gen_reg_rtx (GET_MODE (target));
+      emit_insn (gen_herbceptions_failed (tmp));
+      emit_move_insn (target, tmp);
+    }
+  else
+    emit_insn (gen_herbceptions_failed (target));
 }
 
 /* Expand the IFN_DEFERRED_INIT function:

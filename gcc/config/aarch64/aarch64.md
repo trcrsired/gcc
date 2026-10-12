@@ -443,6 +443,8 @@
     UNSPECV_TSTART		; Represent transaction start.
     UNSPECV_TCOMMIT		; Represent transaction commit.
     UNSPECV_TCANCEL		; Represent transaction cancel.
+    UNSPECV_HERBCEPTIONS_SETF	; Set NZCV.C from the failure flag.
+    UNSPECV_HERBCEPTIONS_FAILED	; Read NZCV.C into the failure flag.
     UNSPEC_RNDR			; Represent RNDR
     UNSPEC_RNDRRS		; Represent RNDRRS
   ]
@@ -1503,6 +1505,43 @@
   [(set_attr "type" "branch")
    (set_attr "sls_length" "retbr")]
 )
+
+;; Herbceptions error-channel discriminant: NZCV.C carries the failure
+;; flag.  Reading it materializes a bool via `cset'; the return side must
+;; set NZCV.C as late as possible, so the flag is fused into the return
+;; (a free `cmp' placed earlier could be separated from the `ret' by the
+;; epilogue's stack-protector or writeback flag use).
+
+(define_insn "herbceptions_failed"
+  [(set (match_operand:QI 0 "register_operand" "=r")
+	(unspec_volatile:QI [(reg:CC_C CC_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))]
+  ""
+  "cset\t%w0, cs"
+  [(set_attr "type" "csel")])
+
+;; The failure flag is an ordinary stack slot during the body; load it
+;; into a caller-saved scratch (x16, untouched by the aarch64 epilogue's
+;; x12/x13 stack-adjustment helpers) so the `cmp' can be glued to the
+;; `ret'.  This is emitted by expand_function_end before the epilogue.
+
+(define_insn "herbceptions_load_failed"
+  [(set (reg:QI R16_REGNUM)
+	(match_operand:QI 0 "memory_operand" "m"))]
+  ""
+  "ldrb\tw16, %0"
+  [(set_attr "type" "load_byte")])
+
+(define_insn "herbceptions_return"
+  [(parallel [(simple_return)
+	      (set (reg:CC_C CC_REGNUM)
+		   (unspec_volatile:CC_C
+		     [(match_operand:QI 0 "register_operand" "r")]
+		     UNSPECV_HERBCEPTIONS_SETF))])]
+  ""
+  "cmp\t%w0, #1\n\tret"
+  [(set_attr "type" "branch")
+   (set_attr "sls_length" "retbr")])
 
 (define_expand "save_stack_nonlocal"
   [(set (match_operand 0 "memory_operand")
