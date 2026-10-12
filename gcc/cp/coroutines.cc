@@ -418,6 +418,7 @@ static GTY(()) tree coro_from_address_identifier;
 static GTY(()) tree coro_get_return_object_identifier;
 static GTY(()) tree coro_gro_on_allocation_fail_identifier;
 static GTY(()) tree coro_unhandled_exception_identifier;
+static GTY(()) tree coro_unhandled_herbception_identifier;
 
 /* Awaitable methods.  */
 
@@ -459,6 +460,8 @@ coro_init_identifiers ()
   coro_gro_on_allocation_fail_identifier =
     get_identifier ("get_return_object_on_allocation_failure");
   coro_unhandled_exception_identifier = get_identifier ("unhandled_exception");
+  coro_unhandled_herbception_identifier
+    = get_identifier ("unhandled_herbception");
 
   coro_await_ready_identifier = get_identifier ("await_ready");
   coro_await_suspend_identifier = get_identifier ("await_suspend");
@@ -4485,6 +4488,37 @@ coro_build_actor_or_destroy_function (tree orig, tree fn_type,
   return fn;
 }
 
+/* Build the `catch throws(__cxx_std_error e) {
+   promise.unhandled_herbception(e); }' handler that a `throws'
+   coroutine needs: herbception errors escaping the body are delivered
+   to the promise hook, after which the coroutine proceeds to
+   final_suspend.  PROMISE is the promise proxy of the originating
+   function.  */
+
+static tree
+coro_build_unhandled_herbception_handler (location_t loc, tree promise,
+					tree orig_fn_decl)
+{
+  tree err_var
+    = build_lang_decl (VAR_DECL, get_identifier ("_Coro_err"),
+		       herbceptions_cxx_std_error_node);
+  DECL_CONTEXT (err_var) = orig_fn_decl;
+  vec<tree, va_gc> *hargs = make_tree_vector ();
+  vec_safe_push (hargs, err_var);
+  tree ueh
+    = coro_build_promise_expression (orig_fn_decl, promise,
+				     coro_unhandled_herbception_identifier,
+				     loc, &hargs, /*musthave=*/true);
+  release_tree_vector (hargs);
+  if (!ueh || ueh == error_mark_node)
+    return error_mark_node;
+  tree body = NULL_TREE;
+  append_to_statement_list (build_stmt (loc, EXPR_STMT, ueh), &body);
+  tree h = build_stmt (loc, HERBCEPTION_HANDLER, err_var, body);
+  TREE_TYPE (h) = herbceptions_cxx_std_error_node;
+  return h;
+}
+
 /* Re-write the body as per [dcl.fct.def.coroutine] / 5.  */
 
 void
@@ -4722,6 +4756,18 @@ cp_coroutine_transform::wrap_original_function_body ()
       finish_expr_stmt (ueh);
       finish_handler (handler);
       TRY_HANDLERS (tcb) = pop_stmt_list (TRY_HANDLERS (tcb));
+
+      /* A `throws' coroutine additionally routes herbception errors
+	 escaping the body to promise.unhandled_herbception — the
+	 catch-throws handler sits alongside the legacy catch-all.  */
+      if (flag_herbceptions
+	  && type_herbceptions_p (TREE_TYPE (orig_fn_decl)))
+	{
+	  tree h = coro_build_unhandled_herbception_handler
+		     (loc, promise, orig_fn_decl);
+	  if (h != error_mark_node)
+	    append_to_statement_list (h, &TRY_HANDLERS (tcb));
+	}
     }
   else
     {
@@ -4740,11 +4786,33 @@ cp_coroutine_transform::wrap_original_function_body ()
 	}
       /* Else we don't check and don't care if the method is missing..
 	 just add the initial suspend, function and return.  */
-      finish_expr_stmt (initial_await);
-      /* Append the original function body.  */
-      add_stmt (coroutine_body);
-      if (return_void)
-	add_stmt (return_void);
+      if (flag_herbceptions
+	  && type_herbceptions_p (TREE_TYPE (orig_fn_decl)))
+	{
+	  /* Without legacy EH, a `throws' coroutine still routes
+	     herbception errors to promise.unhandled_herbception.  */
+	  tree tcb = build_stmt (loc, TRY_BLOCK, NULL_TREE, NULL_TREE);
+	  add_stmt (tcb);
+	  TRY_STMTS (tcb) = push_stmt_list ();
+	  finish_expr_stmt (initial_await);
+	  add_stmt (coroutine_body);
+	  if (return_void)
+	    add_stmt (return_void);
+	  TRY_STMTS (tcb) = pop_stmt_list (TRY_STMTS (tcb));
+	  TRY_HANDLERS (tcb) = NULL_TREE;
+	  tree h = coro_build_unhandled_herbception_handler
+		     (loc, promise, orig_fn_decl);
+	  if (h != error_mark_node)
+	    append_to_statement_list (h, &TRY_HANDLERS (tcb));
+	}
+      else
+	{
+	  finish_expr_stmt (initial_await);
+	  /* Append the original function body.  */
+	  add_stmt (coroutine_body);
+	  if (return_void)
+	    add_stmt (return_void);
+	}
     }
 
   /* We are now doing actions associated with the end of the function, so

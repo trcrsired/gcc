@@ -5685,6 +5685,10 @@ cxx_init_decl_processing (void)
       CLASSTYPE_LAZY_MOVE_ASSIGN (type) = 1;
       /* With no bases the as-base type is the type itself.  */
       CLASSTYPE_AS_BASE (type) = type;
+      /* The record is copied by value into parameter slots (e.g.
+	 promise.unhandled_herbception), so it must be addressable like
+	 a real class type or simplify_aggr_init_expr asserts.  */
+      TREE_ADDRESSABLE (type) = 1;
 
       tree name = get_identifier ("__cxx_std_error");
       tree decl = build_decl (UNKNOWN_LOCATION, TYPE_DECL, name, type);

@@ -37,6 +37,7 @@
 #include "langhooks.h"
 #include "stringpool.h"
 #include "varasm.h"
+#include "print-tree.h"
 
 struct hb_ctx
 {
@@ -178,10 +179,102 @@ hb_set_failed (tree list, hb_ctx *ctx, int val, location_t loc)
      &list);
 }
 
+/* The static member function NAME of class TYPE as a callable decl,
+   or NULL_TREE.  */
+
+static tree
+hb_static_member_fn (tree type, const char *name)
+{
+  tree m = lookup_member (type, get_identifier (name), /*protect=*/0,
+			  /*want_type=*/false, tf_none);
+  if (!m || m == error_mark_node)
+    return NULL_TREE;
+  if (TREE_CODE (m) == BASELINK)
+    m = BASELINK_FUNCTIONS (m);
+  return (TREE_CODE (m) == FUNCTION_DECL || OVL_P (m)) ? m : NULL_TREE;
+}
+
+/* Fabricate the error-channel value for a non-std::error operand of
+   `throw throws':
+
+     __cxx_std_error{ std::error_domain<T>::domain (),
+		      std::error_domain<T>::code (expr) }
+
+   per N2289 — error_domain<T> is the customization point; a
+   `domain_alias_type' member (aliasing another error_domain<U>
+   sharing the category) supplies the domain() to use.  The result is
+   view-converted to TARGET if the channel slot isn't the builtin
+   record itself (e.g. a std::error-shaped handler variable).  */
+
+static tree
+hb_fabricate_error (tree target, tree expr, location_t loc)
+{
+  tree type = TREE_TYPE (expr);
+  tree fabtype = herbceptions_cxx_std_error_node;
+  tree dom = NULL_TREE;
+  if (std_node)
+    {
+      tree d = lookup_qualified_name (std_node, "error_domain");
+      if (d && DECL_CLASS_TEMPLATE_P (d))
+	{
+	  tree args = make_tree_vec (1);
+	  TREE_VEC_ELT (args, 0) = type;
+	  dom = lookup_template_class (d, args, NULL_TREE, NULL_TREE,
+				       tf_none);
+	  if (dom && dom != error_mark_node)
+	    dom = complete_type (dom);
+	}
+    }
+  if (!dom || dom == error_mark_node || !COMPLETE_TYPE_P (dom)
+      || TREE_CODE (dom) != RECORD_TYPE)
+    {
+      error_at (loc, "%<throw throws%> operand type %qT has no "
+		"%<std::error_domain%> specialization", type);
+      return error_mark_node;
+    }
+
+  /* domain() comes from the specialization, or from the record its
+     `domain_alias_type' member names when present.  */
+  tree dom_domain = dom;
+  tree alias = lookup_member (dom, get_identifier ("domain_alias_type"),
+			      0, /*want_type=*/true, tf_none);
+  if (alias && TREE_CODE (alias) == TYPE_DECL)
+    dom_domain = TREE_TYPE (alias);
+  tree domain_fn = hb_static_member_fn (dom_domain, "domain");
+  tree code_fn = hb_static_member_fn (dom, "code");
+  if (!domain_fn || !code_fn)
+    {
+      error_at (loc, "%<throw throws%> operand type %qT has no usable "
+		"%<std::error_domain%> specialization", type);
+      return error_mark_node;
+    }
+
+  tree dcall = build_call_expr_loc (loc, domain_fn, 0);
+  tree ccall = build_call_expr_loc (loc, code_fn, 1, expr);
+  if (dcall == error_mark_node || ccall == error_mark_node)
+    return error_mark_node;
+
+  /* { .domain = dcall, .code = ccall } in the ABI record's own
+     field order.  */
+  vec<constructor_elt, va_gc> *elts = NULL;
+  for (tree f = TYPE_FIELDS (fabtype); f; f = DECL_CHAIN (f))
+    {
+      if (TREE_CODE (f) != FIELD_DECL)
+	continue;
+      tree val = id_equal (DECL_NAME (f), "domain") ? dcall : ccall;
+      constructor_elt e = { f, convert (TREE_TYPE (f), val) };
+      vec_safe_push (elts, e);
+    }
+  tree r = build_constructor (fabtype, elts);
+  if (!same_type_p (target, fabtype))
+    r = build1 (VIEW_CONVERT_EXPR, target, r);
+  return r;
+}
+
 /* Convert EXPR to the channel payload type TARGET where possible.
    std::error-shaped records convert to __cxx_std_error (and back) by
-   view, since they share the two-word layout; arbitrary types need
-   the error-domain machinery of a later phase.  */
+   view, since they share the two-word layout; arbitrary types go
+   through the std::error_domain<T> fabrication.  */
 
 static tree
 hb_to_error (tree target, tree expr, location_t loc)
@@ -195,11 +288,7 @@ hb_to_error (tree target, tree expr, location_t loc)
     || same_type_p (type, herbceptions_cxx_std_error_node);
   if (tstd && sstd)
     return build1 (VIEW_CONVERT_EXPR, target, expr);
-  error_at (loc,
-	    "no error-domain conversion from %qT to %qT for the "
-	    "herbceptions channel (error domains are not implemented "
-	    "yet)", type, target);
-  return error_mark_node;
+  return hb_fabricate_error (target, expr, loc);
 }
 
 /* Emit `{ init?; __hb_failed = 0; return; }' — a plain success
@@ -633,7 +722,7 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
     append_to_statement_list
       (build_stmt (loc, TRY_CATCH_EXPR, stmts, legacy), &list);
   else
-    append_to_statement_list (stmts, &list);
+    append_to_statement_list_force (stmts, &list);
   append_to_statement_list (build1 (GOTO_EXPR, void_type_node, end),
 			    &list);
   append_to_statement_list (build_stmt (loc, LABEL_EXPR, disp), &list);
@@ -645,7 +734,7 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
     ctx->rethrow_var = handler_var;
     tree body = HERBCEPTION_HANDLER_BODY (hb_handler);
     hb_lower_stmt (&body, ctx);
-    append_to_statement_list (body, &list);
+    append_to_statement_list_force (body, &list);
     ctx->rethrow_var = save_rt;
   }
 
@@ -677,9 +766,10 @@ hb_lower_return (hb_ctx *ctx, tree ret, location_t loc)
       tree lhs = TREE_OPERAND (op, 0);
       if (DECL_P (lhs) && lhs == DECL_RESULT (ctx->fndecl))
 	{
-	  if (!TREE_ADDRESSABLE (TREE_TYPE (lhs)))
+	  if (ctx->union_type != ctx->error_type)
 	    {
-	      /* Scalar return: write into the union's value field.  */
+	      /* Register-sized return: write into the union's value
+		 field so the epilogue can forward it.  */
 	      tree slot = hb_value_view (ctx->result_var,
 					 TREE_TYPE (lhs));
 	      tree init = build2 (TREE_CODE (op), TREE_TYPE (slot),
@@ -687,8 +777,9 @@ hb_lower_return (hb_ctx *ctx, tree ret, location_t loc)
 	      hb_emit_return (list, ctx, init, loc);
 	      return list;
 	    }
-	  /* sret: the DECL_RESULT write-through already materializes
-	     the value.  */
+	  /* sret/void: the DECL_RESULT write-through already
+	     materializes the value; the channel carries only the
+	     error.  */
 	  hb_emit_return (list, ctx, op, loc);
 	  return list;
 	}
@@ -791,7 +882,7 @@ hb_splice_pre (tree *tp, hb_ctx *ctx)
     return;
   tree l = alloc_stmt_list ();
   append_to_statement_list (ctx->pre, &l);
-  append_to_statement_list (*tp, &l);
+  append_to_statement_list_force (*tp, &l);
   *tp = l;
   ctx->pre = NULL_TREE;
 }
@@ -813,8 +904,9 @@ hb_lower_stmt (tree *tp, hb_ctx *ctx)
 	for (tree_stmt_iterator i = tsi_start (stmt); !tsi_end_p (i);
 	     tsi_next (&i))
 	  {
-	    hb_lower_stmt (tsi_stmt_ptr (i), ctx);
-	    append_to_statement_list (*tsi_stmt_ptr (i), &newl);
+	    tree *sp = tsi_stmt_ptr (i);
+	    hb_lower_stmt (sp, ctx);
+	    append_to_statement_list_force (*sp, &newl);
 	  }
 	*tp = newl;
 	break;
@@ -905,7 +997,7 @@ hb_lower_stmt (tree *tp, hb_ctx *ctx)
 	{
 	  tree l = alloc_stmt_list ();
 	  append_to_statement_list (ctx->pre, &l);
-	  append_to_statement_list (*tp, &l);
+	  append_to_statement_list_force (*tp, &l);
 	  *tp = l;
 	  ctx->pre = NULL_TREE;
 	}
@@ -1007,12 +1099,12 @@ genericize_herbceptions_body (tree fndecl)
 	    = chainon (BIND_EXPR_VARS (body), ctx.result_var);
 	  BIND_EXPR_VARS (body)
 	    = chainon (BIND_EXPR_VARS (body), ctx.failed_var);
-	  append_to_statement_list (BIND_EXPR_BODY (body), &list);
+	  append_to_statement_list_force (BIND_EXPR_BODY (body), &list);
 	  BIND_EXPR_BODY (body) = list;
 	}
       else
 	{
-	  append_to_statement_list (body, &list);
+	  append_to_statement_list_force (body, &list);
 	  DECL_SAVED_TREE (fndecl)
 	    = build3 (BIND_EXPR, void_type_node,
 		      chainon (ctx.result_var, ctx.failed_var),
@@ -1025,7 +1117,7 @@ genericize_herbceptions_body (tree fndecl)
     {
       tree l = alloc_stmt_list ();
       append_to_statement_list (ctx.pre, &l);
-      append_to_statement_list (DECL_SAVED_TREE (fndecl), &l);
+      append_to_statement_list_force (DECL_SAVED_TREE (fndecl), &l);
       DECL_SAVED_TREE (fndecl) = l;
     }
 }

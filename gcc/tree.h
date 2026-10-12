@@ -7241,6 +7241,7 @@ extern void copy_warning (location_t, location_t);
 /* Return the disposition for a warning (or all warnings by default)
    for an expression.  */
 extern bool warning_suppressed_p (const_tree, opt_code = all_warnings);
+extern bool fn_has_herbceptions_spec_p (const_tree);
 /* Set the disposition for a warning (or all warnings by default)
    at a location to disabled by default.  */
 extern void suppress_warning (tree, opt_code = all_warnings, bool = true)

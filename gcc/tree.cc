@@ -16878,4 +16878,20 @@ tree_cc_tests ()
 
 #endif /* CHECKING_P */
 
+/* True if FNTYPE carries a herbceptions `throws' or `return_failure{E}'
+   specification — i.e. its raises slot holds a HERBCEPTION_SPEC node.
+   Spec'd functions exit through the deterministic error channel, so
+   middle-end passes must not treat their returns like ordinary
+   `noreturn' violations.  */
+
+bool
+fn_has_herbceptions_spec_p (const_tree fntype)
+{
+  if (!fntype || !FUNC_OR_METHOD_TYPE_P (fntype))
+    return false;
+  const_tree spec = TYPE_LANG_SLOT_1 (fntype);
+  return spec && TREE_PURPOSE (spec)
+	 && TREE_CODE (TREE_PURPOSE (spec)) == HERBCEPTION_SPEC;
+}
+
 #include "gt-tree.h"

@@ -9798,8 +9798,11 @@ pass_warn_function_return::execute (function *fun)
   if (!targetm.warn_func_return (fun->decl))
     return 0;
 
-  /* If we have a path to EXIT, then we do return.  */
+  /* If we have a path to EXIT, then we do return.  A herbceptions-spec'd
+     function exits through its deterministic error channel — the channel
+     return is the function's normal exit, not a noreturn violation.  */
   if (TREE_THIS_VOLATILE (fun->decl)
+      && !fn_has_herbceptions_spec_p (TREE_TYPE (fun->decl))
       && EDGE_COUNT (EXIT_BLOCK_PTR_FOR_FN (fun)->preds) > 0)
     {
       location = UNKNOWN_LOCATION;
