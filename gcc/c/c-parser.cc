@@ -259,6 +259,11 @@ struct GTY(()) c_parser {
   /* Location of the last consumed token.  */
   location_t last_token_location;
 
+  /* Nonzero while parsing the operand of `try (expr)' or
+     `catch return_failure (expr)' — calls to `return_failure{E}'
+     functions are only permitted there.  */
+  unsigned int herbceptions_operand_depth;
+
   /* Holds state for parsing collapsed OMP_FOR loops.  Managed by
      c_parser_omp_for_loop.  */
   struct omp_for_parse_data * GTY((skip)) omp_for_parse_state;
@@ -5272,6 +5277,45 @@ c_parser_direct_declarator_inner (c_parser *parser, bool id_present,
 	return NULL;
       else
 	{
+	  /* `return_failure{E}' — the herbceptions error-channel
+	     specification on a function declarator.  */
+	  if (c_parser_next_token_is_keyword (parser, RID_RETURN_FAILURE))
+	    {
+	      location_t rfloc = c_parser_peek_token (parser)->location;
+	      c_parser_consume_token (parser);
+	      if (!c_parser_require (parser, CPP_OPEN_BRACE,
+				     "expected %<{%> after %<return_failure%>"))
+		return NULL;
+	      struct c_type_name *tname = c_parser_type_name (parser);
+	      if (tname == NULL)
+		return NULL;
+	      args->return_failure_type
+		= groktypename (tname, NULL, NULL);
+	      if (args->return_failure_type == NULL_TREE
+		  || args->return_failure_type == error_mark_node)
+		{
+		  error_at (rfloc,
+			    "invalid error type in %<return_failure%>");
+		  args->return_failure_type = NULL_TREE;
+		}
+	      else if (VOID_TYPE_P (args->return_failure_type))
+		{
+		  error_at (rfloc,
+			    "%<void%> is not a valid error type in "
+			    "%<return_failure{E}%>");
+		  args->return_failure_type = NULL_TREE;
+		}
+	      else if (!COMPLETE_TYPE_P (args->return_failure_type))
+		{
+		  error_at (rfloc,
+			    "incomplete error type %qT in "
+			    "%<return_failure{E}%>",
+			    args->return_failure_type);
+		  args->return_failure_type = NULL_TREE;
+		}
+	      c_parser_require (parser, CPP_CLOSE_BRACE,
+				"expected %<}%>");
+	    }
 	  if (!(args->types
 		&& args->types != error_mark_node
 		&& TREE_CODE (TREE_VALUE (args->types)) == IDENTIFIER_NODE)
@@ -8329,6 +8373,252 @@ c_parser_label (c_parser *parser, tree std_attrs)
    which is not enclosed in braces and has an else clause.  This is used to
    implement -Wparentheses.  */
 
+/* ---- Herbceptions: C `return_failure{E}' lowering ----
+
+   C spec'd functions carry the `herbceptions_return_failure' type
+   attribute holding E; the deterministic channel is the same
+   {value,error}-union + failure-flag record that the C++ frontend
+   lowers to (cfun->herbceptions_{error,failed}_slot).  */
+
+/* The MEMBER view of a channel-union variable: the named member when
+   VAR is a union, else VAR itself (the payload is just E for
+   void/sret returns and for T == E).  */
+
+static tree
+hb_c_union_view (tree var, const char *member)
+{
+  if (RECORD_OR_UNION_TYPE_P (TREE_TYPE (var)))
+    {
+      tree id = get_identifier (member);
+      for (tree f = TYPE_FIELDS (TREE_TYPE (var)); f; f = DECL_CHAIN (f))
+	if (DECL_NAME (f) == id)
+	  return build3 (COMPONENT_REF, TREE_TYPE (f), var, f, NULL_TREE);
+    }
+  return var;
+}
+
+/* The callee's FUNCTION_TYPE behind CALL, or NULL_TREE.  */
+
+static tree
+hb_c_call_fntype (tree call)
+{
+  if (!call || TREE_CODE (call) != CALL_EXPR)
+    return NULL_TREE;
+  tree fn = CALL_EXPR_FN (call);
+  if (!fn)
+    return NULL_TREE;
+  tree t = TREE_TYPE (fn);
+  if (t && POINTER_TYPE_P (t))
+    t = TREE_TYPE (t);
+  return (t && FUNC_OR_METHOD_TYPE_P (t)) ? t : NULL_TREE;
+}
+
+/* Assign X into the channel union's error view of RESULT.  */
+
+static tree
+hb_c_assign_error (tree result, tree x, location_t loc)
+{
+  return build_modify_expr (loc, hb_c_union_view (result, "error"),
+			    NOP_EXPR, NOP_EXPR, loc, x, NOP_EXPR);
+}
+
+/* Emit `result.error = e; __hb_failed = 1; return;' into *BODY —
+   the C-side `return_failure' exit of a spec'd function.  */
+
+static void
+hb_c_emit_failure (tree *body, tree e, location_t loc)
+{
+  append_to_statement_list
+    (hb_c_assign_error (cfun->herbceptions_error_slot, e, loc), body);
+  append_to_statement_list
+    (build2 (MODIFY_EXPR, void_type_node, cfun->herbceptions_failed_slot,
+	     boolean_true_node), body);
+  append_to_statement_list
+    (build1 (RETURN_EXPR, void_type_node, NULL_TREE), body);
+}
+
+/* Wrap the spec'd CALL_EXPR for `try (expr)': emit
+     ({ u; f; CALL; u = .HERBCEPTION_RESULT(); f = .HERBCEPTION_FAILED();
+	if (f) { __hb_result.error = u.error; __hb_failed = 1; return; }
+	<success value>; })
+   where the success value is u.value (or the sret temp V for
+   return-in-memory callees).  Caller must be inside a spec'd fn.  */
+
+static tree
+hb_c_wrap_try_call (tree call, tree fntype, location_t loc)
+{
+  tree rettype = TREE_TYPE (call);
+  tree etype = c_herbceptions_error_type (fntype);
+  bool sret = targetm.calls.return_in_memory (rettype, fntype);
+  tree utype = c_hb_result_type (rettype, etype, fntype);
+
+  push_scope ();
+  tree body = push_stmt_list ();
+  tree u = create_tmp_var_raw (utype);
+  tree f = create_tmp_var_raw (boolean_type_node);
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, u), &body);
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, f), &body);
+
+  tree v = NULL_TREE;
+  if (sret && !VOID_TYPE_P (rettype))
+    {
+      v = create_tmp_var_raw (rettype);
+      append_to_statement_list (build_stmt (loc, DECL_EXPR, v), &body);
+      append_to_statement_list
+	(build_modify_expr (loc, v, NOP_EXPR, NOP_EXPR, loc, call,
+			    NOP_EXPR),
+	 &body);
+    }
+  else
+    append_to_statement_list (call, &body);
+
+  append_to_statement_list
+    (build2 (MODIFY_EXPR, void_type_node, u,
+	     build_call_expr_internal_loc (loc, IFN_HERBCEPTION_RESULT,
+					   utype, 0)),
+     &body);
+  append_to_statement_list
+    (build2 (MODIFY_EXPR, void_type_node, f,
+	     build_call_expr_internal_loc (loc, IFN_HERBCEPTION_FAILED,
+					   boolean_type_node, 0)),
+     &body);
+
+  /* if (f) { propagate } */
+  tree thenb = push_stmt_list ();
+  hb_c_emit_failure (&thenb, hb_c_union_view (u, "error"), loc);
+  append_to_statement_list
+    (build3 (COND_EXPR, void_type_node, f,
+	     c_end_compound_stmt (loc, thenb, true), NULL_TREE),
+     &body);
+
+  tree val;
+  if (VOID_TYPE_P (rettype))
+    val = void_zero_node;
+  else if (sret)
+    val = v;
+  else
+    val = hb_c_union_view (u, "value");
+  append_to_statement_list (val, &body);
+  return c_finish_stmt_expr (loc, body);
+}
+
+/* `catch return_failure (CALL)' — yield the N2289 either aggregate
+     ({ u; f; e; [v;] CALL; u = .RESULT(); f = .FAILED();
+	e.failed = f; if (f) e.error = u.error; else e.value = v-or-u.value;
+	e; })  */
+
+static tree
+hb_c_wrap_catch (tree call, tree fntype, location_t loc)
+{
+  tree rettype = TREE_TYPE (call);
+  tree etype = c_herbceptions_error_type (fntype);
+  bool sret = targetm.calls.return_in_memory (rettype, fntype);
+  tree utype = c_hb_result_type (rettype, etype, fntype);
+  tree either = c_hb_either_type (rettype, etype);
+
+  push_scope ();
+  tree body = push_stmt_list ();
+  tree u = create_tmp_var_raw (utype);
+  tree f = create_tmp_var_raw (boolean_type_node);
+  tree e = create_tmp_var_raw (either);
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, u), &body);
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, f), &body);
+  append_to_statement_list (build_stmt (loc, DECL_EXPR, e), &body);
+
+  tree v = NULL_TREE;
+  if (sret && !VOID_TYPE_P (rettype))
+    {
+      v = create_tmp_var_raw (rettype);
+      append_to_statement_list (build_stmt (loc, DECL_EXPR, v), &body);
+      append_to_statement_list
+	(build_modify_expr (loc, v, NOP_EXPR, NOP_EXPR, loc, call,
+			    NOP_EXPR),
+	 &body);
+    }
+  else
+    append_to_statement_list (call, &body);
+
+  append_to_statement_list
+    (build2 (MODIFY_EXPR, void_type_node, u,
+	     build_call_expr_internal_loc (loc, IFN_HERBCEPTION_RESULT,
+					   utype, 0)),
+     &body);
+  append_to_statement_list
+    (build2 (MODIFY_EXPR, void_type_node, f,
+	     build_call_expr_internal_loc (loc, IFN_HERBCEPTION_FAILED,
+					   boolean_type_node, 0)),
+     &body);
+
+  /* e.failed = f; */
+  append_to_statement_list
+    (build_modify_expr (loc, hb_c_union_view (e, "failed"), NOP_EXPR,
+			NOP_EXPR, loc, f, NOP_EXPR),
+     &body);
+
+  /* if (f) e.error = u.error; else e.value = <v or u.value>;  — skip
+     the arm that doesn't exist for void returns.  */
+  if (!VOID_TYPE_P (rettype) || sret)
+    {
+      tree err_assign
+	= build_modify_expr (loc, hb_c_union_view (e, "error"), NOP_EXPR,
+			     NOP_EXPR, loc, hb_c_union_view (u, "error"),
+			     NOP_EXPR);
+      tree val_assign
+	= build_modify_expr (loc, hb_c_union_view (e, "value"), NOP_EXPR,
+			     NOP_EXPR, loc,
+			     sret ? v : hb_c_union_view (u, "value"),
+			     NOP_EXPR);
+      tree thenl = alloc_stmt_list ();
+      tree elsel = alloc_stmt_list ();
+      append_to_statement_list (err_assign, &thenl);
+      append_to_statement_list (val_assign, &elsel);
+      append_to_statement_list
+	(build3 (COND_EXPR, void_type_node, f, thenl, elsel), &body);
+    }
+  else
+    append_to_statement_list
+      (build_modify_expr (loc, hb_c_union_view (e, "error"), NOP_EXPR,
+			  NOP_EXPR, loc, hb_c_union_view (u, "error"),
+			  NOP_EXPR),
+       &body);
+
+  append_to_statement_list (e, &body);
+  return c_finish_stmt_expr (loc, body);
+}
+
+/* Walker for `try (expr)': replace each spec'd CALL_EXPR inside the
+   operand with its channel-checked stmt-expr.  */
+
+static tree
+hb_c_try_walk (tree *tp, int *walk_subtrees, void *data)
+{
+  location_t *locp = (location_t *) data;
+  tree t = *tp;
+  if (TREE_CODE (t) == CALL_EXPR)
+    {
+      tree fntype = hb_c_call_fntype (t);
+      if (c_herbceptions_spec_p (fntype))
+	{
+	  *tp = hb_c_wrap_try_call (t, fntype, *locp);
+	  *walk_subtrees = 0;
+	  return NULL_TREE;
+	}
+    }
+  else if (TREE_CODE (t) == STATEMENT_LIST || TREE_CODE (t) == BIND_EXPR)
+    *walk_subtrees = 0;
+  return NULL_TREE;
+}
+
+/* `try (expr)' inside a `return_failure{E}' function: wrap every
+   spec'd call in the operand for channel propagation.  */
+
+static tree
+hb_c_build_try (tree expr, location_t loc)
+{
+  walk_tree (&expr, hb_c_try_walk, &loc, NULL);
+  return expr;
+}
+
 static void
 c_parser_statement (c_parser *parser, bool *if_p, location_t *loc_after_labels)
 {
@@ -8440,8 +8730,19 @@ c_parser_statement_after_labels (c_parser *parser, bool *if_p,
 	  c_parser_consume_token (parser);
 	  if (c_parser_next_token_is (parser, CPP_SEMICOLON))
 	    {
-	      stmt = c_finish_return (loc, NULL_TREE, NULL_TREE,
-				      astate.musttail_p);
+	      /* `return;' in a spec'd fn is a success exit.  */
+	      if (cfun && cfun->herbceptions_error_slot)
+		{
+		  add_stmt
+		    (build2 (MODIFY_EXPR, void_type_node,
+			     cfun->herbceptions_failed_slot,
+			     boolean_false_node));
+		  stmt = c_finish_return (loc, NULL_TREE, NULL_TREE,
+					  astate.musttail_p);
+		}
+	      else
+		stmt = c_finish_return (loc, NULL_TREE, NULL_TREE,
+					astate.musttail_p);
 	      c_parser_consume_token (parser);
 	    }
 	  else
@@ -8449,12 +8750,80 @@ c_parser_statement_after_labels (c_parser *parser, bool *if_p,
 	      location_t xloc = c_parser_peek_token (parser)->location;
 	      struct c_expr expr = c_parser_expression_conv (parser);
 	      mark_exp_read (expr.value);
-	      stmt = c_finish_return (EXPR_LOC_OR_LOC (expr.value, xloc),
-				      expr.value, expr.original_type,
-				      astate.musttail_p);
+	      if (cfun && cfun->herbceptions_error_slot)
+		{
+		  /* `return e' in a spec'd fn writes the union's
+		     success payload (or, for sret/void returns,
+		     the DECL_RESULT write-through) then clears the
+		     discriminant.  */
+		  tree result = cfun->herbceptions_error_slot;
+		  if (hb_c_union_view (result, "value") != result)
+		    {
+		      add_stmt
+			(build_modify_expr
+			 (EXPR_LOC_OR_LOC (expr.value, xloc),
+			  hb_c_union_view (result, "value"), NOP_EXPR,
+			  NOP_EXPR, xloc, expr.value, NOP_EXPR));
+		      add_stmt
+			(build2 (MODIFY_EXPR, void_type_node,
+				 cfun->herbceptions_failed_slot,
+				 boolean_false_node));
+		      stmt = c_finish_return
+			(EXPR_LOC_OR_LOC (expr.value, xloc), NULL_TREE,
+			 NULL_TREE, astate.musttail_p);
+		    }
+		  else
+		    {
+		      /* sret/void channel: the DECL_RESULT machinery
+			 already stores the value; only flag success.  */
+		      add_stmt
+			(build2 (MODIFY_EXPR, void_type_node,
+				 cfun->herbceptions_failed_slot,
+				 boolean_false_node));
+		      stmt = c_finish_return
+			(EXPR_LOC_OR_LOC (expr.value, xloc), expr.value,
+			 expr.original_type, astate.musttail_p);
+		    }
+		}
+	      else
+		stmt = c_finish_return (EXPR_LOC_OR_LOC (expr.value, xloc),
+					expr.value, expr.original_type,
+					astate.musttail_p);
 	      goto expect_semicolon;
 	    }
 	  break;
+	case RID_RETURN_FAILURE:
+	  c_parser_consume_token (parser);
+	  {
+	    tree body = alloc_stmt_list ();
+	    if (cfun && cfun->herbceptions_error_slot)
+	      {
+		if (c_parser_next_token_is (parser, CPP_SEMICOLON))
+		  /* bare `return_failure;' — zero payload.  */
+		  hb_c_emit_failure
+		    (&body, build_constructor
+		     (c_herbceptions_error_type
+		      (TREE_TYPE (current_function_decl)), NULL),
+		     loc);
+		else
+		  {
+		    location_t xloc = c_parser_peek_token (parser)->location;
+		    struct c_expr expr = c_parser_expression_conv (parser);
+		    mark_exp_read (expr.value);
+		    hb_c_emit_failure (&body, expr.value, xloc);
+		  }
+	      }
+	    else
+	      {
+		error_at (loc, "%<return_failure%> outside a function "
+			  "declared %<return_failure{...}%>");
+		c_parser_skip_to_end_of_block_or_statement (parser);
+	      }
+	    for (tree_stmt_iterator i = tsi_start (body); !tsi_end_p (i);
+		 tsi_next (&i))
+	      add_stmt (tsi_stmt (i));
+	  }
+	  goto expect_semicolon;
 	case RID_ASM:
 	  stmt = c_parser_asm_statement (parser);
 	  break;

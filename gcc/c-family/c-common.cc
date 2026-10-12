@@ -691,6 +691,101 @@ build_herbceptions_cxx_std_error_type (void)
   return type;
 }
 
+/* For the C frontend: `return_failure{E}' is carried on the
+   FUNCTION_TYPE as the internal "herbceptions_return_failure"
+   attribute whose argument list holds E.  C++ keeps the spec in
+   TYPE_RAISES_EXCEPTIONS instead; backend queries must consult
+   both (fn_has_herbceptions_spec_p in tree.cc).  */
+
+tree
+c_herbceptions_error_type (const_tree fntype)
+{
+  if (!fntype || !FUNC_OR_METHOD_TYPE_P (fntype))
+    return NULL_TREE;
+  tree attr = lookup_attribute ("herbceptions_return_failure",
+				TYPE_ATTRIBUTES (const_cast<tree> (fntype)));
+  if (!attr)
+    return NULL_TREE;
+  tree args = TREE_VALUE (attr);
+  return args ? TREE_VALUE (args) : NULL_TREE;
+}
+
+/* True if FNTYPE carries a C `return_failure{E}' specification.  */
+
+bool
+c_herbceptions_spec_p (const_tree fntype)
+{
+  return c_herbceptions_error_type (fntype) != NULL_TREE;
+}
+
+/* Build union { T value; E error; } — the C-side channel record
+   returned by the HERBCEPTION_RESULT internal function.  When T is
+   void or returns in memory the payload is just E.  */
+
+tree
+c_hb_result_type (tree rettype, tree etype, tree fntype)
+{
+  if (etype == NULL_TREE || etype == error_mark_node)
+    etype = herbceptions_cxx_std_error_node;
+  if (VOID_TYPE_P (rettype)
+      || (fntype && targetm.calls.return_in_memory (rettype, fntype)))
+    return etype;
+  if (same_type_p (rettype, etype))
+    return etype;
+  tree t = make_node (UNION_TYPE);
+  tree valuef = build_decl (BUILTINS_LOCATION, FIELD_DECL,
+			    get_identifier ("value"), rettype);
+  tree errorf = build_decl (BUILTINS_LOCATION, FIELD_DECL,
+			    get_identifier ("error"), etype);
+  DECL_FIELD_CONTEXT (valuef) = t;
+  DECL_FIELD_CONTEXT (errorf) = t;
+  DECL_CHAIN (valuef) = errorf;
+  TYPE_FIELDS (t) = valuef;
+  layout_type (t);
+  return t;
+}
+
+/* Build the N2289 aggregate `struct { union { T value; E error; };
+   _Bool failed; }' produced by `catch return_failure (expr)' in C.
+   The union member is unnamed so `e.value'/`e.error' resolve through
+   it via lookup_field's anonymous-member descent.  For void T the
+   union carries only the error member.  */
+
+tree
+c_hb_either_type (tree rettype, tree etype)
+{
+  tree s = make_node (RECORD_TYPE);
+  tree u = make_node (UNION_TYPE);
+  if (!VOID_TYPE_P (rettype))
+    {
+      tree valuef = build_decl (BUILTINS_LOCATION, FIELD_DECL,
+				get_identifier ("value"), rettype);
+      DECL_FIELD_CONTEXT (valuef) = u;
+      DECL_CHAIN (valuef) = TYPE_FIELDS (u);
+      TYPE_FIELDS (u) = valuef;
+    }
+  tree errorf = build_decl (BUILTINS_LOCATION, FIELD_DECL,
+			    get_identifier ("error"), etype);
+  DECL_FIELD_CONTEXT (errorf) = u;
+  DECL_CHAIN (errorf) = TYPE_FIELDS (u);
+  TYPE_FIELDS (u) = errorf;
+  layout_type (u);
+
+  tree unionf = build_decl (BUILTINS_LOCATION, FIELD_DECL,
+			    NULL_TREE, u);
+  DECL_FIELD_CONTEXT (unionf) = s;
+  DECL_CHAIN (unionf) = TYPE_FIELDS (s);
+  TYPE_FIELDS (s) = unionf;
+
+  tree failedf = build_decl (BUILTINS_LOCATION, FIELD_DECL,
+			     get_identifier ("failed"), boolean_type_node);
+  DECL_FIELD_CONTEXT (failedf) = s;
+  DECL_CHAIN (failedf) = TYPE_FIELDS (s);
+  TYPE_FIELDS (s) = failedf;
+  layout_type (s);
+  return s;
+}
+
 /* Return identifier for address space AS.  */
 
 const char *

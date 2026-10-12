@@ -541,6 +541,9 @@ struct c_arg_info {
      later.  This is only for use by -Wtraditional and is no longer needed if
      -Wtraditional is removed.  */
   bool c23_empty_parens : 1;
+  /* For a herbceptions `return_failure{E}' declarator suffix: the
+     error type E, or NULL_TREE when absent.  */
+  tree return_failure_type;
 };
 
 /* A declarator.  */

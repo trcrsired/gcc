@@ -16890,8 +16890,14 @@ fn_has_herbceptions_spec_p (const_tree fntype)
   if (!fntype || !FUNC_OR_METHOD_TYPE_P (fntype))
     return false;
   const_tree spec = TYPE_LANG_SLOT_1 (fntype);
-  return spec && TREE_PURPOSE (spec)
-	 && TREE_CODE (TREE_PURPOSE (spec)) == HERBCEPTION_SPEC;
+  if (spec && TREE_PURPOSE (spec)
+      && TREE_CODE (TREE_PURPOSE (spec)) == HERBCEPTION_SPEC)
+    return true;
+  /* The C frontend carries `return_failure{E}' as an internal type
+     attribute instead (its FUNCTION_TYPEs have no raises slot).  */
+  return lookup_attribute ("herbceptions_return_failure",
+			   TYPE_ATTRIBUTES (const_cast<tree> (fntype)))
+    != NULL_TREE;
 }
 
 #include "gt-tree.h"

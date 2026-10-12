@@ -7744,6 +7744,16 @@ grokdeclarator (const struct c_declarator *declarator,
 
 	    type = c_build_function_type (type, arg_types,
 					  arg_info->no_named_args_stdarg_p);
+	    /* `return_failure{E}': carry the spec on the function type
+	       as an internal attribute so pointer-level type identity
+	       distinguishes spec'd from plain callees.  */
+	    if (arg_info->return_failure_type)
+	      type = build_type_attribute_variant
+		(type, tree_cons
+		 (get_identifier ("herbceptions_return_failure"),
+		  tree_cons (NULL_TREE, arg_info->return_failure_type,
+			     NULL_TREE),
+		  NULL_TREE));
 	    declarator = declarator->declarator;
 
 	    /* Set the TYPE_CONTEXTs for each tagged type which is local to
@@ -8598,6 +8608,7 @@ build_arg_info (void)
   ret->had_vla_unspec = 0;
   ret->no_named_args_stdarg_p = 0;
   ret->c23_empty_parens = 0;
+  ret->return_failure_type = NULL_TREE;
   return ret;
 }
 
