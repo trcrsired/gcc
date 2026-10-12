@@ -1836,6 +1836,25 @@ hb_op_throws (tree expr)
   return type_herbceptions_p (hb_expr_call_fntype (expr));
 }
 
+/* True if the resolved operation EXPR calls a function declared
+   `throws' (or a dependent `throws(expr)') — the implicit
+   std::error channel.  `return_failure{E}' uses a different
+   channel and does not satisfy `{ expr } throws'.  */
+
+bool
+hb_op_throws_spec (tree expr)
+{
+  tree ft = hb_expr_call_fntype (expr);
+  if (!ft)
+    return false;
+  tree spec_list = TYPE_RAISES_EXCEPTIONS (ft);
+  tree hspec = HERBCEPTION_SPEC_P (spec_list)
+    ? TREE_PURPOSE (spec_list) : NULL_TREE;
+  return (hspec
+	  && (HERBCEPTION_SPEC_KIND (hspec) == hsk_throws
+	      || HERBCEPTION_SPEC_KIND (hspec) == hsk_throws_expr));
+}
+
 /* `__is_herbceptions_throwsable(T)': T can be thrown via `throw throws'
    — a complete `std::error_domain<T>' exists.  Looks the domain
    template up in `std' and requires the instantiation to be complete;

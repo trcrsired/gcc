@@ -557,8 +557,10 @@ DEFTREECODE (TYPE_REQ, "type_req", tcc_expression, 1)
 
 /* A requirement for an expression and its properties. The
    first operand is the expression, the 2nd is its type,
-   the third one is noexcept expression.   */
-DEFTREECODE (COMPOUND_REQ, "compound_req", tcc_expression, 3)
+   the third one is noexcept expression, the fourth is a
+   herbceptions `throws' flag (boolean_true_node when the
+   requirement demands a `throws' callee).   */
+DEFTREECODE (COMPOUND_REQ, "compound_req", tcc_expression, 4)
 
 /* A requires clause within a requires expression. */
 DEFTREECODE (NESTED_REQ, "nested_req", tcc_expression, 1)

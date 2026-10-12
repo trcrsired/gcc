@@ -3293,6 +3293,9 @@ write_requirement (tree req)
 	  write_char ('C');
 	  write_expression (TREE_OPERAND (req, 2));
 	}
+      /* Herbceptions `{ expr } throws' — vendor choice 'H'.  */
+      if (TREE_OPERAND (req, 3) == boolean_true_node)
+	write_char ('H');
       if (tree constr = TREE_OPERAND (req, 1))
 	{
 	  write_char ('R');

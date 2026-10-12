@@ -35685,6 +35685,19 @@ cp_parser_simple_requirement (cp_parser *parser)
   if (expr == error_mark_node)
     cp_parser_skip_to_end_of_statement (parser);
 
+  if (flag_herbceptions
+      && cp_lexer_next_token_is_keyword (parser->lexer, RID_THROWS))
+    {
+      location_t thr_loc = cp_lexer_peek_token (parser->lexer)->location;
+      gcc_rich_location richloc (start);
+      richloc.add_fixit_insert_before (start, "{");
+      richloc.add_fixit_insert_after (thr_loc, "}");
+      error_at (&richloc, "%<throws%> cannot appear in a "
+		"simple-requirement; did you mean a compound-requirement "
+		"%<{ expression } throws%>?");
+      cp_lexer_consume_token (parser->lexer);
+    }
+
   cp_parser_consume_semicolon_at_end_of_statement (parser);
 
   if (!expr || expr == error_mark_node)
@@ -35836,6 +35849,15 @@ cp_parser_compound_requirement (cp_parser *parser)
 						   /*return_cond=*/true);
     }
 
+  /* Parse the optional herbceptions `throws'.  */
+  tree thr = boolean_false_node;
+  if (flag_herbceptions
+      && cp_lexer_next_token_is_keyword (parser->lexer, RID_THROWS))
+    {
+      cp_lexer_consume_token (parser->lexer);
+      thr = boolean_true_node;
+    }
+
   /* Parse the optional trailing return type. */
   tree type = NULL_TREE;
   if (cp_lexer_next_token_is (parser->lexer, CPP_DEREF))
@@ -35885,7 +35907,7 @@ cp_parser_compound_requirement (cp_parser *parser)
   if (expr == error_mark_node || type == error_mark_node)
     return error_mark_node;
 
-  return finish_compound_requirement (loc, expr, type, noex);
+  return finish_compound_requirement (loc, expr, type, noex, thr);
 }
 
 /* Parse a nested requirement. This is the same as a requires clause.

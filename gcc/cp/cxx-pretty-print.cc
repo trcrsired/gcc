@@ -2880,6 +2880,9 @@ pp_cxx_compound_requirement (cxx_pretty_printer *pp, tree t)
       pp_cxx_right_paren (pp);
     }
 
+  if (TREE_OPERAND (t, 3) == boolean_true_node)
+    pp_cxx_ws_string (pp, "throws");
+
   if (tree type = TREE_OPERAND (t, 1))
     {
       pp_cxx_whitespace (pp);

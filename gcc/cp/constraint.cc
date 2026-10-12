@@ -1536,6 +1536,20 @@ tsubst_compound_requirement (tree t, tree args, sat_info info)
 	return error_mark_node;
     }
 
+  /* `{ expr } throws' — satisfied iff the resolved operation calls a
+     `throws' function (the implicit std::error channel;
+     `return_failure{E}' uses a different channel).  */
+  if (!processing_template_decl
+      && TREE_OPERAND (t, 3) == boolean_true_node
+      && !hb_op_throws_spec (expr))
+    {
+      if (info.diagnose_unsatisfaction_p ())
+	inform (loc, "%qE cannot fail through the herbceptions "
+		"channel", expr);
+      else
+	return error_mark_node;
+    }
+
   /* Substitute through the type expression, if any.  */
   tree type = tsubst_type_requirement_1 (t1, args, info, EXPR_LOCATION (t));
   if (type == error_mark_node)
@@ -1583,7 +1597,8 @@ tsubst_compound_requirement (tree t, tree args, sat_info info)
     }
 
   if (processing_template_decl)
-    return finish_compound_requirement (EXPR_LOCATION (t), expr, type, noex);
+    return finish_compound_requirement (EXPR_LOCATION (t), expr, type,
+					noex, TREE_OPERAND (t, 3));
   return boolean_true_node;
 }
 
@@ -3000,15 +3015,17 @@ finish_type_requirement (location_t loc, tree type)
    an implicit conversion or argument deduction constraint,
    depending on whether any placeholders occur in the type name.
    NOEX is boolean_true_node iff the noexcept keyword was specified
-   or expression if noexcept (expr) was specified.  */
+   or expression if noexcept (expr) was specified.  THR is
+   boolean_true_node iff the herbceptions `throws' keyword was
+   specified.  */
 
 tree
 finish_compound_requirement (location_t loc, tree expr, tree type,
-			     tree noex)
+			     tree noex, tree thr)
 {
   if (check_for_bare_parameter_packs (noex))
     noex = error_mark_node;
-  tree req = build_nt (COMPOUND_REQ, expr, type, noex);
+  tree req = build_nt (COMPOUND_REQ, expr, type, noex, thr);
   SET_EXPR_LOCATION (req, loc);
   return req;
 }

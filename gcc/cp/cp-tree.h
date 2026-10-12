@@ -7922,6 +7922,7 @@ extern bool hb_is_return_failure_fn		(tree);
 extern tree hb_resolve_op				(enum tree_code, tree, tree);
 extern tree hb_resolve_convertible			(tree, tree);
 extern bool hb_op_throws			(tree);
+extern bool hb_op_throws_spec			(tree);
 extern bool hb_throwsable_p			(tree);
 extern bool hb_has_throws_member		(tree, special_function_kind);
 extern tree hb_invoke_return_failure_result	(tree);
@@ -9424,7 +9425,8 @@ extern tree finish_shorthand_constraint         (tree, tree, bool);
 extern tree finish_requires_expr                (location_t, tree, tree);
 extern tree finish_simple_requirement           (location_t, tree);
 extern tree finish_type_requirement             (location_t, tree);
-extern tree finish_compound_requirement         (location_t, tree, tree, tree);
+extern tree finish_compound_requirement         (location_t, tree, tree,
+						 tree, tree);
 extern tree finish_nested_requirement           (location_t, tree);
 extern tree tsubst_requires_expr                (tree, tree, tsubst_flags_t, tree);
 extern tree evaluate_requires_expr		(tree);

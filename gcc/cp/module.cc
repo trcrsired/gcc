@@ -6865,7 +6865,8 @@ trees_out::core_vals (tree t)
     case HERBCEPTION_SPEC:
       WT (((lang_tree_node *)t)->herbception_spec.type);
       WT (((lang_tree_node *)t)->herbception_spec.expr);
-      WU (((lang_tree_node *)t)->herbception_spec.kind);
+      if (streaming_p ())
+	WU (((lang_tree_node *)t)->herbception_spec.kind);
       break;
 
     case LAMBDA_EXPR:
