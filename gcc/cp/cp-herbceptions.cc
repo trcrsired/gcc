@@ -385,6 +385,8 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
   tree call = TREE_OPERAND (stmt, 0);
   while (TREE_CODE (call) == HERBCEPTION_TRY_EXPR)
     call = TREE_OPERAND (call, 0);
+  if (TREE_CODE (call) == TARGET_EXPR)
+    call = TARGET_EXPR_INITIAL (call);
 
   tree fntype = NULL_TREE;
   if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
@@ -558,6 +560,17 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
   while (TREE_CODE (call) == HERBCEPTION_TRY_EXPR)
     call = TREE_OPERAND (call, 0);
 
+  /* For an aggregate or sret call the parser wraps the
+     materialization, not the call itself:
+     try_expr<target_expr<slot, call>> — peel the TARGET_EXPR to reach
+     the call and keep the slot for the result.  */
+  tree target = NULL_TREE;
+  if (TREE_CODE (call) == TARGET_EXPR)
+    {
+      target = call;
+      call = TARGET_EXPR_INITIAL (call);
+    }
+
   if (TREE_CODE (call) == CALL_EXPR || TREE_CODE (call) == AGGR_INIT_EXPR)
     {
       tree fn = (TREE_CODE (call) == AGGR_INIT_EXPR
@@ -610,6 +623,41 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
     ctx->pre = alloc_stmt_list ();
   append_to_statement_list (build_stmt (loc, DECL_EXPR, u), &ctx->pre);
   append_to_statement_list (build_stmt (loc, DECL_EXPR, f), &ctx->pre);
+
+  if (target)
+    {
+      /* A materialized (aggregate/sret) call: the slot the callee
+	 writes binds inside the TARGET_EXPR's own scope, so the call
+	 must stay inside — hoisting it would leave the slot referenced
+	 before its binding.  The channel reads and the failure route
+	 run inline after the materialization instead:
+	 { target<slot, call>; u = RESULT; f = FAILED; if (f) route;
+	   slot }.  */
+      tree seq
+	= build2 (COMPOUND_EXPR, void_type_node, target,
+		  hb_assign (loc, u,
+			     build_call_expr_internal_loc
+			     (loc, IFN_HERBCEPTION_RESULT,
+			      TREE_TYPE (u), 0)));
+      seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		    hb_assign (loc, f,
+			       build_call_expr_internal_loc
+			       (loc, IFN_HERBCEPTION_FAILED,
+				TREE_TYPE (f), 0)));
+      {
+	tree body = alloc_stmt_list ();
+	tree errf = hb_error_field (union_type, err);
+	tree errslot = errf
+	  ? build3 (COMPONENT_REF, err, u, errf, NULL_TREE) : u;
+	hb_emit_route (body, ctx, errslot, loc);
+	seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		      build3 (COND_EXPR, void_type_node, f,
+			      body ? body : void_node, NULL_TREE));
+      }
+      return build2 (COMPOUND_EXPR, ctype, seq,
+		     TARGET_EXPR_SLOT (target));
+    }
+
   append_to_statement_list (build_stmt (loc, EXPR_STMT, call), &ctx->pre);
 
   /* u = .HERBCEPTION_RESULT (); f = .HERBCEPTION_FAILED (); */
@@ -644,6 +692,11 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
     return AGGR_INIT_EXPR_SLOT (call);
   if (TREE_CODE (call) == TARGET_EXPR)
     return TARGET_EXPR_SLOT (call);
+  if (targetm.calls.return_in_memory (ctype, fntype)
+      && TREE_CODE (call) == CALL_EXPR)
+    /* An sret callee wrote the value into the hidden return-slot
+       argument.  */
+    return build1 (INDIRECT_REF, ctype, CALL_EXPR_ARG (call, 0));
   return hb_value_view (u, ctype);
 }
 
