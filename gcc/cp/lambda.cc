@@ -1352,6 +1352,13 @@ maybe_add_lambda_conv_op (tree type)
   if (flag_noexcept_type
       && TYPE_NOTHROW_P (TREE_TYPE (callop)))
     stattype = build_exception_variant (stattype, noexcept_true_spec);
+  /* A herbceptions-spec'd callop's thunk carries the same spec, so a
+     failure in operator() routes through the thunk's own channel —
+     and the function pointer type the lambda converts to is spec'd
+     for its callers.  */
+  if (type_herbceptions_p (TREE_TYPE (callop)))
+    stattype = build_exception_variant
+      (stattype, TYPE_RAISES_EXCEPTIONS (TREE_TYPE (callop)));
 
   if (generic_lambda_p)
     --processing_template_decl;
