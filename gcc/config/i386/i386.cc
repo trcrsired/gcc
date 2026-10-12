@@ -1988,6 +1988,7 @@ init_cumulative_args (CUMULATIVE_ARGS *cum,  /* Argument info to initialize */
 		      : !libname);
 
   cum->decl = fndecl;
+  cum->herbceptions_p = fn_has_herbceptions_spec_p (fntype);
 
   cum->warn_empty = !warn_abi || cum->stdarg;
   if (!cum->warn_empty && fntype)
@@ -3263,6 +3264,21 @@ function_arg_advance_64 (CUMULATIVE_ARGS *cum, machine_mode mode,
     }
 }
 
+/* True when the Win64 herbceptions (`throws') convention coerces a
+   trivially-copyable 16-byte aggregate TYPE to the integer pair
+   {i64, i64}: it is returned in RAX:RDX and passed as two integer
+   registers instead of the ordinary Windows convention of returning /
+   passing such a type in memory.  Mirrors clang's WinX86_64ABIInfo
+   `IsThrows' handling.  */
+
+static bool
+ix86_herbceptions_16byte_p (const_tree type)
+{
+  return (type != NULL_TREE
+	  && AGGREGATE_TYPE_P (type)
+	  && int_size_in_bytes (type) == 16);
+}
+
 static int
 function_arg_advance_ms_64 (CUMULATIVE_ARGS *cum, HOST_WIDE_INT bytes,
 			    HOST_WIDE_INT words)
@@ -3307,7 +3323,28 @@ ix86_function_arg_advance (cumulative_args_t cum_v,
       enum calling_abi call_abi = cum ? cum->call_abi : ix86_abi;
 
       if (call_abi == MS_ABI)
-	nregs = function_arg_advance_ms_64 (cum, bytes, words);
+	{
+	  if (TARGET_64BIT && cum->herbceptions_p
+	      && ix86_herbceptions_16byte_p (arg.type))
+	    {
+	      /* Win64 `throws': a 16-byte aggregate is passed as the
+		 integer pair {i64, i64}.  */
+	      cum->words += words;
+	      if (cum->nregs >= 2)
+		{
+		  cum->nregs -= 2;
+		  cum->regno += 2;
+		  nregs = 2;
+		}
+	      else
+		{
+		  cum->nregs = 0;
+		  nregs = 0;
+		}
+	    }
+	  else
+	    nregs = function_arg_advance_ms_64 (cum, bytes, words);
+	}
       else
 	nregs = function_arg_advance_64 (cum, mode, arg.type, words,
 					 arg.named);
@@ -3547,6 +3584,22 @@ function_arg_ms_64 (const CUMULATIVE_ARGS *cum, machine_mode mode,
   if (cum->nregs == 0)
     return NULL_RTX;
 
+  /* Win64 `throws': a 16-byte aggregate is passed as the integer pair
+     {i64, i64} in two consecutive integer registers.  */
+  if (TARGET_64BIT && cum->herbceptions_p
+      && ix86_herbceptions_16byte_p (type))
+    {
+      if (cum->nregs < 2)
+	return NULL_RTX;
+      rtx t1 = gen_rtx_REG (DImode,
+			    x86_64_ms_abi_int_parameter_registers[cum->regno]);
+      rtx t2 = gen_rtx_REG (DImode,
+			    x86_64_ms_abi_int_parameter_registers[cum->regno + 1]);
+      t1 = gen_rtx_EXPR_LIST (VOIDmode, t1, const0_rtx);
+      t2 = gen_rtx_EXPR_LIST (VOIDmode, t2, GEN_INT (8));
+      return gen_rtx_PARALLEL (orig_mode, gen_rtvec (2, t1, t2));
+    }
+
   regno = x86_64_ms_abi_int_parameter_registers[cum->regno];
 
   /* Only floating point modes less than 64 bits are passed in anything but
@@ -3699,6 +3752,12 @@ static bool
 ix86_pass_by_reference (cumulative_args_t cum_v, const function_arg_info &arg)
 {
   CUMULATIVE_ARGS *cum = get_cumulative_args (cum_v);
+
+  /* Win64 `throws': a 16-byte aggregate is passed by value in a
+     register pair rather than indirectly.  */
+  if (cum && cum->call_abi == MS_ABI && TARGET_64BIT
+      && cum->herbceptions_p && ix86_herbceptions_16byte_p (arg.type))
+    return false;
 
   return ix86_pass_by_reference_abi (cum ? cum->call_abi : ix86_abi, arg);
 }
@@ -4433,7 +4492,22 @@ ix86_function_value_1 (const_tree valtype, const_tree fntype_or_decl,
   if (ix86_function_type_abi (fntype) == MS_ABI)
     {
       if (TARGET_64BIT)
-	return function_value_ms_64 (orig_mode, mode, valtype);
+	{
+	  /* Win64 `throws': a trivially-copyable 16-byte aggregate is
+	     returned as the integer pair {i64, i64} in RAX:RDX instead
+	     of in memory.  */
+	  if (fn_has_herbceptions_spec_p (fntype)
+	      && ix86_herbceptions_16byte_p (valtype))
+	    {
+	      rtx part = gen_rtx_EXPR_LIST (VOIDmode,
+					    gen_rtx_REG (TImode, AX_REG),
+					    const0_rtx);
+	      rtx ret = gen_rtx_PARALLEL (orig_mode, rtvec_alloc (1));
+	      XVECEXP (ret, 0, 0) = part;
+	      return ret;
+	    }
+	  return function_value_ms_64 (orig_mode, mode, valtype);
+	}
       else
 	return function_value_ms_32 (orig_mode, mode, fntype, fn, valtype);
     }
@@ -4493,7 +4567,7 @@ ix86_libcall_value (machine_mode mode)
 /* Return true iff type is returned in memory.  */
 
 static bool
-ix86_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
+ix86_return_in_memory (const_tree type, const_tree fntype)
 {
   const machine_mode mode = type_natural_mode (type, NULL, true);
   HOST_WIDE_INT size;
@@ -4503,6 +4577,12 @@ ix86_return_in_memory (const_tree type, const_tree fntype ATTRIBUTE_UNUSED)
       if (ix86_function_type_abi (fntype) == MS_ABI)
 	{
 	  size = int_size_in_bytes (type);
+
+	  /* Win64 `throws': a trivially-copyable 16-byte aggregate is
+	     returned in RAX:RDX rather than memory.  */
+	  if (fn_has_herbceptions_spec_p (fntype)
+	      && ix86_herbceptions_16byte_p (type))
+	    return false;
 
 	  /* __m128 is returned in xmm0.  256/512-bit vector values are
 	     returned in ymm0/zmm0 when AVX/AVX512 is enabled.  */

@@ -1728,6 +1728,9 @@ typedef struct ix86_args {
  				   MS_ABI for ms abi.  */
   bool preserve_none_abi;	/* Set to true if the preserve_none ABI is
 				   used.  */
+  bool herbceptions_p;		/* Set to true if the callee has a
+				   herbceptions `throws' /
+				   `return_failure{E}' specifier.  */
   tree decl;			/* Callee decl.  */
 } CUMULATIVE_ARGS;
 
