@@ -7377,6 +7377,12 @@ verify_ctor_sanity (const constexpr_ctx *ctx, tree type)
   /* We don't bother building a ctor for an empty base subobject.  */
   if (is_empty_class (type))
     return;
+  /* Non-aggregate (scalar) initializers carry no subobject ctor to
+     verify against ctx->ctor — the caller may legitimately have none
+     (e.g. a `constexpr __uint128_t p{v}' inside if constexpr).  */
+  if (!CLASS_TYPE_P (type) && !VECTOR_TYPE_P (type)
+      && !TYPE_PTRMEMFUNC_P (type))
+    return;
 
   /* We're in the middle of an initializer that might involve placeholders;
      our caller should have created a CONSTRUCTOR for us to put the
@@ -7449,8 +7455,10 @@ cxx_eval_bare_aggregate (const constexpr_ctx *ctx, tree t,
       int pos_hint = -1;
       if (!ctx->ctor)
 	/* The enclosing object could be an empty subobject so we have no
-	   CONSTRUCTOR (c++/125336).  */
-	gcc_checking_assert (is_empty_class (type));
+	   CONSTRUCTOR (c++/125336), or a scalar `T{v}' that carries no
+	   subobject ctor at all.  */
+	gcc_checking_assert (is_empty_class (type)
+			     || !CLASS_TYPE_P (type));
       else if (new_ctx.ctor != ctx->ctor && !no_slot)
 	{
 	  /* If we built a new CONSTRUCTOR, attach it now so that other

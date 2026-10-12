@@ -1518,7 +1518,12 @@ bool
 herbceptions_failure_allowed_here (void)
 {
   return (current_function_herbceptions_spec () != NULL_TREE
-	  || in_herbceptions_try_or_catch_scope ());
+	  || in_herbceptions_try_or_catch_scope ()
+	  /* An escaped error in main() traps at the boundary.  */
+	  || (current_function_decl
+	      && DECL_MAIN_P (current_function_decl))
+	  /* Unevaluated expressions are never emitted.  */
+	  || cp_unevaluated_operand != 0);
 }
 
 /* Build a HERBCEPTION_THROW_EXPR for `throw throws EXPR'.  EXPR is the

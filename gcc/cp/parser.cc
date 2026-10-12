@@ -9372,7 +9372,12 @@ cp_parser_postfix_expression (cp_parser *parser, bool address_p, bool cast_p,
 		if (fntype && FUNC_OR_METHOD_TYPE_P (fntype)
 		    && type_herbceptions_p (fntype))
 		  {
+		    /* Default arguments and NSDMIs are evaluated in
+		       the caller's/ctor's frame — the failure routes
+		       there, so the check defers to that context
+		       (local_variables_forbidden_p is set in both).  */
 		    if (parser->herbception_operand_depth == 0
+			&& !parser->local_variables_forbidden_p
 			&& !herbceptions_failure_allowed_here ())
 		      error_at (loc, "call to a %<throws%> or "
 				     "%<return_failure{E}%> function must "
@@ -30831,8 +30836,11 @@ cp_parser_class_head (cp_parser* parser,
       cp_parser_attributes_opt (parser);
       cp_lexer_set_token_position (parser->lexer, current_position);
     }
-  /* Issue the error about the overly-qualified name now.  */
-  if (qualified_p)
+  /* Issue the error about the overly-qualified name now — but not
+     for an explicit/partial specialization `template<...> struct
+     ::N::S<...>' where the leading `::' legitimately anchors the
+     specialization's name at global scope.  */
+  if (qualified_p && !num_templates)
     {
       cp_parser_error (parser,
 		       "global qualification of class name is invalid");

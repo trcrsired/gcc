@@ -23094,9 +23094,14 @@ tsubst_expr (tree t, tree args, tsubst_flags_t complain, tree in_decl)
       {
 	/* The context checks ran when the template was parsed; the
 	   instantiation binding levels do not mirror the statement
-	   structure, so rebuild the node directly.  */
+	   structure, so rebuild the node directly.  A call that was
+	   type-dependent at parse carries no TREE_TYPE; take the
+	   substituted operand's type in that case.  */
 	tree op = RECUR (TREE_OPERAND (t, 0));
-	tree r = build1 (TREE_CODE (t), TREE_TYPE (t), op);
+	tree type = TREE_TYPE (t);
+	if (!type)
+	  type = TREE_TYPE (op);
+	tree r = build1 (TREE_CODE (t), type, op);
 	SET_EXPR_LOCATION (r, EXPR_LOCATION (t));
 	RETURN (r);
       }

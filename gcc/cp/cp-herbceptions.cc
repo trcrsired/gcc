@@ -219,10 +219,14 @@ hb_emit_return (tree list, hb_ctx *ctx, tree init, location_t loc)
 /* Emit the failure exit/route for payload E at LOC into LIST:
    - inside a `catch throws' scope: bind the handler var, goto disp;
    - in a spec'd fn: `__hb_result.error = e; __hb_failed = 1; return;'
-   - otherwise an unhandled-failure error.  */
+   - in main(): trap — an escaped error hits the main boundary;
+   - otherwise an unhandled-failure error.  CALL_P marks the route as
+     coming from a call failure; `throw throws' escaping a plain
+     function is a hard error even in main.  */
 
 static void
-hb_emit_route (tree list, hb_ctx *ctx, tree e, location_t loc)
+hb_emit_route (tree list, hb_ctx *ctx, tree e, location_t loc,
+	       bool call_p = true)
 {
   if (ctx->disp_label)
     {
@@ -240,6 +244,15 @@ hb_emit_route (tree list, hb_ctx *ctx, tree e, location_t loc)
     }
   if (!ctx->hspec)
     {
+      if (call_p && DECL_MAIN_P (ctx->fndecl))
+	{
+	  append_to_statement_list
+	    (build_call_expr_loc (loc,
+				  builtin_decl_explicit (BUILT_IN_TRAP),
+				  0),
+	     &list);
+	  return;
+	}
       error_at (loc,
 		"an unhandled herbceptions failure cannot leave a "
 		"function without a herbceptions specification");
@@ -302,6 +315,16 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
 		"function with a herbceptions specification");
       return error_mark_node;
     }
+
+  /* Nested herbceptions nodes inside the call's arguments lower into
+     ctx->pre and must precede the call itself.  */
+  if (TREE_CODE (call) == CALL_EXPR)
+    for (int i = 0; i < call_expr_nargs (call); ++i)
+      cp_walk_tree (&CALL_EXPR_ARG (call, i), hb_lower_r, ctx, NULL);
+  else if (TREE_CODE (call) == AGGR_INIT_EXPR)
+    for (int i = 0; i < aggr_init_expr_nargs (call); ++i)
+      cp_walk_tree (&AGGR_INIT_EXPR_ARG (call, i), hb_lower_r, ctx,
+		    NULL);
 
   tree spec_list = TYPE_RAISES_EXCEPTIONS (fntype);
   tree hspec = HERBCEPTION_SPEC_P (spec_list)
@@ -419,7 +442,7 @@ hb_lower_fail (hb_ctx *ctx, tree stmt, bool is_throw, location_t loc)
 	  return build_stmt (loc, EXPR_STMT, error_mark_node);
 	}
     }
-  hb_emit_route (list, ctx, e, loc);
+  hb_emit_route (list, ctx, e, loc, /*call_p=*/false);
   return list;
 }
 
@@ -456,6 +479,17 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc)
   if (!fntype || !FUNC_OR_METHOD_TYPE_P (fntype)
       || !type_herbceptions_p (fntype))
     return call;
+
+  /* Nested herbceptions nodes inside the call's arguments (a wrapped
+     default argument, `f(g())') lower into ctx->pre and must precede
+     the call itself.  */
+  if (TREE_CODE (call) == CALL_EXPR)
+    for (int i = 0; i < call_expr_nargs (call); ++i)
+      cp_walk_tree (&CALL_EXPR_ARG (call, i), hb_lower_r, ctx, NULL);
+  else
+    for (int i = 0; i < aggr_init_expr_nargs (call); ++i)
+      cp_walk_tree (&AGGR_INIT_EXPR_ARG (call, i), hb_lower_r, ctx,
+		    NULL);
 
   tree spec_list = TYPE_RAISES_EXCEPTIONS (fntype);
   tree hspec = HERBCEPTION_SPEC_P (spec_list)
@@ -697,7 +731,7 @@ hb_lower_r (tree *stmt_p, int *walk_subtrees, void *data)
 	  {
 	    hb_emit_route (ctx->pre ? ctx->pre
 			   : (ctx->pre = alloc_stmt_list ()),
-			   ctx, e, loc);
+			   ctx, e, loc, /*call_p=*/false);
 	    *stmt_p = void_node;
 	  }
 	*walk_subtrees = 0;
@@ -706,13 +740,21 @@ hb_lower_r (tree *stmt_p, int *walk_subtrees, void *data)
 
     case HERBCEPTION_FAIL_EXPR:
       hb_emit_route (ctx->pre ? ctx->pre : (ctx->pre = alloc_stmt_list ()),
-		     ctx, TREE_OPERAND (stmt, 0), loc);
+		     ctx, TREE_OPERAND (stmt, 0), loc, /*call_p=*/false);
       *stmt_p = void_node;
       *walk_subtrees = 0;
       break;
 
     case HERBCEPTION_CATCH_EXPR:
       *stmt_p = hb_lower_catch (ctx, stmt, loc);
+      *walk_subtrees = 0;
+      break;
+
+    case TRY_BLOCK:
+      /* A try-block reached through a statement-level wrapper
+	 (must_not_throw_expr, cleanups) — lower it structurally so
+	 `catch throws' handlers register the dispatch context.  */
+      *stmt_p = hb_lower_try_block (ctx, stmt);
       *walk_subtrees = 0;
       break;
 
