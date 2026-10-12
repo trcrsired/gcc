@@ -285,6 +285,18 @@ hb_fabricate_error (tree target, tree expr, location_t loc)
   if (dcall == error_mark_node || ccall == error_mark_node)
     return error_mark_node;
 
+  /* A provably-null domain() is a hard error at the throw site —
+     the fabricated std::error would be unrepresentable.  Evaluate a
+     constexpr specialization's call.  */
+  tree folded = maybe_constant_value (dcall);
+  if (folded && (integer_zerop (folded) || null_ptr_cst_p (folded)))
+    {
+      error_at (loc, "%<std::error_domain%<%T%>::domain()%> evaluates "
+		"to a null domain; the %<std::error%> payload cannot be "
+		"fabricated", type);
+      return error_mark_node;
+    }
+
   /* { .domain = dcall, .code = ccall } in the ABI record's own
      field order.  */
   vec<constructor_elt, va_gc> *elts = NULL;
