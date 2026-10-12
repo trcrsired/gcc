@@ -1212,6 +1212,18 @@ public:
   unsigned heap_dealloc_count;
   /* Number of uncaught exceptions.  */
   unsigned uncaught_exceptions;
+  /* Herbceptions: the pending error channel during evaluation —
+     evaluated on the *un-lowered* function body (constexpr_fundef
+     snapshots it before genericize_herbceptions_body runs), so the
+     evaluator sees HERBCEPTION_{TRY,CATCH,THROW,FAIL}_EXPR and
+     HERBCEPTION_HANDLER nodes directly.  channel_error holds the
+     error operand of the last return_failure/throw throws;
+     channel_pending says an error is in flight; channel_is_rf says
+     it came from a return_failure{E} site.  A pending error at the
+     outermost eval is an escaping failure — not constant.  */
+  tree channel_error;
+  bool channel_pending;
+  bool channel_is_rf;
   /* A contract statement that failed or was not constant, we only store the
      first one that fails.  */
   tree contract_statement;
@@ -1237,7 +1249,9 @@ public:
   constexpr_global_ctx ()
     : constexpr_ops_count (0), cleanups (NULL), modifiable (nullptr),
       consteval_block (NULL_TREE), heap_dealloc_count (0),
-      uncaught_exceptions (0), contract_statement (NULL_TREE),
+      uncaught_exceptions (0), channel_error (NULL_TREE),
+      channel_pending (false), channel_is_rf (false),
+      contract_statement (NULL_TREE),
       contract_condition_non_const (false), state_dependent (false) {}
 
   bool is_outside_lifetime (tree t)
@@ -1409,7 +1423,14 @@ cxx_constexpr_consteval_block (const constexpr_ctx *ctx)
 static bool
 returns (tree *jump_target)
 {
-  return *jump_target && TREE_CODE (*jump_target) == RETURN_EXPR;
+  /* Herbceptions: a return_failure/throw throws node doubles as the
+     return-like jump marker — the pending channel carries the error;
+     a try-expr propagates it like a return to the next handler.  */
+  return (*jump_target
+	  && (TREE_CODE (*jump_target) == RETURN_EXPR
+	      || TREE_CODE (*jump_target) == HERBCEPTION_FAIL_EXPR
+	      || TREE_CODE (*jump_target) == HERBCEPTION_THROW_EXPR
+	      || TREE_CODE (*jump_target) == HERBCEPTION_TRY_EXPR));
 }
 
 static bool
@@ -3671,6 +3692,13 @@ cxx_eval_internal_function (const constexpr_ctx *ctx, tree t,
     case IFN_FALLTHROUGH:
       return void_node;
 
+    /* Herbceptions channel reads never appear in the un-lowered
+       constexpr tree — evaluate as void so a stray one is ignored
+       rather than crashing.  */
+    case IFN_HERBCEPTION_RESULT:
+    case IFN_HERBCEPTION_FAILED:
+      return void_node;
+
     case IFN_ASSUME:
       if (!cxx_eval_assert (ctx, CALL_EXPR_ARG (t, 0),
 			    G_("failed %<assume%> attribute assumption"),
@@ -5061,6 +5089,20 @@ cxx_eval_call_expression (const constexpr_ctx *ctx, tree t,
 	      result = NULL_TREE;
 	      cacheable = false;
 	      *jump_target = jmp_target;
+	    }
+	  else if (!*non_constant_p && ctx->global->channel_pending)
+	    {
+	      /* The callee failed through the herbceptions channel —
+		 the pending flag carries the error; propagate the
+		 failure jump so intervening statements stop, like a
+		 return.  The channel is consumed by the enclosing
+		 try/catch machinery.  */
+	      result = NULL_TREE;
+	      cacheable = false;
+	      if (jmp_target)
+		*jump_target = jmp_target;
+	      else
+		result = void_node;
 	    }
 	  else if (!*non_constant_p && TREE_THIS_VOLATILE (fun))
 	    {
@@ -10259,6 +10301,67 @@ cxx_eval_constant_expression (const constexpr_ctx *ctx, tree t,
       r = cxx_eval_constant_expression (ctx, TRY_STMTS (t), lval,
 					non_constant_p, overflow_p,
 					jump_target);
+      /* Herbceptions: a `catch throws' handler catches the pending
+	 channel error — bind its operand and evaluate the body.  */
+      if (!*non_constant_p && ctx->global->channel_pending)
+	{
+	  if (returns (jump_target))
+	    *jump_target = NULL_TREE;
+	  tree handlers = TRY_HANDLERS (t);
+	  tree hh = NULL_TREE;
+	  auto find_hh = [&hh] (tree list)
+	    {
+	      if (TREE_CODE (list) == HERBCEPTION_HANDLER)
+		hh = list;
+	      else if (TREE_CODE (list) == STATEMENT_LIST)
+		for (tree stmt : tsi_range (list))
+		  if (TREE_CODE (stmt) == HERBCEPTION_HANDLER)
+		    hh = stmt;
+	    };
+	  if (handlers)
+	    find_hh (handlers);
+	  ctx->global->channel_pending = false;
+	  if (hh)
+	    {
+	      tree parms = HERBCEPTION_HANDLER_PARMS (hh);
+	      tree hbody = HERBCEPTION_HANDLER_BODY (hh);
+	      if (TREE_CODE (hbody) == BIND_EXPR)
+		{
+		  /* Mirror the BIND_EXPR case, binding the caught
+		     variable after the scope's own clear_value pass —
+		     it belongs to this BIND_EXPR's var list.  */
+		  for (tree decl = BIND_EXPR_VARS (hbody); decl;
+		       decl = DECL_CHAIN (decl))
+		    ctx->global->clear_value (decl);
+		  if (parms && VAR_P (parms))
+		    ctx->global->put_value (parms,
+					    ctx->global->channel_error);
+		  r = cxx_eval_constant_expression
+		    (ctx, BIND_EXPR_BODY (hbody), vc_discard,
+		     non_constant_p, overflow_p, jump_target);
+		  for (tree decl = BIND_EXPR_VARS (hbody); decl;
+		       decl = DECL_CHAIN (decl))
+		    destroy_value_checked (ctx, decl, non_constant_p);
+		}
+	      else
+		{
+		  if (parms && VAR_P (parms))
+		    ctx->global->put_value (parms,
+					    ctx->global->channel_error);
+		  r = cxx_eval_constant_expression
+		    (ctx, hbody, vc_discard,
+		     non_constant_p, overflow_p, jump_target);
+		}
+	    }
+	  else
+	    {
+	      if (!ctx->quiet)
+		error_at (loc, "an uncaught herbceptions error escapes "
+			  "constant evaluation");
+	      *non_constant_p = true;
+	    }
+	  break;
+	}
       if (!*non_constant_p && throws (jump_target))
 	if (tree h = TRY_HANDLERS (t))
 	  {
@@ -11110,14 +11213,128 @@ cxx_eval_constant_expression (const constexpr_ctx *ctx, tree t,
     case VA_ARG_EXPR:
     case BASELINK:
     case OFFSET_REF:
-      /* Herbceptions machinery is runtime-only for now.  */
-    case HERBCEPTION_THROW_EXPR:
-    case HERBCEPTION_FAIL_EXPR:
-    case HERBCEPTION_TRY_EXPR:
-    case HERBCEPTION_CATCH_EXPR:
       if (!ctx->quiet)
 	error_at (loc, "expression %qE is not a constant expression", t);
       *non_constant_p = true;
+      break;
+
+      /* Herbceptions — evaluated on the un-lowered function body.
+	 A `return_failure e'/`throw throws e' stashes the error in
+	 the eval-wide channel and jumps like a return; the caller's
+	 try/catch machinery consumes channel_pending.  */
+    case HERBCEPTION_THROW_EXPR:
+    case HERBCEPTION_FAIL_EXPR:
+      {
+	tree e = TREE_OPERAND (t, 0);
+	if (e == NULL_TREE)
+	  /* Bare `throw throws'/`return_failure' — rethrow the
+	     caught error already in the channel.  */
+	  r = ctx->global->channel_error;
+	else
+	  r = cxx_eval_constant_expression (ctx, e, vc_prvalue,
+					    non_constant_p, overflow_p,
+					    jump_target);
+	if (*non_constant_p || *jump_target)
+	  break;
+	ctx->global->channel_error = r;
+	ctx->global->channel_pending = true;
+	ctx->global->channel_is_rf
+	  = (TREE_CODE (t) == HERBCEPTION_FAIL_EXPR);
+	/* Return-like jump — the spec'd callee's eval stops
+	   here; the pending channel carries the error.  */
+	*jump_target = t;
+	r = void_node;
+      }
+      break;
+
+    /* `try (expr)' — the call's failure propagates to the enclosing
+       spec'd function (the pending channel stays set); a plain
+       non-spec'd caller can't host the channel.  */
+    case HERBCEPTION_TRY_EXPR:
+      {
+	r = cxx_eval_constant_expression (ctx, TREE_OPERAND (t, 0),
+					  vc_prvalue, non_constant_p,
+					  overflow_p, jump_target);
+	if (*non_constant_p || *jump_target)
+	  break;
+	if (ctx->global->channel_pending)
+	  {
+	    /* Propagate the failure like a return: an enclosing
+	       `catch return_failure'/`catch throws' consumes the
+	       pending channel and clears the jump; at the outermost
+	       level a leftover pending flag diagnoses an uncaught
+	       error.  */
+	    *jump_target = t;
+	    break;
+	  }
+      }
+      break;
+
+    /* `catch return_failure (expr)' — build the either record
+       {value, error, failed}.  */
+    case HERBCEPTION_CATCH_EXPR:
+      {
+	tree res = cxx_eval_constant_expression (ctx, TREE_OPERAND (t, 0),
+						 vc_prvalue, non_constant_p,
+						 overflow_p, jump_target);
+	bool failed = ctx->global->channel_pending;
+	if (failed)
+	  {
+	    /* The operand's failure is captured by the either — the
+	       pending channel and the propagate jump die here.  */
+	    ctx->global->channel_pending = false;
+	    if (returns (jump_target))
+	      *jump_target = NULL_TREE;
+	  }
+	if (*non_constant_p || *jump_target)
+	  break;
+	tree etype = TREE_TYPE (t);
+	vec<constructor_elt, va_gc> *elts = NULL;
+	if (RECORD_OR_UNION_TYPE_P (etype))
+	  {
+	    /* The either's TYPE_FIELDS after finish_struct carry
+	       injected member-function decls — find the three data
+	       members by name.  */
+	    tree valuef = NULL_TREE, errorf = NULL_TREE;
+	    tree failedf = NULL_TREE;
+	    for (tree fld = TYPE_FIELDS (etype); fld;
+		 fld = DECL_CHAIN (fld))
+	      if (TREE_CODE (fld) == FIELD_DECL && DECL_NAME (fld))
+		{
+		  if (DECL_NAME (fld) == get_identifier ("value"))
+		    valuef = fld;
+		  else if (DECL_NAME (fld) == get_identifier ("error"))
+		    errorf = fld;
+		  else if (DECL_NAME (fld) == get_identifier ("failed"))
+		    failedf = fld;
+		}
+	    auto vinit = [] (tree ft)
+	      {
+		return (SCALAR_TYPE_P (ft)
+			? build_zero_cst (ft)
+			: build_constructor (ft, NULL));
+	      };
+	    tree v, e;
+	    if (failed)
+	      {
+		v = vinit (TREE_TYPE (valuef));
+		e = ctx->global->channel_error;
+	      }
+	    else
+	      {
+		v = (res == void_node ? vinit (TREE_TYPE (valuef)) : res);
+		e = vinit (TREE_TYPE (errorf));
+	      }
+	    CONSTRUCTOR_APPEND_ELT (elts, valuef, v);
+	    CONSTRUCTOR_APPEND_ELT (elts, errorf, e);
+	    CONSTRUCTOR_APPEND_ELT (elts, failedf,
+				    failed ? truthvalue_true_node
+					   : truthvalue_false_node);
+	    r = build_constructor (etype, elts);
+	  }
+	else
+	  r = res;
+      }
       break;
 
     case OBJ_TYPE_REF:
@@ -11696,6 +11913,15 @@ cxx_eval_outermost_constant_expr (tree t, bool allow_non_constant,
 	diagnose_uncaught_exception (input_location, &ctx, jmp_target);
       non_constant_p = true;
       jmp_target = NULL_TREE;
+      r = t;
+    }
+  else if (global_ctx.channel_pending && !non_constant_p)
+    {
+      /* An escaping herbceptions error fails constant evaluation.  */
+      if (!ctx.quiet)
+	error_at (input_location, "an uncaught herbceptions error "
+		  "escaped constant evaluation");
+      non_constant_p = true;
       r = t;
     }
   else if (!non_constant_p && jmp_target)
@@ -13206,11 +13432,21 @@ potential_constant_expression_1 (tree t, bool want_rval, bool strict, bool now,
 	goto fail;
       return RECUR (TREE_OPERAND (t, 0), rval);
 
+    /* Herbceptions: the channel constructs are potential when their
+       operand is — constant evaluation handles the pending-error
+       channel directly.  */
     case HERBCEPTION_THROW_EXPR:
     case HERBCEPTION_FAIL_EXPR:
+      if (TREE_OPERAND (t, 0) == NULL_TREE)
+	return true;
+      return RECUR (TREE_OPERAND (t, 0), rval);
+
     case HERBCEPTION_TRY_EXPR:
     case HERBCEPTION_CATCH_EXPR:
-      goto fail;
+      return RECUR (TREE_OPERAND (t, 0), rval);
+
+    case HERBCEPTION_HANDLER:
+      return true;
 
     case ASM_EXPR:
       if (flags & tf_error)
