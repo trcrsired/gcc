@@ -3279,6 +3279,18 @@ ix86_herbceptions_16byte_p (const_tree type)
 	  && int_size_in_bytes (type) == 16);
 }
 
+/* True when the Win64 herbceptions (`throws') convention must pass TYPE as
+   zero register slots: an empty C++ record decomposes to no leaves, unlike
+   the ordinary MS x64 ABI which passes it as a one-byte value.  Mirrors
+   clang's WinX86_64ABIInfo `IsThrows' handling and the LLVM backend
+   contract "empty structs decompose to zero leaves".  */
+
+static bool
+ix86_herbceptions_empty_p (const_tree type)
+{
+  return type != NULL_TREE && is_empty_type (type);
+}
+
 static int
 function_arg_advance_ms_64 (CUMULATIVE_ARGS *cum, HOST_WIDE_INT bytes,
 			    HOST_WIDE_INT words)
@@ -3342,6 +3354,13 @@ ix86_function_arg_advance (cumulative_args_t cum_v,
 		  nregs = 0;
 		}
 	    }
+	  else if (TARGET_64BIT && cum->herbceptions_p
+		   && ix86_herbceptions_empty_p (arg.type))
+	    /* Win64 `throws': an empty record contributes no register slots
+	       (the LLVM backend "empty structs decompose to zero leaves"
+	       contract).  The ordinary MS x64 ABI passes it as a one-byte
+	       value and is deliberately left unchanged.  */
+	    nregs = 0;
 	  else
 	    nregs = function_arg_advance_ms_64 (cum, bytes, words);
 	}
@@ -3599,6 +3618,13 @@ function_arg_ms_64 (const CUMULATIVE_ARGS *cum, machine_mode mode,
       t2 = gen_rtx_EXPR_LIST (VOIDmode, t2, GEN_INT (8));
       return gen_rtx_PARALLEL (orig_mode, gen_rtvec (2, t1, t2));
     }
+
+  /* Win64 `throws': an empty record decomposes to no register leaves and is
+     not passed at all, unlike the ordinary MS x64 ABI (a one-byte value in
+     the next integer register).  */
+  if (TARGET_64BIT && cum->herbceptions_p
+      && ix86_herbceptions_empty_p (type))
+    return NULL_RTX;
 
   regno = x86_64_ms_abi_int_parameter_registers[cum->regno];
 

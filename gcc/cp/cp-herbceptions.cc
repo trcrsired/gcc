@@ -125,7 +125,7 @@ hb_error_field (tree ut, tree etype)
   if (!RECORD_OR_UNION_TYPE_P (ut) || same_type_p (ut, etype))
     return NULL_TREE;
   for (tree f = TYPE_FIELDS (ut); f; f = DECL_CHAIN (f))
-    if (same_type_p (TREE_TYPE (f), etype))
+    if (TREE_CODE (f) == FIELD_DECL && same_type_p (TREE_TYPE (f), etype))
       return f;
   return NULL_TREE;
 }
@@ -138,7 +138,7 @@ hb_value_field (tree ut, tree t)
   if (!RECORD_OR_UNION_TYPE_P (ut))
     return NULL_TREE;
   for (tree f = TYPE_FIELDS (ut); f; f = DECL_CHAIN (f))
-    if (same_type_p (TREE_TYPE (f), t))
+    if (TREE_CODE (f) == FIELD_DECL && same_type_p (TREE_TYPE (f), t))
       return f;
   return NULL_TREE;
 }
@@ -416,7 +416,7 @@ hb_named_field (tree r, const char *name)
 {
   tree id = get_identifier (name);
   for (tree f = TYPE_FIELDS (r); f; f = DECL_CHAIN (f))
-    if (DECL_NAME (f) == id)
+    if (TREE_CODE (f) == FIELD_DECL && DECL_NAME (f) == id)
       return f;
   return NULL_TREE;
 }
