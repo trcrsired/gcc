@@ -1657,7 +1657,7 @@ ix86_function_arg_regno_p (int regno)
   else if (call_abi == WINCALL_ABI)
     {
       parm_regs = x86_64_wincall_int_parameter_registers;
-      i = 8;
+      i = TARGET_APX_EGPR ? 8 : 4;
     }
   else if (call_abi == MS_ABI)
     {
@@ -1994,7 +1994,11 @@ init_cumulative_args (CUMULATIVE_ARGS *cum,  /* Argument info to initialize */
   if (TARGET_64BIT)
     {
       if (cum->call_abi == WINCALL_ABI)
-	cum->nregs = 8;
+	/* WinCall has eight integer argument registers, but the top four
+	   are APX EGPRs: without EGPR they are not encodable at all, so
+	   fall back to the four legacy registers and let the rest of the
+	   arguments go on the stack.  */
+	cum->nregs = TARGET_APX_EGPR ? 8 : 4;
       else
 	cum->nregs = (cum->call_abi == SYSV_ABI
 		      ? X86_64_REGPARM_MAX
@@ -4749,11 +4753,24 @@ function_value_wincall (machine_mode orig_mode, machine_mode mode,
 	}
       if (sz > 16 && sz <= 32)
 	{
-	  rtx t1 = gen_rtx_EXPR_LIST (VOIDmode, gen_rtx_REG (TImode, AX_REG),
-				      const0_rtx);
-	  rtx t2 = gen_rtx_EXPR_LIST (VOIDmode, gen_rtx_REG (TImode, CX_REG),
-				      GEN_INT (16));
-	  return gen_rtx_PARALLEL (orig_mode, gen_rtvec (2, t1, t2));
+	  /* Three or four 8-byte chunks, in RAX, RDX, RCX, R8.  The last
+	     pair (RCX, R8) is not a consecutive register pair, so unlike
+	     the 16-byte case this cannot be written as TImode values:
+	     TImode at CX would name RCX:RBX, which is both the wrong
+	     register and callee-saved.  Emit only the chunks the size
+	     actually needs -- a chunk starting at or past the end of the
+	     object would hand emit_group_load_1 an empty trailing
+	     fragment.  */
+	  static const int wincall_return_regs[4] =
+	    { AX_REG, DX_REG, CX_REG, R8_REG };
+	  rtx parts[4];
+	  int n = (sz + 7) / 8;
+	  for (int i = 0; i < n; i++)
+	    parts[i] = gen_rtx_EXPR_LIST (VOIDmode,
+					  gen_rtx_REG (DImode,
+						       wincall_return_regs[i]),
+					  GEN_INT (i * 8));
+	  return gen_rtx_PARALLEL (orig_mode, gen_rtvec_v (n, parts));
 	}
     }
 
