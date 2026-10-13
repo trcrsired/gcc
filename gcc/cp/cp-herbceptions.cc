@@ -348,6 +348,22 @@ hb_emit_return (tree list, hb_ctx *ctx, tree init, location_t loc)
   append_to_statement_list (r, &list);
 }
 
+/* Emit `{ __hb_failed = 0; return RETVAL; }' for a success return whose
+   value materializes through DECL_RESULT (an sret return).  RETVAL is
+   normally the INIT_EXPR/MODIFY_EXPR writing DECL_RESULT, kept as the
+   return operand so the result slot stays live: with an otherwise
+   value-less `return;' GIMPLE DSE drops the write-through as a dead
+   store to the (sret) result local.  */
+
+static void
+hb_emit_return_result (tree list, hb_ctx *ctx, tree retval, location_t loc)
+{
+  hb_set_failed (list, ctx, 0, loc);
+  tree r = build_stmt (loc, RETURN_EXPR, retval);
+  TREE_NO_WARNING (r) = 1;
+  append_to_statement_list (r, &list);
+}
+
 /* Emit the failure exit/route for payload E at LOC into LIST:
    - inside a `catch throws' scope: bind the handler var, goto disp;
    - in a spec'd fn: `__hb_result.error = e; __hb_failed = 1; return;'
@@ -1256,10 +1272,9 @@ hb_lower_return (hb_ctx *ctx, tree ret, location_t loc)
 	      hb_emit_return (list, ctx, init, loc);
 	      return list;
 	    }
-	  /* sret/void: the DECL_RESULT write-through already
-	     materializes the value; the channel carries only the
-	     error.  */
-	  hb_emit_return (list, ctx, op, loc);
+	  /* sret/void: the DECL_RESULT write-through materializes the
+	     value; keep it as the return operand so the slot is live.  */
+	  hb_emit_return_result (list, ctx, op, loc);
 	  return list;
 	}
     }

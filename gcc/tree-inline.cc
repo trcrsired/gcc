@@ -4867,6 +4867,7 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
   gimple *simtenter_stmt = NULL;
   vec<tree> *simtvars_save;
   tree save_stack = NULL_TREE;
+  tree hb_new_error = NULL_TREE, hb_new_failed = NULL_TREE;
 
   /* The gimplifier uses input_location in too many places, such as
      internal_get_tmp_var ().  */
@@ -5256,6 +5257,20 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
      duplicate our body before altering anything.  */
   copy_body (id, bb, return_block, NULL);
 
+  /* Herbceptions: copy_body has remapped the inlined callee's channel
+     slots (__hb_result / __hb_failed) into the caller.  Remember them so
+     the caller's trailing IFN_HERBCEPTION_RESULT / IFN_HERBCEPTION_FAILED
+     reads can be redirected to those slots below: once the body is
+     spliced in, the real call's ABI return registers and flags that those
+     internal functions would otherwise sample no longer exist.  */
+  hb_new_error = hb_new_failed = NULL_TREE;
+  if (id->src_cfun->herbceptions_error_slot)
+    if (tree *slot = id->decl_map->get (id->src_cfun->herbceptions_error_slot))
+      hb_new_error = *slot;
+  if (id->src_cfun->herbceptions_failed_slot)
+    if (tree *slot = id->decl_map->get (id->src_cfun->herbceptions_failed_slot))
+      hb_new_failed = *slot;
+
   reset_debug_bindings (id, stmt_gsi);
 
   if (flag_stack_reuse != SR_NONE)
@@ -5424,6 +5439,40 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
 	}
       else
 	gsi_remove (&stmt_gsi, true);
+    }
+
+  /* Herbceptions: redirect the caller's trailing channel reads to the
+     inlined callee's remapped slots.  The reads immediately follow the
+     call statement in the return block; stop at the next real call so a
+     later inlined/called function's channel is not disturbed.  */
+  if (hb_new_error || hb_new_failed)
+    {
+      gimple_stmt_iterator gsi;
+      for (gsi = gsi_start_bb (return_block); !gsi_end_p (gsi); gsi_next (&gsi))
+	{
+	  gimple *s = gsi_stmt (gsi);
+	  if (!is_gimple_call (s))
+	    continue;
+	  if (!gimple_call_internal_p (s))
+	    break;
+	  internal_fn ifn = gimple_call_internal_fn (s);
+	  tree lhs = gimple_call_lhs (s);
+	  tree rhs = NULL_TREE;
+	  if (lhs && ifn == IFN_HERBCEPTION_RESULT && hb_new_error)
+	    rhs = hb_new_error;
+	  else if (lhs && ifn == IFN_HERBCEPTION_FAILED && hb_new_failed)
+	    rhs = hb_new_failed;
+	  else
+	    break;
+	  gimple *g;
+	  if (useless_type_conversion_p (TREE_TYPE (lhs), TREE_TYPE (rhs)))
+	    g = gimple_build_assign (lhs, rhs);
+	  else
+	    g = gimple_build_assign (lhs, build1 (VIEW_CONVERT_EXPR,
+						  TREE_TYPE (lhs), rhs));
+	  gimple_set_location (g, gimple_location (s));
+	  gsi_replace (&gsi, g, false);
+	}
     }
 
   if (purge_dead_abnormal_edges)
