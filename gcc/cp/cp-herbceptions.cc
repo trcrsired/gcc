@@ -348,18 +348,27 @@ hb_emit_return (tree list, hb_ctx *ctx, tree init, location_t loc)
   append_to_statement_list (r, &list);
 }
 
-/* Emit `{ __hb_failed = 0; return RETVAL; }' for a success return whose
-   value materializes through DECL_RESULT (an sret return).  RETVAL is
-   normally the INIT_EXPR/MODIFY_EXPR writing DECL_RESULT, kept as the
-   return operand so the result slot stays live: with an otherwise
-   value-less `return;' GIMPLE DSE drops the write-through as a dead
-   store to the (sret) result local.  */
+/* Emit `{ RETVAL; __hb_failed = 0; return <retval>; }' for a success
+   return whose value materializes through DECL_RESULT (an sret
+   return).  RETVAL is normally the INIT_EXPR/MODIFY_EXPR writing
+   DECL_RESULT.
+
+   The write-through has to stay a separate statement and the return
+   operand has to be DECL_RESULT itself.  gimplify_return_expr keeps the
+   result as the return operand only when the operand is the bare
+   RESULT_DECL (or absent); handed an INIT_EXPR it emits the assignment
+   followed by a plain `return;'.  A value-less return leaves the sret
+   buffer looking like an ordinary local that nothing reads, so GIMPLE
+   DSE and CD-DCE drop the write-through and the caller gets whatever
+   the slot happened to contain.  */
 
 static void
 hb_emit_return_result (tree list, hb_ctx *ctx, tree retval, location_t loc)
 {
+  if (retval)
+    append_to_statement_list (retval, &list);
   hb_set_failed (list, ctx, 0, loc);
-  tree r = build_stmt (loc, RETURN_EXPR, retval);
+  tree r = build_stmt (loc, RETURN_EXPR, DECL_RESULT (ctx->fndecl));
   TREE_NO_WARNING (r) = 1;
   append_to_statement_list (r, &list);
 }
@@ -686,8 +695,27 @@ hb_lower_te_init (hb_ctx *ctx, tree te, tree call, tree fntype,
       cp_walk_tree (&AGGR_INIT_EXPR_ARG (call, i), hb_lower_r, ctx,
 		    NULL);
 
+  /* An aggregate/sret callee materialises into the slot the TARGET_EXPR
+     owns.  The front end expresses that either with an AGGR_INIT_EXPR
+     that already carries the slot, or -- for a deduced-`auto' return
+     forwarding another call, a lambda's operator(), fast_io's
+     posix_api_common chain -- with a plain CALL_EXPR that relies on
+     gimplify_target_expr passing the slot as the hidden return buffer.
+     The second form only works while the call is the TARGET_EXPR's
+     initializer: this function replaces it with a void COMPOUND_EXPR,
+     after which gimplify_target_expr takes its "the mere evaluation
+     initialises the slot" path and the callee is handed no return
+     buffer at all, leaving the caller reading an unwritten one.  Make
+     the write explicit -- an assignment whose RHS is the sret call
+     turns back into a return-slot call.  */
+  tree callstmt = call;
+  if (!via_channel && !VOID_TYPE_P (ctype)
+      && targetm.calls.return_in_memory (ctype, fntype)
+      && TREE_CODE (call) == CALL_EXPR)
+    callstmt = build2 (INIT_EXPR, void_type_node, TARGET_EXPR_SLOT (te), call);
+
   tree seq
-    = build2 (COMPOUND_EXPR, void_type_node, call,
+    = build2 (COMPOUND_EXPR, void_type_node, callstmt,
 	      hb_assign (loc, u,
 			 build_call_expr_internal_loc
 			 (loc, IFN_HERBCEPTION_RESULT, union_type, 0)));
@@ -1235,6 +1263,19 @@ hb_lower_return (hb_ctx *ctx, tree ret, location_t loc)
     {
       /* `return;' — plain success.  */
       hb_emit_return (list, ctx, NULL_TREE, loc);
+      return list;
+    }
+
+  if (op == DECL_RESULT (ctx->fndecl))
+    {
+      /* The front end applied the return slot optimization: the
+	 operand is DECL_RESULT itself and the value was already
+	 written through it by the preceding statements.  Keep the
+	 RESULT_DECL as the return operand (see
+	 hb_emit_return_result) -- rewriting this into a value-less
+	 `return;' throws the operand away, and GIMPLE then treats
+	 the sret buffer as a local that nothing reads.  */
+      hb_emit_return_result (list, ctx, NULL_TREE, loc);
       return list;
     }
 
