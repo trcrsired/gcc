@@ -2436,3 +2436,7 @@
 
   return true;
 })
+
+;; Match the two possible destinations of a conditional jump.
+(define_predicate "pc_or_label_operand"
+  (match_code "pc,label_ref"))
