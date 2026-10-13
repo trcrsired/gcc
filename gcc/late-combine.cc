@@ -621,6 +621,10 @@ late_combine::check_register_pressure (insn_info *insn, rtx set)
 bool
 late_combine::check_uses (set_info *def, rtx set)
 {
+  // The ultimate definition of DEF, looking through degenerate phis.  This
+  // is the instruction that SET_SRC (SET) is evaluated in.
+  def_info *ultimate_def = look_through_degenerate_phi (def);
+  insn_info *def_insn = ultimate_def->insn ();
   use_info *prev_use = nullptr;
   for (use_info *use : def->nondebug_insn_uses ())
     {
@@ -659,15 +663,28 @@ late_combine::check_uses (set_info *def, rtx set)
 	return false;
 
       // We'll keep the uses in their original order, even if we move
-      // them relative to other instructions.  Make sure that non-final
-      // uses do not change any values that occur in the SET_SRC.
-      if (prev_use && prev_use->ebb () == use->ebb ())
-	{
-	  def_info *ultimate_def = look_through_degenerate_phi (def);
-	  if (insn_clobbers_resources (prev_use->insn (),
-				       ultimate_def->insn ()->uses ()))
+      // them relative to other instructions.  The substitution replaces
+      // each use with SET_SRC (SET), so the resources that SET_SRC reads
+      // must still hold the values they had in SET at the point of the
+      // use.  Make sure that no instruction between the definition (or
+      // the previous use) and this use changes one of those resources.
+      // Note that a write in a narrower mode still invalidates a wider
+      // value held in the same register.
+      //
+      // We can only reason about this within a single extended basic
+      // block, since the source registers may have different reaching
+      // definitions on different paths.  A basic block boundary shows up
+      // in the RTL SSA instruction list as an instruction without RTL;
+      // it cannot change any register, so just step over it.
+      if (!def_insn)
+	return false;
+      insn_info *from = prev_use ? prev_use->insn () : def_insn;
+      if (from->ebb () == use_insn->ebb ())
+	for (insn_info *i = from; i && *i < *use_insn;
+	     i = i->next_nondebug_insn ())
+	  if (i->rtl ()
+	      && insn_clobbers_resources (i, def_insn->uses ()))
 	    return false;
-	}
 
       prev_use = use;
     }
