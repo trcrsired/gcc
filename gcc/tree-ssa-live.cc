@@ -975,6 +975,20 @@ remove_unused_locals (void)
       var = (*cfun->local_decls)[srcidx];
       if (VAR_P (var))
 	{
+	  /* A `throws' function's channel slots are part of its calling
+	     convention: the caller reads the failure discriminant and the
+	     payload through them, and the inliner forwards an inlined
+	     callee's result to them.  The optimized body itself may never
+	     mention them - they are written only on failure paths, and read
+	     only through the internal HERBCEPTION_* functions - so the walk
+	     above does not see a use.  Without this a callee's slot can be
+	     dropped from its local_decls, and add_local_variables then never
+	     adds it to a caller that inlines the function, leaving the
+	     forwarded channel read referencing a declaration with no RTL.  */
+	  if (var == cfun->herbceptions_error_slot
+	      || var == cfun->herbceptions_failed_slot)
+	    set_is_used (var);
+
 	  if (!is_used_p (var))
 	    {
 	      tree def;
