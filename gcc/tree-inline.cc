@@ -5270,6 +5270,45 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
   if (id->src_cfun->herbceptions_failed_slot)
     if (tree *slot = id->decl_map->get (id->src_cfun->herbceptions_failed_slot))
       hb_new_failed = *slot;
+  /* LTO does not stream the cfun channel-slot scalars, so recover them
+     from the callee's copied local decls (which are streamed) and map
+     them through decl_map like any other local.  */
+  if (!hb_new_error || !hb_new_failed)
+    {
+      unsigned ix;
+      tree decl;
+      FOR_EACH_LOCAL_DECL (id->src_cfun, ix, decl)
+	if (TREE_CODE (decl) == VAR_DECL
+	    && DECL_ARTIFICIAL (decl) && DECL_NAME (decl))
+	  {
+	    const char *n = IDENTIFIER_POINTER (DECL_NAME (decl));
+	    bool is_err = !strcmp (n, "__hb_result");
+	    bool is_fail = !strcmp (n, "__hb_failed");
+	    if ((is_err && !hb_new_error) || (is_fail && !hb_new_failed))
+	      if (tree *slot = id->decl_map->get (decl))
+		{
+		  if (is_err)
+		    hb_new_error = *slot;
+		  else
+		    hb_new_failed = *slot;
+		}
+	  }
+    }
+
+  /* Herbceptions: a register-returning throws function materialises its
+     result in the channel union, not DECL_RESULT, so the ordinary
+     DECL_RESULT -> call-lhs mapping (use_retvar) would yield an
+     uninitialised value once the body is spliced in.  Redirect the
+     call's result to the inlined channel slot; the failure edge is
+     handled by the discriminant reads below.  Aggregate/sret returns
+     keep their existing DECL_RESULT path.  */
+  if (hb_new_error != NULL_TREE
+      && gimple_call_lhs (stmt) != NULL_TREE
+      && !VOID_TYPE_P (TREE_TYPE (gimple_call_lhs (stmt)))
+      && !targetm.calls.return_in_memory (TREE_TYPE (gimple_call_lhs (stmt)),
+					  TREE_TYPE (id->src_fn)))
+    use_retvar = build1 (VIEW_CONVERT_EXPR,
+			 TREE_TYPE (gimple_call_lhs (stmt)), hb_new_error);
 
   reset_debug_bindings (id, stmt_gsi);
 
@@ -5456,13 +5495,19 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
 	  if (!gimple_call_internal_p (s))
 	    break;
 	  internal_fn ifn = gimple_call_internal_fn (s);
+	  if (ifn != IFN_HERBCEPTION_RESULT && ifn != IFN_HERBCEPTION_FAILED)
+	    break;
 	  tree lhs = gimple_call_lhs (s);
-	  tree rhs = NULL_TREE;
-	  if (lhs && ifn == IFN_HERBCEPTION_RESULT && hb_new_error)
-	    rhs = hb_new_error;
-	  else if (lhs && ifn == IFN_HERBCEPTION_FAILED && hb_new_failed)
-	    rhs = hb_new_failed;
-	  else
+	  /* DCE drops the lhs when only one of the two channel values is
+	     used (e.g. only the failure discriminant), leaving a bare
+	     read.  Such a read has nothing to forward; skip it instead
+	     of stopping, or the following (live) read would be left
+	     reading the deleted callee epilogue's stale flag/registers.  */
+	  if (lhs == NULL_TREE)
+	    continue;
+	  tree rhs = (ifn == IFN_HERBCEPTION_RESULT) ? hb_new_error
+						    : hb_new_failed;
+	  if (rhs == NULL_TREE)
 	    break;
 	  gimple *g;
 	  if (useless_type_conversion_p (TREE_TYPE (lhs), TREE_TYPE (rhs)))

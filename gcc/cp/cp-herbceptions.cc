@@ -653,7 +653,18 @@ hb_lower_te_init (hb_ctx *ctx, tree te, tree call, tree fntype,
     ? TREE_PURPOSE (spec_list) : NULL_TREE;
   tree err = hb_error_type_for (hspec);
 
-  tree u = build_decl (loc, VAR_DECL, NULL_TREE, err);
+  tree ctype = TREE_TYPE (fntype);
+  /* A register-channel call does not write the TARGET_EXPR slot the way
+     an aggregate/sret callee does; its result travels through the
+     channel union, so it must be read out and stored into the slot.
+     An aggregate/sret callee already materialises into the slot.  */
+  bool via_channel = !(VOID_TYPE_P (ctype)
+		       || TREE_CODE (call) == AGGR_INIT_EXPR
+		       || TREE_CODE (call) == TARGET_EXPR
+		       || targetm.calls.return_in_memory (ctype, fntype));
+  tree union_type = via_channel ? hb_result_type (ctype, err, fntype) : err;
+
+  tree u = build_decl (loc, VAR_DECL, NULL_TREE, union_type);
   DECL_ARTIFICIAL (u) = 1;
   DECL_CONTEXT (u) = ctx->fndecl;
   tree f = build_decl (loc, VAR_DECL, NULL_TREE, boolean_type_node);
@@ -679,18 +690,25 @@ hb_lower_te_init (hb_ctx *ctx, tree te, tree call, tree fntype,
     = build2 (COMPOUND_EXPR, void_type_node, call,
 	      hb_assign (loc, u,
 			 build_call_expr_internal_loc
-			 (loc, IFN_HERBCEPTION_RESULT, err, 0)));
+			 (loc, IFN_HERBCEPTION_RESULT, union_type, 0)));
   seq = build2 (COMPOUND_EXPR, void_type_node, seq,
 		hb_assign (loc, f,
 			   build_call_expr_internal_loc
 			   (loc, IFN_HERBCEPTION_FAILED,
 			    boolean_type_node, 0)));
   tree body = alloc_stmt_list ();
-  hb_emit_route (body, ctx, u, loc, /*call_p=*/true,
+  tree errf = hb_error_field (union_type, err);
+  tree errslot = errf
+    ? build3 (COMPONENT_REF, err, u, errf, NULL_TREE) : u;
+  hb_emit_route (body, ctx, errslot, loc, /*call_p=*/true,
 		 diagnosed ? TREE_NO_WARNING (diagnosed) : false);
   seq = build2 (COMPOUND_EXPR, void_type_node, seq,
 		build3 (COND_EXPR, void_type_node, f,
 			body ? body : void_node, NULL_TREE));
+  if (via_channel)
+    seq = build2 (COMPOUND_EXPR, void_type_node, seq,
+		  hb_assign (loc, TARGET_EXPR_SLOT (te),
+			     hb_value_view (u, ctype)));
   TARGET_EXPR_INITIAL (te) = seq;
 }
 
