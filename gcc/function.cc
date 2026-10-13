@@ -5561,12 +5561,20 @@ expand_function_end (void)
 					1);
       REG_FUNCTION_VALUE_P (valreg) = 1;
       crtl->return_rtx = valreg;
-      rtx src = DECL_RTL (slot);
-      if (GET_CODE (valreg) == PARALLEL)
-	emit_group_load (valreg, src, TREE_TYPE (slot),
-			 int_size_in_bytes (TREE_TYPE (slot)));
-      else
-	emit_move_insn (valreg, src);
+      /* The union local is an ordinary automatic variable and can be
+	 optimized away when its value is dead (e.g. a `void throws'
+	 function that cannot fail); there is then nothing to return.
+	 DECL_RTL would otherwise call make_decl_rtl on an unexpanded
+	 automatic.  */
+      rtx src = DECL_RTL_IF_SET (slot);
+      if (src != NULL_RTX)
+	{
+	  if (GET_CODE (valreg) == PARALLEL)
+	    emit_group_load (valreg, src, TREE_TYPE (slot),
+			     int_size_in_bytes (TREE_TYPE (slot)));
+	  else
+	    emit_move_insn (valreg, src);
+	}
     }
   /* A herbceptions function's failure discriminant is an ordinary
      stack slot during the body — calls and scope-exit cleanups freely
@@ -5577,7 +5585,8 @@ expand_function_end (void)
   if (cfun->herbceptions_failed_slot != NULL_TREE)
     {
 #ifdef HAVE_herbceptions_load_failed
-      if (HAVE_herbceptions_load_failed)
+      if (HAVE_herbceptions_load_failed
+	  && DECL_RTL_SET_P (cfun->herbceptions_failed_slot))
 	emit_insn (gen_herbceptions_load_failed
 		   (DECL_RTL (cfun->herbceptions_failed_slot)));
 #endif
