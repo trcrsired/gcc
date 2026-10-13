@@ -794,22 +794,33 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
   append_to_statement_list (build_stmt (loc, DECL_EXPR, u), &ctx->pre);
   append_to_statement_list (build_stmt (loc, DECL_EXPR, f), &ctx->pre);
 
-  if (target)
+  if (target || TREE_CODE (call) == AGGR_INIT_EXPR)
     {
       /* A materialized (aggregate/sret) call: the callee writes into
-	 the TARGET_EXPR's slot, which only binds inside that node —
-	 reading it past the TARGET_EXPR escapes the binding (an ICE
-	 on expression-statement and RESULT-init forms), while folding
-	 the channel checks into the initializer makes the gimplifier
-	 elide the copy to the consumer.  Materialize into a
-	 channel-local instead, declared alongside u/f so the value is
-	 an ordinary function-scope object in every context — the
-	 whole sequence stays inline at the try-expr's position so
-	 operands produced by earlier elements of an enclosing
-	 COMPOUND (the `new' comma-expansion's allocation temp) are
-	 visible:
+	 the TARGET_EXPR's slot, or — for a raw AGGR_INIT_EXPR with no
+	 enclosing TARGET_EXPR, as the frontend produces for a
+	 declaration's initializer — the frontend's own result temp.
+	 That slot only binds inside the node that owns it (a
+	 TARGET_EXPR) or is never declared at all, so reading it past
+	 the call escapes the binding (an ICE on expression-statement
+	 and RESULT-init forms), while folding the channel checks into
+	 the initializer makes the gimplifier elide the copy to the
+	 consumer.  Materialize into a channel-local instead, declared
+	 alongside u/f so the value is an ordinary function-scope object
+	 in every context — the whole sequence stays inline at the
+	 try-expr's position so operands produced by earlier elements of
+	 an enclosing COMPOUND (the `new' comma-expansion's allocation
+	 temp) are visible:
 	 { v = call; u = RESULT; f = FAILED; if (f) route; v }.  */
-      tree v = build_decl (loc, VAR_DECL, NULL_TREE, ctype);
+      /* The materialized object's type: TREE_TYPE of a raw
+	 AGGR_INIT_EXPR is void (the node's value is the slot), so
+	 take it from the slot — or the declared return type.  */
+      tree vtype = ctype;
+      if (TREE_CODE (call) == AGGR_INIT_EXPR && AGGR_INIT_EXPR_SLOT (call))
+	vtype = TREE_TYPE (AGGR_INIT_EXPR_SLOT (call));
+      if (VOID_TYPE_P (vtype))
+	vtype = rettype;
+      tree v = build_decl (loc, VAR_DECL, NULL_TREE, vtype);
       DECL_ARTIFICIAL (v) = 1;
       DECL_CONTEXT (v) = ctx->fndecl;
       append_to_statement_list (build_stmt (loc, DECL_EXPR, v),
@@ -846,7 +857,7 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
       }
       if (discarded)
 	return seq;
-      return build2 (COMPOUND_EXPR, ctype, seq, v);
+      return build2 (COMPOUND_EXPR, vtype, seq, v);
     }
 
   /* The same inline sequence for a register-channel call:
@@ -875,10 +886,9 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
 			  body ? body : void_node, NULL_TREE));
   }
 
-  /* The try-expr's value: u.value for scalar calls, the operand
-     itself for sret materializations, void otherwise.  A raw call
-     whose materialization binds in a later TARGET_EXPR marker
-     (expression-statement position) must not yield that slot.  */
+  /* The try-expr's value: u.value for scalar calls, the
+     materialized channel-local for aggregate/sret calls (handled
+     above), void otherwise.  */
   if (VOID_TYPE_P (ctype) || discarded)
     return seq;
   if (indir)
@@ -888,9 +898,6 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
       TREE_OPERAND (indir, 0) = hb_value_slot (u, rettype);
       return build2 (COMPOUND_EXPR, ctype, seq, indir);
     }
-  if (TREE_CODE (call) == AGGR_INIT_EXPR)
-    return build2 (COMPOUND_EXPR, ctype, seq,
-		   AGGR_INIT_EXPR_SLOT (call));
   if (targetm.calls.return_in_memory (rettype, fntype)
       && TREE_CODE (call) == CALL_EXPR)
     /* An sret callee wrote the value into the hidden return-slot
