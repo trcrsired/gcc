@@ -5703,6 +5703,11 @@ cxx_init_decl_processing (void)
       tree name = get_identifier ("__cxx_std_error");
       tree decl = build_decl (UNKNOWN_LOCATION, TYPE_DECL, name, type);
       DECL_ARTIFICIAL (decl) = true;
+      /* The record is the compiler-owned ABI type named by
+	 std::cxx_std_error; give it external linkage like any other
+	 namespace-scope class, otherwise -Wsubobject-linkage diagnoses a
+	 field/base whose type has internal linkage.  */
+      TREE_PUBLIC (decl) = 1;
       SET_DECL_IMPLICIT_TYPEDEF_P (decl);
       TYPE_NAME (type) = decl;
       TYPE_STUB_DECL (type) = decl;
