@@ -208,6 +208,30 @@ hb_set_failed (tree list, hb_ctx *ctx, int val, location_t loc)
      &list);
 }
 
+/* The failure test `if (__hb_failed)' guarding the route to the error
+   handler.  A herbceptions failure is an error path, so tell the branch
+   predictor that the handler is rare: clang weights the same edge
+   1:1000, and without a hint the optimizers fall back on the generic
+   guess for a boolean test, which currently comes out at 34% taken and
+   can if-convert the handler into the success path.  This is purely a
+   hint -- `__builtin_expect_with_probability' never changes the value
+   it is handed, and RTL expansion of the builtin yields its first
+   argument unchanged.  */
+
+static tree
+hb_failed_test (tree f, location_t loc)
+{
+  tree fn = builtin_decl_explicit (BUILT_IN_EXPECT_WITH_PROBABILITY);
+  if (!fn)
+    return f;
+  REAL_VALUE_TYPE rate;
+  real_from_string (&rate, "0.001");
+  return build_call_expr_loc (loc, fn, 3,
+			      fold_convert (long_integer_type_node, f),
+			      integer_one_node,
+			      build_real (double_type_node, rate));
+}
+
 /* The static member function NAME of class TYPE as a callable decl,
    or NULL_TREE.  */
 
@@ -731,7 +755,7 @@ hb_lower_te_init (hb_ctx *ctx, tree te, tree call, tree fntype,
   hb_emit_route (body, ctx, errslot, loc, /*call_p=*/true,
 		 diagnosed ? TREE_NO_WARNING (diagnosed) : false);
   seq = build2 (COMPOUND_EXPR, void_type_node, seq,
-		build3 (COND_EXPR, void_type_node, f,
+		build3 (COND_EXPR, void_type_node, hb_failed_test (f, loc),
 			body ? body : void_node, NULL_TREE));
   if (via_channel)
     seq = build2 (COMPOUND_EXPR, void_type_node, seq,
@@ -915,7 +939,7 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
 	hb_emit_route (body, ctx, errslot, loc,
 		       /*call_p=*/true, TREE_NO_WARNING (stmt));
 	seq = build2 (COMPOUND_EXPR, void_type_node, seq,
-		      build3 (COND_EXPR, void_type_node, f,
+		      build3 (COND_EXPR, void_type_node, hb_failed_test (f, loc),
 			      body ? body : void_node, NULL_TREE));
       }
       if (discarded)
@@ -945,7 +969,7 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
     hb_emit_route (body, ctx, errslot, loc,
 		   /*call_p=*/true, TREE_NO_WARNING (stmt));
     seq = build2 (COMPOUND_EXPR, void_type_node, seq,
-		  build3 (COND_EXPR, void_type_node, f,
+		  build3 (COND_EXPR, void_type_node, hb_failed_test (f, loc),
 			  body ? body : void_node, NULL_TREE));
   }
 
