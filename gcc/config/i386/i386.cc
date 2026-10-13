@@ -22531,6 +22531,39 @@ ix86_alternate_abi (void)
   return ix86_standard_abi (ABI_ALTERNATE);
 }
 
+/* Return the descriptor of the WinCall ABI.  WinCall passes its first
+   four integer arguments in the Windows x64 registers, so it shares
+   that ABI's clobber set -- except that R30 and R31 are callee-saved
+   in addition to the usual Windows x64 set, which is what lets a
+   caller keep live values in the APX scratch registers across a call.
+   Without this descriptor WinCall would be treated as the alternate
+   ABI and R30/R31 would be clobbered by every call.  */
+
+static const predefined_function_abi &
+ix86_wincall_abi (void)
+{
+  auto &abi = function_abis[ABI_WINCALL];
+  if (!abi.initialized_p ())
+    {
+      static const char ix86_call_used_regs[] = CALL_USED_REGISTERS;
+      HARD_REG_SET full_reg_clobbers = {};
+
+      /* WinCall is 64-bit only (ix86_handle_abi_attribute rejects it
+	 elsewhere), so this always selects the MS_ABI mask.  */
+      char c_mask = CALL_USED_REGISTERS_MASK (true);
+      for (int i = 0; i < FIRST_PSEUDO_REGISTER; i++)
+	if (ix86_call_used_regs[i] == 1
+	    || (ix86_call_used_regs[i] & c_mask))
+	  SET_HARD_REG_BIT (full_reg_clobbers, i);
+
+      CLEAR_HARD_REG_BIT (full_reg_clobbers, R30_REG);
+      CLEAR_HARD_REG_BIT (full_reg_clobbers, R31_REG);
+
+      ix86_initialize_abi (ABI_WINCALL, full_reg_clobbers);
+    }
+  return abi;
+}
+
 /* Return the function ABI ID based on FNTYPE.  */
 
 static int
@@ -22600,6 +22633,11 @@ ix86_function_abi_id (const_tree fntype)
 	}
     }
 
+  /* NB: This must come before the alternate-ABI check below, since
+     WinCall is neither the default nor the alternate ABI.  */
+  if (ix86_function_type_abi (fntype) == WINCALL_ABI)
+    return ABI_WINCALL;
+
   /* NB: This must be the last since other attributes change the
      function ABI.  */
   if (ix86_function_type_abi (fntype) != ix86_abi)
@@ -22621,6 +22659,9 @@ ix86_fntype_abi (const_tree fntype)
 
     case ABI_ALTERNATE:
       return ix86_alternate_abi ();
+
+    case ABI_WINCALL:
+      return ix86_wincall_abi ();
 
     case ABI_NO_CALLEE_SAVED:
       return ix86_no_callee_saved_abi ();
@@ -22689,6 +22730,7 @@ ix86_hard_regno_call_part_clobbered (unsigned int abi_id, unsigned int regno,
 
     case ABI_DEFAULT:
     case ABI_ALTERNATE:
+    case ABI_WINCALL:
     case ABI_NO_CALLEE_SAVED:
       break;
 
