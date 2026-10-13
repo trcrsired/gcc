@@ -13061,6 +13061,16 @@ check_herbceptions_fn_spec (tree decl)
        are checked when they are resolved.  */
     return;
 
+  /* A function with a herbceptions spec returns through its
+     deterministic error channel, so it is never `noreturn' in the sense
+     the optimizers rely on: the caller always has a post-call channel
+     test to perform.  Drop a `noreturn' attribute that was applied
+     before the spec was attached; handle_noreturn_attribute handles the
+     opposite order (spec first, then the attribute).  Without this the
+     call is marked ECF_NORETURN and the caller's channel test is
+     deleted as dead code.  */
+  TREE_THIS_VOLATILE (decl) = 0;
+
   location_t loc = DECL_SOURCE_LOCATION (decl);
 
   /* Destructors run during unwinding and cleanup; they cannot fail

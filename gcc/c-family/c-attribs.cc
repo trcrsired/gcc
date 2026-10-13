@@ -1149,6 +1149,27 @@ handle_noreturn_attribute (tree *node, tree name, tree ARG_UNUSED (args),
 			   int ARG_UNUSED (flags), bool *no_add_attrs)
 {
   tree type = TREE_TYPE (*node);
+  tree fntype = NULL_TREE;
+
+  if (TREE_CODE (*node) == FUNCTION_DECL
+      || objc_method_decl (TREE_CODE (*node)))
+    fntype = type;
+  else if (TREE_CODE (type) == POINTER_TYPE
+	   && TREE_CODE (TREE_TYPE (type)) == FUNCTION_TYPE)
+    fntype = TREE_TYPE (type);
+
+  /* A function declared with a herbceptions exception specification
+     (C++ `throws' or C `return_failure{E}') never returns through the
+     ordinary return path: it hands its result back through the
+     deterministic error channel, and the caller is expected to test
+     that channel right after the call.  Honouring `noreturn' here would
+     mark the call ECF_NORETURN and let the optimizers delete the
+     caller's post-call channel test as dead code, so ignore the
+     attribute, just as clang does.  See flags_from_decl_or_type and
+     pass_warn_function_return, which apply the same rule for specs that
+     are attached after the attribute.  */
+  if (fntype && fn_has_herbceptions_spec_p (fntype))
+    return NULL_TREE;
 
   /* See FIXME comment in c_common_attribute_table.  */
   if (TREE_CODE (*node) == FUNCTION_DECL
