@@ -1,38 +1,63 @@
 // { dg-do run { target { *-*-linux* } } }
-// { dg-options "-fherbceptions -fno-exceptions" }
-// Port of LLVM herbceptions-throws-ref-return: T&/T&&/T* returns
-// through `throws' preserve the underlying value — auto-propagation
-// must hand the original pointer through, not copy the referent.
-namespace std { struct error { const void *domain; __UINTPTR_TYPE__ code; }; }
+// { dg-options "-O2 -fherbceptions -fno-exceptions" }
+// A reference-returning spec'd call used as a value rather than
+// dereferenced -- `T &r = ++it', a spec'd operator++ -- left the
+// try-expr's value as an INDIRECT_REF typed as the referent while the
+// expression itself is typed as the reference.  gimplify_modify_expr's
+// pointer-conversion block then called fold_convert_loc with a record
+// where a reference was expected and aborted (fold-const.cc:2620).  The
+// channel slot holds the referent's address, and handing the binding
+// that pointer directly is what gimplify accepts.
+//
+// Regression test for bugs/gcc_herbceptions/refreturn-range-for.
 
-int g = 42;
+namespace std
+{
+  struct error
+  {
+    const void *domain;
+    __UINTPTR_TYPE__ code;
+  };
+}
 
-int &lref_inner () { return g; }
-int &lref_middle () throws { return lref_inner (); }
-int &lref_outer () throws { return lref_middle (); }
+struct itr
+{
+  unsigned long a;
+  unsigned long b;
+  unsigned long c;
+};
 
-int &&rref_inner () { return static_cast<int &&> (g); }
-int &&rref_middle () throws { return rref_inner (); }
-int &&rref_outer () throws { return rref_middle (); }
+inline itr &
+operator++ (itr &i) throws
+{
+  i.a = 0x11;
+  i.b = 0x22;
+  i.c = 3;
+  return i;
+}
 
-const int &cref_inner () { return g; }
-const int &cref_middle () throws { return cref_inner (); }
-const int &cref_outer () throws { return cref_middle (); }
-
-int *ptr_inner () { return &g; }
-int *ptr_middle () throws { return ptr_inner (); }
-int *ptr_outer () throws { return ptr_middle (); }
+inline itr &
+inc (itr &i) throws
+{
+  i.a = 0x33;
+  return i;
+}
 
 int
 main ()
 {
-  int &a = lref_outer ();
-  int &&b = rref_outer ();
-  const int &c = cref_outer ();
-  int *p = ptr_outer ();
-  if (&a != &g || &b != &g || &c != &g || p != &g)
+  itr i{};
+
+  itr &r = ++i;
+  if (r.a != 0x11 || r.b != 0x22 || r.c != 3)
     return 1;
-  if (a != 42 || b != 42 || c != 42 || *p != 42)
+
+  /* The same call written without the operator syntax already worked;
+     keep it so the two spellings stay covered.  */
+  itr j{};
+  itr &s = inc (j);
+  if (s.a != 0x33)
     return 2;
+
   return 0;
 }

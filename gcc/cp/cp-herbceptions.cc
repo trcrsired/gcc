@@ -840,7 +840,10 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
   append_to_statement_list (build_stmt (loc, DECL_EXPR, u), &ctx->pre);
   append_to_statement_list (build_stmt (loc, DECL_EXPR, f), &ctx->pre);
 
-  if (target || TREE_CODE (call) == AGGR_INIT_EXPR)
+  bool mem_ret = !VOID_TYPE_P (ctype) && !indir
+		 && TREE_CODE (ctype) != REFERENCE_TYPE
+		 && targetm.calls.return_in_memory (rettype, fntype);
+  if (target || TREE_CODE (call) == AGGR_INIT_EXPR || mem_ret)
     {
       /* A materialized (aggregate/sret) call: the callee writes into
 	 the TARGET_EXPR's slot, or — for a raw AGGR_INIT_EXPR with no
@@ -857,7 +860,21 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
 	 try-expr's position so operands produced by earlier elements of
 	 an enclosing COMPOUND (the `new' comma-expansion's allocation
 	 temp) are visible:
-	 { v = call; u = RESULT; f = FAILED; if (f) route; v }.  */
+	 { v = call; u = RESULT; f = FAILED; if (f) route; v }.
+
+	 A plain CALL_EXPR counts here too.  A desugared call the parser
+	 never auto-wrapped -- a range-for's `__for_begin = begin
+	 (__range)', which build_range_exp emits as a bare MODIFY_EXPR --
+	 reaches this point with the declared return type in memory and
+	 no materialization slot.  Evaluated as a bare expression the
+	 callee is handed no return buffer at all: gimplify allocates a
+	 throwaway one and __for_begin keeps whatever it had, so a
+	 directory listing iterated `for (auto const &e : current(at))'
+	 saw an unwritten first entry.  The front end records the hidden
+	 return-slot pointer as CALL_EXPR_ARG (call, 0) only when it
+	 applied the return-slot optimization itself, so that argument
+	 cannot be assumed to be the slot -- for begin(__range) it is the
+	 generator reference.  */
       /* The materialized object's type: TREE_TYPE of a raw
 	 AGGR_INIT_EXPR is void (the node's value is the slot), so
 	 take it from the slot — or the declared return type.  */
@@ -951,6 +968,17 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
     return build2 (COMPOUND_EXPR, ctype, seq,
 		   build1 (INDIRECT_REF, ctype,
 			   CALL_EXPR_ARG (call, 0)));
+  if (TREE_CODE (ctype) == REFERENCE_TYPE)
+    /* A reference-returning call: the try-expr's type is the
+       reference, and the channel slot holds the referent's address.
+       Hand the binding that pointer.  gimplify accepts a pointer
+       where it expects a same-sized reference, whereas the
+       INDIRECT_REF hb_value_view builds is typed as the referent, so
+       `T &r = ++it' (a spec'd operator++ used as a value, not
+       dereferenced) reached fold_convert_loc with a record argument
+       and aborted.  */
+    return build2 (COMPOUND_EXPR, ctype, seq,
+		   hb_value_slot (u, rettype));
   return build2 (COMPOUND_EXPR, ctype, seq, hb_value_view (u, rettype));
 }
 
