@@ -1362,6 +1362,10 @@ input_struct_function_base (struct function *fn, class data_in *data_in,
 	}
     }
 
+  /* Herbceptions channel slots; see output_struct_function_base.  */
+  fn->herbceptions_error_slot = stream_read_tree (ib, data_in);
+  fn->herbceptions_failed_slot = stream_read_tree (ib, data_in);
+
   /* Input the current IL state of the function.  */
   fn->curr_properties = streamer_read_uhwi (ib);
 

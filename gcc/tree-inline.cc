@@ -4840,6 +4840,42 @@ reset_debug_bindings (copy_body_data *id, gimple_stmt_iterator gsi)
   gsi_insert_seq_before_without_update (&gsi, bindings, GSI_SAME_STMT);
 }
 
+/* Herbceptions: recover the cfun->herbceptions_error_slot /
+   herbceptions_failed_slot scalars from the function's own artificial
+   locals (__hb_result / __hb_failed).  The slots are streamed in LTO (see
+   output_struct_function_base), so this is a fallback for functions whose
+   cfun was rebuilt without them (e.g. clones).  Return true if at least
+   one slot is available.  */
+
+bool
+herbceptions_recover_channel_slots (struct function *fn)
+{
+  if (fn == NULL)
+    return false;
+  if (fn->herbceptions_error_slot != NULL_TREE
+      && fn->herbceptions_failed_slot != NULL_TREE)
+    return true;
+  if (fn->decl == NULL_TREE || TREE_CODE (fn->decl) != FUNCTION_DECL)
+    return false;
+  unsigned ix;
+  tree decl;
+  FOR_EACH_LOCAL_DECL (fn, ix, decl)
+    {
+      if (TREE_CODE (decl) != VAR_DECL
+	  || !DECL_ARTIFICIAL (decl) || DECL_NAME (decl) == NULL_TREE)
+	continue;
+      const char *n = IDENTIFIER_POINTER (DECL_NAME (decl));
+      if (fn->herbceptions_error_slot == NULL_TREE
+	  && strcmp (n, "__hb_result") == 0)
+	fn->herbceptions_error_slot = decl;
+      else if (fn->herbceptions_failed_slot == NULL_TREE
+	       && strcmp (n, "__hb_failed") == 0)
+	fn->herbceptions_failed_slot = decl;
+    }
+  return fn->herbceptions_error_slot != NULL_TREE
+	 || fn->herbceptions_failed_slot != NULL_TREE;
+}
+
 /* If STMT is a GIMPLE_CALL, replace it with its inline expansion.  */
 
 static bool
@@ -5255,6 +5291,13 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
      function in any way before this point, as this CALL_EXPR may be
      a self-referential call; if we're calling ourselves, we need to
      duplicate our body before altering anything.  */
+  /* Herbceptions: a function whose cfun was rebuilt without channel
+     slots (LTO streams them, but clones may not carry them) recovers
+     them from the callee's artificial locals before copy_body maps them
+     like any other local, so the redirected reads below can be forwarded
+     to the spliced-in slots.  */
+  herbceptions_recover_channel_slots (id->src_cfun);
+
   copy_body (id, bb, return_block, NULL);
 
   /* Herbceptions: copy_body has remapped the inlined callee's channel
@@ -5270,30 +5313,6 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
   if (id->src_cfun->herbceptions_failed_slot)
     if (tree *slot = id->decl_map->get (id->src_cfun->herbceptions_failed_slot))
       hb_new_failed = *slot;
-  /* LTO does not stream the cfun channel-slot scalars, so recover them
-     from the callee's copied local decls (which are streamed) and map
-     them through decl_map like any other local.  */
-  if (!hb_new_error || !hb_new_failed)
-    {
-      unsigned ix;
-      tree decl;
-      FOR_EACH_LOCAL_DECL (id->src_cfun, ix, decl)
-	if (TREE_CODE (decl) == VAR_DECL
-	    && DECL_ARTIFICIAL (decl) && DECL_NAME (decl))
-	  {
-	    const char *n = IDENTIFIER_POINTER (DECL_NAME (decl));
-	    bool is_err = !strcmp (n, "__hb_result");
-	    bool is_fail = !strcmp (n, "__hb_failed");
-	    if ((is_err && !hb_new_error) || (is_fail && !hb_new_failed))
-	      if (tree *slot = id->decl_map->get (decl))
-		{
-		  if (is_err)
-		    hb_new_error = *slot;
-		  else
-		    hb_new_failed = *slot;
-		}
-	  }
-    }
 
   /* Herbceptions: a register-returning throws function materialises its
      result in the channel union, not DECL_RESULT, so the ordinary

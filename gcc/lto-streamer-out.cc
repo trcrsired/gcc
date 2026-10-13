@@ -2487,6 +2487,12 @@ output_struct_function_base (struct output_block *ob, struct function *fn)
   FOR_EACH_VEC_SAFE_ELT (fn->local_decls, i, t)
     stream_write_tree (ob, t, true);
 
+  /* Herbceptions: the channel slots are ordinary locals but are named in
+     cfun, so stream them explicitly to preserve the exact tree node (a
+     name-based recovery from local_decls would be fragile).  */
+  stream_write_tree (ob, fn->herbceptions_error_slot, true);
+  stream_write_tree (ob, fn->herbceptions_failed_slot, true);
+
   /* Output current IL state of the function.  */
   streamer_write_uhwi (ob, fn->curr_properties);
 

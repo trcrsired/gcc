@@ -1,5 +1,10 @@
 // { dg-do run { target { *-*-linux* } } }
 // { dg-options "-fherbceptions -fno-exceptions -O0" }
+// The frontend bug below is fixed, but at -O2 the post-reload
+// if-conversion pass hoists main's `return 3' ahead of the CF branch and
+// clobbers %rax while the error payload is still live on the failure
+// edge (see bugs/gcc_herbceptions/ifcvt-hoist-clobbers-channel), so keep
+// this test at -O0 until that is fixed.
 // A declaration's initializer that calls a `throws' function returning a
 // non-trivially-copyable class makes the frontend emit a raw
 // AGGR_INIT_EXPR wrapped in the implicit herbceptions try.  TREE_TYPE of

@@ -247,6 +247,7 @@ extern const char *copy_forbidden (struct function *fun);
 extern tree copy_decl_for_dup_finish (copy_body_data *id, tree decl, tree copy);
 extern tree copy_decl_to_var (tree, copy_body_data *);
 extern tree force_value_to_type (tree type, tree value);
+extern bool herbceptions_recover_channel_slots (struct function *);
 
 /* This is in tree-inline.cc since the routine uses
    data structures from the inliner.  */
