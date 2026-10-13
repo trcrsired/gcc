@@ -3951,13 +3951,28 @@ ix86_handle_abi_attribute (tree *node, tree name, tree, int,
     }
 
   /* Can combine regparm with all attributes but fastcall.  */
-  if (is_attribute_p ("ms_abi", name))
+  if (is_attribute_p ("wincall", name))
+    {
+      if (lookup_attribute ("ms_abi", TYPE_ATTRIBUTES (*node))
+	  || lookup_attribute ("sysv_abi", TYPE_ATTRIBUTES (*node)))
+	error ("%qs and %qs attributes are not compatible",
+	       "wincall", "ms_abi/sysv_abi");
+      if (TARGET_X32)
+	error ("X32 does not support %<wincall%> attribute");
+      if (!TARGET_64BIT)
+	error ("%<wincall%> attribute is only supported on x86-64");
+      return NULL_TREE;
+    }
+  else if (is_attribute_p ("ms_abi", name))
     {
       if (lookup_attribute ("sysv_abi", TYPE_ATTRIBUTES (*node)))
         {
 	  error ("%qs and %qs attributes are not compatible",
 		 "ms_abi", "sysv_abi");
 	}
+      if (lookup_attribute ("wincall", TYPE_ATTRIBUTES (*node)))
+	error ("%qs and %qs attributes are not compatible",
+	       "ms_abi", "wincall");
 
       return NULL_TREE;
     }
@@ -3968,6 +3983,9 @@ ix86_handle_abi_attribute (tree *node, tree name, tree, int,
 	  error ("%qs and %qs attributes are not compatible",
 		 "ms_abi", "sysv_abi");
 	}
+      if (lookup_attribute ("wincall", TYPE_ATTRIBUTES (*node)))
+	error ("%qs and %qs attributes are not compatible",
+	       "sysv_abi", "wincall");
 
       return NULL_TREE;
     }
@@ -4229,6 +4247,9 @@ static const attribute_spec ix86_gnu_attributes[] =
   { "ms_abi", 0, 0, false, true, true, true, ix86_handle_abi_attribute, NULL },
   { "sysv_abi", 0, 0, false, true, true, true, ix86_handle_abi_attribute,
     NULL },
+  /* WinCall: the Windows x64 rule set extended to eight integer argument
+     registers and an independent XMM bank.  Herbceptions/APX feature.  */
+  { "wincall", 0, 0, false, true, true, true, ix86_handle_abi_attribute, NULL },
   { "ms_abi va_list", 0, 0, false, false, false, false, NULL, NULL },
   { "sysv_abi va_list", 0, 0, false, false, false, false, NULL, NULL },
   { "ms_hook_prologue", 0, 0, true, false, false, false,

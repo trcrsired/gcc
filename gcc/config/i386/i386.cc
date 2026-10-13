@@ -363,6 +363,15 @@ static int const x86_64_ms_abi_int_parameter_registers[4] =
   CX_REG, DX_REG, R8_REG, R9_REG
 };
 
+/* WinCall integer parameter registers: the four legacy MS x64 argument
+   registers followed by four APX extended GPRs (R16-R19).  The extended
+   registers are only usable when APX EGPR support is enabled (-mapxf).  */
+
+static int const x86_64_wincall_int_parameter_registers[8] =
+{
+  CX_REG, DX_REG, R8_REG, R9_REG, R16_REG, R17_REG, R18_REG, R19_REG
+};
+
 /* Similar as Clang's preserve_none function parameter passing.
    NB: Use DI_REG and SI_REG, see ix86_function_arg_regno_p.  */
 
@@ -1135,9 +1144,14 @@ ix86_function_ok_for_sibcall (tree decl, tree exp)
   if (TARGET_64BIT)
     {
       /* The SYSV ABI has more call-clobbered registers;
-	 disallow sibcalls from MS to SYSV.  */
+	 disallow sibcalls from MS to SYSV.  WINCALL additionally makes
+	 R30/R31 callee-saved, so it may not tail-call into any other
+	 convention.  */
       if (cfun->machine->call_abi == MS_ABI
 	  && ix86_function_type_abi (type) == SYSV_ABI)
+	return false;
+      if (cfun->machine->call_abi == WINCALL_ABI
+	  && ix86_function_type_abi (type) != WINCALL_ABI)
 	return false;
     }
   else
@@ -1286,8 +1300,12 @@ ix86_function_regparm (const_tree type, const_tree decl)
   unsigned int ccvt;
 
   if (TARGET_64BIT)
-    return (ix86_function_type_abi (type) == SYSV_ABI
-	    ? X86_64_REGPARM_MAX : X86_64_MS_REGPARM_MAX);
+    {
+      enum calling_abi abi = ix86_function_type_abi (type);
+      if (abi == WINCALL_ABI)
+	return 8;
+      return abi == SYSV_ABI ? X86_64_REGPARM_MAX : X86_64_MS_REGPARM_MAX;
+    }
   ccvt = ix86_get_callcvt (type);
   regparm = ix86_regparm;
 
@@ -1632,15 +1650,28 @@ ix86_function_arg_regno_p (int regno)
 
   if (cfun
       && cfun->machine->call_saved_registers == TYPE_PRESERVE_NONE)
-    parm_regs = x86_64_preserve_none_int_parameter_registers;
+    {
+      parm_regs = x86_64_preserve_none_int_parameter_registers;
+      i = X86_64_REGPARM_MAX;
+    }
+  else if (call_abi == WINCALL_ABI)
+    {
+      parm_regs = x86_64_wincall_int_parameter_registers;
+      i = 8;
+    }
   else if (call_abi == MS_ABI)
-    parm_regs = x86_64_ms_abi_int_parameter_registers;
+    {
+      parm_regs = x86_64_ms_abi_int_parameter_registers;
+      i = X86_64_MS_REGPARM_MAX;
+    }
   else
-    parm_regs = x86_64_int_parameter_registers;
+    {
+      parm_regs = x86_64_int_parameter_registers;
+      i = X86_64_REGPARM_MAX;
+    }
 
-  for (i = 0; i < (call_abi == MS_ABI
-		   ? X86_64_MS_REGPARM_MAX : X86_64_REGPARM_MAX); i++)
-    if (regno == parm_regs[i])
+  for (; i > 0; i--)
+    if (regno == parm_regs[i - 1])
       return true;
   return false;
 }
@@ -1671,8 +1702,13 @@ ix86_reg_parm_stack_space (const_tree fndecl)
     call_abi = ix86_function_abi (fndecl);
   else
     call_abi = ix86_function_type_abi (fndecl);
-  if (TARGET_64BIT && call_abi == MS_ABI)
-    return 32;
+  if (TARGET_64BIT)
+    {
+      if (call_abi == WINCALL_ABI)
+	return 64;
+      if (call_abi == MS_ABI)
+	return 32;
+    }
   return 0;
 }
 
@@ -1684,7 +1720,7 @@ ix86_libc_has_function (enum function_class fn_class)
   return targetm.libc_has_function (fn_class, NULL_TREE);
 }
 
-/* Returns value SYSV_ABI, MS_ABI dependent on fntype,
+/* Returns value SYSV_ABI, MS_ABI or WINCALL_ABI dependent on fntype,
    specifying the call abi used.  */
 enum calling_abi
 ix86_function_type_abi (const_tree fntype)
@@ -1693,6 +1729,11 @@ ix86_function_type_abi (const_tree fntype)
 
   if (fntype == NULL_TREE || TYPE_ATTRIBUTES (fntype) == NULL_TREE)
     return abi;
+
+  /* The wincall attribute selects the WinCall convention on top of the
+     Windows x64 rule set.  It takes precedence over ms_abi/sysv_abi.  */
+  if (lookup_attribute ("wincall", TYPE_ATTRIBUTES (fntype)))
+    return WINCALL_ABI;
 
   if (abi == SYSV_ABI
       && lookup_attribute ("ms_abi", TYPE_ATTRIBUTES (fntype)))
@@ -1952,18 +1993,24 @@ init_cumulative_args (CUMULATIVE_ARGS *cum,  /* Argument info to initialize */
   cum->nregs = ix86_regparm;
   if (TARGET_64BIT)
     {
-      cum->nregs = (cum->call_abi == SYSV_ABI
-                   ? X86_64_REGPARM_MAX
-                   : X86_64_MS_REGPARM_MAX);
+      if (cum->call_abi == WINCALL_ABI)
+	cum->nregs = 8;
+      else
+	cum->nregs = (cum->call_abi == SYSV_ABI
+		      ? X86_64_REGPARM_MAX
+		      : X86_64_MS_REGPARM_MAX);
     }
   if (TARGET_SSE)
     {
       cum->sse_nregs = SSE_REGPARM_MAX;
       if (TARGET_64BIT)
         {
-          cum->sse_nregs = (cum->call_abi == SYSV_ABI
-                           ? X86_64_SSE_REGPARM_MAX
-                           : X86_64_MS_SSE_REGPARM_MAX);
+	  if (cum->call_abi == WINCALL_ABI)
+	    cum->sse_nregs = X86_64_SSE_REGPARM_MAX;
+	  else
+	    cum->sse_nregs = (cum->call_abi == SYSV_ABI
+			      ? X86_64_SSE_REGPARM_MAX
+			      : X86_64_MS_SSE_REGPARM_MAX);
         }
     }
   if (TARGET_MMX)
@@ -3322,6 +3369,71 @@ function_arg_advance_ms_64 (CUMULATIVE_ARGS *cum, HOST_WIDE_INT bytes,
   return 0;
 }
 
+/* True when MODE is a scalar floating-point (or small complex) mode that
+   WinCall passes in the independent XMM bank rather than in an integer
+   register.  */
+
+static bool
+wincall_sse_mode_p (machine_mode mode)
+{
+  if (!TARGET_SSE)
+    return false;
+  switch (mode)
+    {
+    case E_HFmode:
+    case E_SFmode:
+    case E_DFmode:
+      return true;
+    case E_SCmode:
+    case E_DCmode:
+      return COMPLEX_MODE_P (mode);
+    default:
+      return false;
+    }
+}
+
+/* WinCall argument advancement.  Unlike the MS x64 rule set the eight
+   integer argument registers and the eight XMM argument registers are
+   allocated independently, and aggregates of up to 32 bytes are expanded
+   into one integer register per eight bytes rather than forced to memory.  */
+
+static int
+function_arg_advance_wincall (CUMULATIVE_ARGS *cum, machine_mode mode,
+			      const_tree type, HOST_WIDE_INT bytes,
+			      HOST_WIDE_INT words)
+{
+  /* Empty C++ records take no register slots (reuse the Win64 `throws'
+     contract already applied by the MS path).  */
+  if (type != NULL_TREE && is_empty_type (type))
+    return 0;
+
+  if (wincall_sse_mode_p (mode))
+    {
+      cum->words += words;
+      if (cum->sse_nregs > 0)
+	{
+	  cum->sse_nregs -= 1;
+	  cum->sse_regno += 1;
+	}
+      return 0;
+    }
+
+  /* Integers, pointers, __int128 and aggregates up to 32 bytes consume one
+     integer register per eight bytes.  */
+  {
+    HOST_WIDE_INT n = words > 0 ? words : 1;
+    cum->words += words;
+    if (n <= cum->nregs)
+      {
+	cum->nregs -= n;
+	cum->regno += n;
+	return (int) n;
+      }
+  }
+  cum->nregs = 0;
+  return 0;
+}
+
 /* Update the data in CUM to advance over argument ARG.  */
 
 static void
@@ -3348,7 +3460,9 @@ ix86_function_arg_advance (cumulative_args_t cum_v,
     {
       enum calling_abi call_abi = cum ? cum->call_abi : ix86_abi;
 
-      if (call_abi == MS_ABI)
+      if (call_abi == WINCALL_ABI)
+	nregs = function_arg_advance_wincall (cum, mode, arg.type, bytes, words);
+      else if (call_abi == MS_ABI)
 	{
 	  if (TARGET_64BIT && cum->herbceptions_p
 	      && ix86_herbceptions_16byte_p (arg.type))
@@ -3677,6 +3791,88 @@ function_arg_ms_64 (const CUMULATIVE_ARGS *cum, machine_mode mode,
   return gen_reg_or_parallel (mode, orig_mode, regno);
 }
 
+/* WinCall argument location.  Mirrors function_arg_advance_wincall: the
+   eight integer registers and the eight XMM registers are independent, and
+   aggregates of up to 32 bytes are expanded into their eight-byte parts.  */
+
+static rtx
+function_arg_wincall (const CUMULATIVE_ARGS *cum, machine_mode mode,
+		      machine_mode orig_mode, bool named, const_tree type,
+		      HOST_WIDE_INT bytes)
+{
+  /* We need to add a clobber for WINCALL->other ABI calls in expand_call.
+     The value -3 requests the wincall flavor of that clobber.  */
+  if (mode == VOIDmode)
+    return GEN_INT (-3);
+
+  /* Empty C++ records take no register slots.  */
+  if (type != NULL_TREE && is_empty_type (type))
+    return NULL_RTX;
+
+  /* Scalar FP and small complex values are passed in the independent XMM
+     bank.  */
+  if (wincall_sse_mode_p (mode))
+    {
+      if (cum->sse_nregs == 0)
+	return NULL_RTX;
+      if (named || type == NULL_TREE || !AGGREGATE_TYPE_P (type))
+	return gen_rtx_REG (mode, cum->sse_regno + FIRST_SSE_REG);
+      /* Unnamed (varargs) FP scalars are shadowed in the next integer
+	 register as well.  */
+      if (cum->nregs == 0)
+	return NULL_RTX;
+      {
+	rtx t1 = gen_rtx_REG (mode, cum->sse_regno + FIRST_SSE_REG);
+	rtx t2 = gen_rtx_REG (mode, x86_64_wincall_int_parameter_registers[cum->regno]);
+	t1 = gen_rtx_EXPR_LIST (VOIDmode, t1, const0_rtx);
+	t2 = gen_rtx_EXPR_LIST (VOIDmode, t2, const0_rtx);
+	return gen_rtx_PARALLEL (mode, gen_rtvec (2, t1, t2));
+      }
+    }
+
+  if (cum->nregs == 0)
+    return NULL_RTX;
+
+  {
+    HOST_WIDE_INT n = 0;
+    if (type != NULL_TREE && AGGREGATE_TYPE_P (type))
+      {
+	HOST_WIDE_INT sz = int_size_in_bytes (type);
+	if (sz > 0 && sz <= 32)
+	  n = CEIL (sz, UNITS_PER_WORD);
+      }
+    if (n == 0)
+      n = bytes > 0 ? CEIL (bytes, UNITS_PER_WORD) : 1;
+    if (n > 8 || n > cum->nregs)
+      return NULL_RTX;
+
+    if (n == 1)
+      {
+	unsigned int regno = x86_64_wincall_int_parameter_registers[cum->regno];
+	if (orig_mode == BLKmode)
+	  {
+	    if (bytes > 0 && bytes <= 8)
+	      mode = bytes > 4 ? DImode : SImode;
+	    if (mode == BLKmode)
+	      mode = DImode;
+	  }
+	return gen_reg_or_parallel (mode, orig_mode, regno);
+      }
+
+    {
+      rtvec vec = rtvec_alloc (n);
+      for (HOST_WIDE_INT i = 0; i < n; i++)
+	{
+	  rtx r = gen_rtx_REG (DImode,
+			       x86_64_wincall_int_parameter_registers[cum->regno + i]);
+	  RTVEC_ELT (vec, i)
+	    = gen_rtx_EXPR_LIST (VOIDmode, r, GEN_INT (i * 8));
+	}
+      return gen_rtx_PARALLEL (orig_mode, vec);
+    }
+  }
+}
+
 /* Return where to put the arguments to a function.
    Return zero to push the argument on the stack, or a hard register in which to store the argument.
 
@@ -3728,7 +3924,10 @@ ix86_function_arg (cumulative_args_t cum_v, const function_arg_info &arg)
 
   if (TARGET_64BIT)
     {
-      if (cum->call_abi == MS_ABI)
+      if (cum->call_abi == WINCALL_ABI)
+	reg = function_arg_wincall (cum, mode, arg.mode, arg.named,
+				    arg.type, bytes);
+      else if (cum->call_abi == MS_ABI)
 	reg = function_arg_ms_64 (cum, mode, arg.mode, arg.named,
 				  arg.type, bytes);
       else
@@ -3758,7 +3957,7 @@ ix86_pass_by_reference_abi (enum calling_abi call_abi,
   if (TARGET_64BIT)
     {
       /* See Windows x64 Software Convention.  */
-      if (call_abi == MS_ABI)
+      if (call_abi == MS_ABI || call_abi == WINCALL_ABI)
 	{
 	  HOST_WIDE_INT msize = GET_MODE_SIZE (arg.mode);
 
@@ -3777,6 +3976,9 @@ ix86_pass_by_reference_abi (enum calling_abi call_abi,
 	    }
 
 	  /* __m128 is passed by reference.  */
+	  if (call_abi == WINCALL_ABI)
+	    return (msize != 1 && msize != 2 && msize != 4 && msize != 8
+		    && msize != 16 && msize != 32);
 	  return msize != 1 && msize != 2 && msize != 4 && msize != 8;
 	}
       else if (arg.type && int_size_in_bytes (arg.type) == -1)
@@ -3795,7 +3997,8 @@ ix86_pass_by_reference (cumulative_args_t cum_v, const function_arg_info &arg)
 
   /* Win64 `throws': a 16-byte aggregate is passed by value in a
      register pair rather than indirectly.  */
-  if (cum && cum->call_abi == MS_ABI && TARGET_64BIT
+  if (cum && (cum->call_abi == MS_ABI || cum->call_abi == WINCALL_ABI)
+      && TARGET_64BIT
       && cum->herbceptions_p && ix86_herbceptions_16byte_p (arg.type))
     return false;
 
@@ -4008,6 +4211,10 @@ ix86_function_value_regno_p (const unsigned int regno)
       return true;
     case DX_REG:
       return (!TARGET_64BIT || ix86_cfun_abi () != MS_ABI);
+    case CX_REG:
+    case R8_REG:
+      /* WinCall returns aggregates of up to 32 bytes in RAX,RDX,RCX,R8.  */
+      return TARGET_64BIT && ix86_cfun_abi () == WINCALL_ABI;
 
       /* Complex values are returned in %st(0)/%st(1) pair.  */
     case ST0_REG:
@@ -4519,6 +4726,41 @@ function_value_ms_64 (machine_mode orig_mode, machine_mode mode,
 }
 
 static rtx
+function_value_wincall (machine_mode orig_mode, machine_mode mode,
+			const_tree valtype)
+{
+  /* FP scalars and small complex values are returned in XMM0.  */
+  if (TARGET_SSE && wincall_sse_mode_p (mode))
+    return gen_rtx_REG (orig_mode, FIRST_SSE_REG);
+
+  /* Aggregates up to 32 bytes are returned in RAX,RDX,RCX,R8.  */
+  if (valtype != NULL_TREE && AGGREGATE_TYPE_P (valtype))
+    {
+      HOST_WIDE_INT sz = int_size_in_bytes (valtype);
+
+      if (sz > 8 && sz <= 16)
+	{
+	  rtx part = gen_rtx_EXPR_LIST (VOIDmode,
+					gen_rtx_REG (TImode, AX_REG),
+					const0_rtx);
+	  rtx ret = gen_rtx_PARALLEL (orig_mode, rtvec_alloc (1));
+	  XVECEXP (ret, 0, 0) = part;
+	  return ret;
+	}
+      if (sz > 16 && sz <= 32)
+	{
+	  rtx t1 = gen_rtx_EXPR_LIST (VOIDmode, gen_rtx_REG (TImode, AX_REG),
+				      const0_rtx);
+	  rtx t2 = gen_rtx_EXPR_LIST (VOIDmode, gen_rtx_REG (TImode, CX_REG),
+				      GEN_INT (16));
+	  return gen_rtx_PARALLEL (orig_mode, gen_rtvec (2, t1, t2));
+	}
+    }
+
+  return gen_rtx_REG (orig_mode, AX_REG);
+}
+
+static rtx
 ix86_function_value_1 (const_tree valtype, const_tree fntype_or_decl,
 		       machine_mode orig_mode, machine_mode mode)
 {
@@ -4528,6 +4770,9 @@ ix86_function_value_1 (const_tree valtype, const_tree fntype_or_decl,
   if (fntype_or_decl && DECL_P (fntype_or_decl))
     fn = fntype_or_decl;
   fntype = fn ? TREE_TYPE (fn) : fntype_or_decl;
+
+  if (ix86_function_type_abi (fntype) == WINCALL_ABI && TARGET_64BIT)
+    return function_value_wincall (orig_mode, mode, valtype);
 
   if (ix86_function_type_abi (fntype) == MS_ABI)
     {
@@ -4614,6 +4859,19 @@ ix86_return_in_memory (const_tree type, const_tree fntype)
 
   if (TARGET_64BIT)
     {
+      if (ix86_function_type_abi (fntype) == WINCALL_ABI)
+	{
+	  /* WinCall returns FP scalars/complex in XMM0 and aggregates of up
+	     to 32 bytes in RAX,RDX,RCX,R8; only larger objects and x87
+	     `long double' go through memory.  */
+	  if (mode == XFmode || mode == TFmode || mode == XCmode
+	      || mode == TCmode)
+	    return true;
+	  size = int_size_in_bytes (type);
+	  if (AGGREGATE_TYPE_P (type))
+	    return size < 0 || size > 32;
+	  return size != 1 && size != 2 && size != 4 && size != 8;
+	}
       if (ix86_function_type_abi (fntype) == MS_ABI)
 	{
 	  size = int_size_in_bytes (type);
@@ -4951,7 +5209,7 @@ ix86_setup_incoming_varargs (cumulative_args_t cum_v,
       && stdarg_p (fntype))
     ix86_function_arg_advance (pack_cumulative_args (&next_cum), arg);
 
-  if (cum->call_abi == MS_ABI)
+  if (cum->call_abi != SYSV_ABI)
     setup_incoming_varargs_ms_64 (&next_cum);
   else
     setup_incoming_varargs_64 (&next_cum);
@@ -24291,6 +24549,8 @@ x86_this_parameter (tree function)
 
       if (lookup_attribute ("preserve_none", TYPE_ATTRIBUTES (type)))
 	parm_regs = x86_64_preserve_none_int_parameter_registers;
+      else if (ix86_function_type_abi (type) == WINCALL_ABI)
+	parm_regs = x86_64_wincall_int_parameter_registers;
       else if (ix86_function_type_abi (type) == MS_ABI)
         parm_regs = x86_64_ms_abi_int_parameter_registers;
       else
@@ -26313,7 +26573,7 @@ ix86_fn_abi_va_list (tree fndecl)
     return va_list_type_node;
   gcc_assert (fndecl != NULL_TREE);
 
-  if (ix86_function_abi ((const_tree) fndecl) == MS_ABI)
+  if (ix86_function_abi ((const_tree) fndecl) != SYSV_ABI)
     return ms_va_list_type_node;
   else
     return sysv_va_list_type_node;

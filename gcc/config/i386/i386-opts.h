@@ -41,7 +41,12 @@ last_alg
 enum calling_abi
 {
   SYSV_ABI = 0,
-  MS_ABI = 1
+  MS_ABI = 1,
+  /* Herbceptions/APX "wincall" convention: the Windows x64 rule set
+     extended to the eight integer argument registers
+     RCX,RDX,R8,R9,R16-R19 with an independent XMM0-7 bank, RAX/RDX/RCX/R8
+     return, R30/R31 callee-saved and a 64-byte stack boundary.  */
+  WINCALL_ABI = 2
 };
 
 enum fpmath_unit
