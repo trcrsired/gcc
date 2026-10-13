@@ -904,14 +904,27 @@ flags_from_decl_or_type (const_tree exp)
   else
     gcc_unreachable ();
 
+  /* A herbceptions-spec'd function hands part of its result back through
+     its deterministic error channel: the failure discriminant rides in
+     the carry flag rather than in the return value.  The compiler cannot
+     see that output through the function's type, so the function must
+     not be treated as `const' or `pure'.  Otherwise DCE deletes calls
+     whose only consumer is the following .HERBCEPTION_RESULT () /
+     .HERBCEPTION_FAILED (), and the caller then reads an undefined
+     channel (and, via CF, a stale clock id in fast_io's
+     posix_clock_id_to_native_value).  */
+  bool herbceptions = fn_has_herbceptions_spec_p
+    (DECL_P (exp) ? TREE_TYPE (exp) : exp);
+  if (herbceptions)
+    flags &= ~(ECF_CONST | ECF_PURE | ECF_LOOPING_CONST_OR_PURE);
+
   if (TREE_THIS_VOLATILE (exp))
     {
       /* A herbceptions-spec'd function exits through its deterministic
 	 error channel — that is a normal return for control-flow
 	 purposes, so it must not mark the call ECF_NORETURN or the
 	 caller's post-call channel check gets deleted as dead code.  */
-      const_tree spec_type = DECL_P (exp) ? TREE_TYPE (exp) : exp;
-      if (!fn_has_herbceptions_spec_p (spec_type))
+      if (!herbceptions)
 	{
 	  flags |= ECF_NORETURN;
 	  if (flags & (ECF_CONST|ECF_PURE))

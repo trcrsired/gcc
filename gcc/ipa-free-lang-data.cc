@@ -511,6 +511,22 @@ free_lang_data_in_type (tree type, class free_lang_data_d *fld)
       free_lang_data_in_one_sizepos (&TYPE_MAX_VALUE (type));
     }
 
+  /* A C++ herbceptions `throws' / `return_failure{E}' specification lives
+     in the raises slot, which is TYPE_LANG_SLOT_1 and is wiped just
+     below.  Middle-end code reached after this pass (and after LTO
+     streaming, where TYPE_ATTRIBUTES -- unlike the raises slot -- is
+     preserved) still has to recognise herbceptions functions: e.g.
+     flags_from_decl_or_type must not hand such a function ECF_NORETURN,
+     ECF_CONST or ECF_PURE, because its failure discriminant travels out
+     of band and an elided call loses it.  Record the specification as a
+     streamed type attribute so it survives.  */
+  if (FUNC_OR_METHOD_TYPE_P (type)
+      && fn_has_herbceptions_spec_p (type)
+      && !lookup_attribute ("herbceptions", TYPE_ATTRIBUTES (type)))
+    TYPE_ATTRIBUTES (type)
+      = tree_cons (get_identifier ("herbceptions"), NULL_TREE,
+		   TYPE_ATTRIBUTES (type));
+
   TYPE_LANG_SLOT_1 (type) = NULL_TREE;
 
   free_lang_data_in_one_sizepos (&TYPE_SIZE (type));

@@ -16894,10 +16894,14 @@ fn_has_herbceptions_spec_p (const_tree fntype)
       && TREE_CODE (TREE_PURPOSE (spec)) == HERBCEPTION_SPEC)
     return true;
   /* The C frontend carries `return_failure{E}' as an internal type
-     attribute instead (its FUNCTION_TYPEs have no raises slot).  */
-  return lookup_attribute ("herbceptions_return_failure",
-			   TYPE_ATTRIBUTES (const_cast<tree> (fntype)))
-    != NULL_TREE;
+     attribute instead (its FUNCTION_TYPEs have no raises slot), and
+     free_lang_data_in_type records a `herbceptions' marker attribute on
+     every spec'd function type (in either frontend) so that the
+     information survives LTO streaming, which does not preserve the
+     raises slot.  */
+  tree tattrs = TYPE_ATTRIBUTES (const_cast<tree> (fntype));
+  return lookup_attribute ("herbceptions_return_failure", tattrs) != NULL_TREE
+	 || lookup_attribute ("herbceptions", tattrs) != NULL_TREE;
 }
 
 #include "gt-tree.h"

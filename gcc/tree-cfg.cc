@@ -9840,6 +9840,7 @@ pass_warn_function_return::execute (function *fun)
   /* If we see "return;" in some basic block, then we do reach the end
      without returning a value.  */
   else if (warn_return_type > 0
+	   && !fn_has_herbceptions_spec_p (TREE_TYPE (fun->decl))
 	   && !warning_suppressed_p (fun->decl, OPT_Wreturn_type)
 	   && !VOID_TYPE_P (TREE_TYPE (TREE_TYPE (fun->decl))))
     {
