@@ -118,6 +118,9 @@
 
   UNSPECV_LDFSR
   UNSPECV_STFSR
+
+  UNSPECV_HERBCEPTIONS_FAILED
+  UNSPECV_HERBCEPTIONS_SETF
 ])
 
 (define_constants
@@ -1104,6 +1107,84 @@
   [(set (match_operand:W 0 "register_operand" "=r")
 	(ltu:W (match_operand 1 "icc_register_operand" "X") (const_int 0)))]
   "GET_MODE (operands[1]) == CCmode || GET_MODE (operands[1]) == CCCmode"
+  "addx\t%%g0, 0, %0"
+  [(set_attr "type" "ialuX")])
+
+;; Herbceptions error-channel discriminant.  SPARC carries it in the carry
+;; bit of the integer condition codes, %icc.C, which subcc -- and hence
+;; cmp -- sets as the borrow out of the subtraction.  That is what clang's
+;; herbceptions return lowering does -- see
+;; llvm/test/CodeGen/SPARC/throws-attr.ll: the callee emits "a cmp glued
+;; before retl" and the caller reads the bit back with movcs, a conditional
+;; move or a branch on it directly, with "carry set = error".  The compare
+;; has to be the last thing the callee does: nothing after it may rewrite
+;; the condition codes, and nothing between it and retl may either.
+
+(define_expand "herbceptions_load_failed"
+  [(match_operand 0 "general_operand")]
+  ""
+{
+  rtx op = operands[0];
+  rtx tmp = gen_reg_rtx (SImode);
+
+  if (MEM_P (op))
+    op = validize_mem (op);
+
+  if (CONST_INT_P (op))
+    emit_move_insn (tmp, gen_int_mode (INTVAL (op) & 1, SImode));
+  else
+    {
+      /* The discriminant is a boolean stack slot during the body:
+	 anything narrower than a word has to be widened first, and
+	 anything wider narrowed.  */
+      machine_mode vmode = GET_MODE (op);
+
+      if (vmode != SImode)
+	{
+	  if (!REG_P (op))
+	    op = force_reg (vmode, op);
+	  if (GET_MODE_SIZE (vmode) < GET_MODE_SIZE (SImode))
+	    emit_insn (gen_rtx_SET (tmp,
+				    gen_rtx_ZERO_EXTEND (SImode, op)));
+	  else
+	    emit_move_insn (tmp, gen_lowpart (SImode, op));
+	}
+      else
+	emit_move_insn (tmp, op);
+    }
+
+  /* This has to stay the last thing before the return: %icc is the
+     return channel and nothing afterwards may rewrite the condition
+     codes.  It is an unspec_volatile because a plain compare to the
+     carry would look dead and be deleted.  */
+  emit_insn (gen_herbceptions_set_failed (tmp));
+  DONE;
+})
+
+;; Set %icc.C from the failure flag.  cmp is subcc, whose borrow-out
+;; (the carry bit) is set exactly when the second operand is nonzero, so
+;; carry means failure -- the same encoding the sne patterns above use,
+;; and what clang's herbceptions return lowering emits as "a cmp glued
+;; before retl".
+
+(define_insn "herbceptions_set_failed"
+  [(set (reg:CCC CC_REG)
+	(unspec_volatile:CCC [(match_operand:SI 0 "register_operand" "r")]
+			     UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "cmp\t%%g0, %0"
+  [(set_attr "type" "ialuX")])
+
+;; The caller's view of %icc.C.  addx %%g0, 0, %0 adds the carry bit to
+;; zero, i.e. it materializes the carry as 0 or 1 -- the same instruction
+;; the sltu patterns emit -- and writing the whole register keeps the
+;; value well defined for a sub-word destination.
+
+(define_insn "herbceptions_failed"
+  [(set (match_operand:QI 0 "register_operand" "=r")
+	(unspec_volatile:QI [(reg:CCC CC_REG)]
+			    UNSPECV_HERBCEPTIONS_FAILED))]
+  ""
   "addx\t%%g0, 0, %0"
   [(set_attr "type" "ialuX")])
 

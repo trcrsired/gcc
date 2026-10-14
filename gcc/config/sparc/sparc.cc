@@ -985,6 +985,23 @@ char sparc_hard_reg_printed[8];
 #undef TARGET_C_MODE_FOR_FLOATING_TYPE
 #define TARGET_C_MODE_FOR_FLOATING_TYPE sparc_c_mode_for_floating_type
 
+/* Implement TARGET_HERBCEPTIONS_CAPTURE_FAILED.  A herbceptions callee
+   leaves its discriminant in the carry bit of %icc; materialize it into a
+   fresh register right after the call, while nothing else can have
+   rewritten the condition codes.  */
+
+static rtx
+sparc_herbceptions_capture_failed (tree)
+{
+  rtx tmp = gen_reg_rtx (QImode);
+
+  emit_insn (gen_herbceptions_failed (tmp));
+  return tmp;
+}
+
+#undef TARGET_HERBCEPTIONS_CAPTURE_FAILED
+#define TARGET_HERBCEPTIONS_CAPTURE_FAILED sparc_herbceptions_capture_failed
+
 struct gcc_target targetm = TARGET_INITIALIZER;
 
 /* Return the memory reference contained in X if any, zero otherwise.  */
