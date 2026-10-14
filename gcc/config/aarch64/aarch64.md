@@ -1565,6 +1565,46 @@
   [(set_attr "type" "branch")
    (set_attr "sls_length" "retbr")])
 
+;; A caller materializes the herbceptions discriminant with
+;; `herbceptions_failed' (`cset Wd, cs') and then tests bit 0 and branches.
+;; `cset ..., cs' produces exactly 0 or 1, so the `tbnz'/`tbz' is a verbose
+;; way of asking whether the carry flag is set: fold the pair into a direct
+;; `bcs'/`bcc' on NZCV.C.  This mirrors the x86 setc/testb/jcc fold.
+;;
+;; Adjacency is the soundness argument: with no insn between the two, nothing
+;; has redefined NZCV, so the carry the new branch reads is still the one the
+;; callee returned.  The check is given the index just past the pattern, which
+;; is where liveness is tested for a register the branch itself reads; when
+;; the branch ends the block that index is the end-of-block marker, whose
+;; live-before set is the block's live-out (recog.cc), so a byte that is still
+;; live on the failure path is still seen as live here.
+;;
+;; When the byte is dead past the branch -- nothing wants the discriminant
+;; any more -- the `cset' goes away with it.  More often the byte outlives the
+;; branch, because a `throws' function keeps its own copy for the return, and
+;; then the `cset' has to stay and only the branch changes form.
+
+(define_peephole2
+  [(set (match_operand:QI 0 "register_operand")
+	(unspec_volatile:QI [(reg:CC_C CC_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))
+   (parallel
+     [(set (pc)
+	   (if_then_else (ne (zero_extract:GPI
+			       (match_operand:GPI 3 "register_operand")
+			       (const_int 1) (const_int 0))
+			     (const_int 0))
+			  (label_ref (match_operand 2))
+			  (pc)))
+      (clobber (reg:CC CC_REGNUM))])]
+  "REGNO (operands[0]) == REGNO (operands[3])
+   && peep2_regno_dead_p (2, REGNO (operands[0]))"
+  [(set (pc)
+	(if_then_else (ltu (reg:CC_C CC_REGNUM) (const_int 0))
+		      (label_ref (match_dup 2))
+		      (pc)))]
+)
+
 (define_peephole2
   [(set (match_operand:QI 0 "register_operand")
 	(unspec_volatile:QI [(reg:CC_C CC_REGNUM)]
@@ -1588,9 +1628,28 @@
 		      (pc)))]
 )
 
-;; Replace `cset Wd, cs' + `tbnz Wd, #0' with a direct `bcs'/`bcc' on the
-;; carry flag.  The byte is dead afterwards, so the two insns collapse to a
-;; single conditional branch.  Mirrors the x86 setc/testb/jcc fold.
+;; `tbz Wd, #0' is the mirrored polarity: branch when the carry is clear.
+
+(define_peephole2
+  [(set (match_operand:QI 0 "register_operand")
+	(unspec_volatile:QI [(reg:CC_C CC_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))
+   (parallel
+     [(set (pc)
+	   (if_then_else (eq (zero_extract:GPI
+			       (match_operand:GPI 4 "register_operand")
+			       (const_int 1) (const_int 0))
+			     (const_int 0))
+			  (label_ref (match_operand 2))
+			  (pc)))
+      (clobber (reg:CC CC_REGNUM))])]
+  "REGNO (operands[0]) == REGNO (operands[4])
+   && peep2_regno_dead_p (2, REGNO (operands[0]))"
+  [(set (pc)
+	(if_then_else (geu (reg:CC_C CC_REGNUM) (const_int 0))
+		      (label_ref (match_dup 2))
+		      (pc)))]
+)
 
 (define_peephole2
   [(set (match_operand:QI 0 "register_operand")
@@ -1606,12 +1665,14 @@
 			  (pc)))
       (clobber (reg:CC CC_REGNUM))])]
   "REGNO (operands[0]) == REGNO (operands[4])"
-  [(set (pc)
+  [(set (match_dup 0)
+	(unspec_volatile:QI [(reg:CC_C CC_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))
+   (set (pc)
 	(if_then_else (geu (reg:CC_C CC_REGNUM) (const_int 0))
 		      (label_ref (match_dup 2))
 		      (pc)))]
 )
-
 
 (define_expand "save_stack_nonlocal"
   [(set (match_operand 0 "memory_operand")
