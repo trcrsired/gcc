@@ -14,9 +14,9 @@
 /* { dg-require-effective-target apxf } */
 /* { dg-options "-O2 -mapxf" } */
 
-struct S32 { long a, b, c, d; };
-struct S24 { long a, b, c; };
-struct S16 { long a, b; };
+struct S32 { long long a, b, c, d; };
+struct S24 { long long a, b, c; };
+struct S16 { long long a, b; };
 
 __attribute__ ((wincall, noinline, noipa)) struct S32
 m32 (void)

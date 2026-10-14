@@ -226,6 +226,26 @@ gen_stdcall_or_fastcall_suffix (tree decl, tree id, bool fastcall)
   return get_identifier (new_str);
 }
 
+/* Return string which is the function name, identified by ID, decorated
+   with the fixed "@win" suffix that WinCall uses so that the linker can
+   catch a caller/callee calling-convention mismatch, much as the "@N"
+   suffix does for stdcall on i386.  */
+
+static tree
+gen_wincall_suffix (tree decl, tree id)
+{
+  const char *old_str
+    = IDENTIFIER_POINTER (id != NULL_TREE ? id : DECL_NAME (decl));
+  char *new_str;
+
+  gcc_assert (TREE_CODE (decl) == FUNCTION_DECL);
+
+  new_str = XALLOCAVEC (char, strlen (old_str) + sizeof ("@win"));
+  sprintf (new_str, "%s@win", old_str);
+
+  return get_identifier (new_str);
+}
+
 /* Maybe decorate and get a new identifier for the DECL of a stdcall or
    fastcall function. The original identifier is supplied in ID. */
 
@@ -247,6 +267,8 @@ i386_pe_maybe_mangle_decl_assembler_name (tree decl, tree id)
 	}
       else if ((ccvt & IX86_CALLCVT_FASTCALL) != 0)
 	new_id = gen_stdcall_or_fastcall_suffix (decl, id, true);
+      else if (ix86_function_type_abi (TREE_TYPE (decl)) == WINCALL_ABI)
+	new_id = gen_wincall_suffix (decl, id);
     }
 
   return new_id;
