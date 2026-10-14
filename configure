@@ -837,6 +837,7 @@ enable_libgm2
 enable_libga68
 enable_libssp
 enable_libstdcxx
+enable_libherbceptions
 enable_bootstrap
 enable_pgo_build
 with_mpc
@@ -1587,6 +1588,7 @@ Optional Features:
   --enable-libga68        build libga68 directory
   --enable-libssp         build libssp directory
   --disable-libstdcxx     do not build libstdc++-v3 directory
+  --enable-libherbceptions  build the libherbceptions error-domain runtime
   --enable-bootstrap      enable bootstrapping [yes if native build]
   --enable-pgo-build[=lto]
                           enable the PGO build
@@ -2921,6 +2923,7 @@ target_libraries="target-libgcc \
 		target-libitm \
 		target-libstdc++-v3 \
 		target-libsanitizer \
+		target-libherbceptions \
 		target-libvtv \
 		target-libssp \
 		target-libquadmath \
@@ -3448,6 +3451,27 @@ $as_echo "no" >&6; }
 	    { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
 	fi
+    fi
+fi
+
+# libherbceptions is opt-in: it is only built when the user asks for it.
+# Check whether --enable-libherbceptions was given.
+if test "${enable_libherbceptions+set}" = set; then :
+  enableval=$enable_libherbceptions;
+fi
+
+if test -d ${srcdir}/libherbceptions; then
+    if test x$enable_libherbceptions != xyes; then
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for libherbceptions support" >&5
+$as_echo_n "checking for libherbceptions support... " >&6; }
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no (use --enable-libherbceptions)" >&5
+$as_echo "no (use --enable-libherbceptions)" >&6; }
+	noconfigdirs="$noconfigdirs target-libherbceptions"
+    else
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for libherbceptions support" >&5
+$as_echo_n "checking for libherbceptions support... " >&6; }
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
     fi
 fi
 
@@ -10653,19 +10677,19 @@ $as_echo "using paths configured with --with-target-bdw-gc options" >&6; }
     fi
 esac
 
-# Disable libitm, libsanitizer, libvtv if we're not building C++
+# Disable libitm, libsanitizer, libherbceptions, libvtv if we're not building C++
 case ,${enable_languages}, in
   *,c++,*)
-    # Disable libitm, libsanitizer if we're not building libstdc++
+    # Disable libitm, libsanitizer, libherbceptions if we're not building libstdc++
     case "${noconfigdirs}" in
       *target-libstdc++-v3*)
-        noconfigdirs="$noconfigdirs target-libitm target-libsanitizer"
+        noconfigdirs="$noconfigdirs target-libitm target-libsanitizer target-libherbceptions"
         ;;
       *) ;;
     esac
     ;;
   *)
-    noconfigdirs="$noconfigdirs target-libitm target-libsanitizer target-libvtv"
+    noconfigdirs="$noconfigdirs target-libitm target-libsanitizer target-libherbceptions target-libvtv"
     ;;
 esac
 

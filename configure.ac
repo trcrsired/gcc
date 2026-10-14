@@ -157,6 +157,7 @@ target_libraries="target-libgcc \
 		target-libitm \
 		target-libstdc++-v3 \
 		target-libsanitizer \
+		target-libherbceptions \
 		target-libvtv \
 		target-libssp \
 		target-libquadmath \
@@ -609,6 +610,20 @@ if test -d ${srcdir}/libsanitizer; then
 	else
 	    AC_MSG_RESULT([yes])
 	fi
+    fi
+fi
+
+# libherbceptions is opt-in: it is only built when the user asks for it.
+AC_ARG_ENABLE(libherbceptions,
+[  --enable-libherbceptions  build the libherbceptions error-domain runtime])
+if test -d ${srcdir}/libherbceptions; then
+    if test x$enable_libherbceptions != xyes; then
+	AC_MSG_CHECKING([for libherbceptions support])
+	AC_MSG_RESULT([no (use --enable-libherbceptions)])
+	noconfigdirs="$noconfigdirs target-libherbceptions"
+    else
+	AC_MSG_CHECKING([for libherbceptions support])
+	AC_MSG_RESULT([yes])
     fi
 fi
 
@@ -2788,19 +2803,19 @@ case ,${enable_languages},:${enable_objc_gc}:${enable_algol68_gc} in
     fi
 esac
 
-# Disable libitm, libsanitizer, libvtv if we're not building C++
+# Disable libitm, libsanitizer, libherbceptions, libvtv if we're not building C++
 case ,${enable_languages}, in
   *,c++,*)
-    # Disable libitm, libsanitizer if we're not building libstdc++
+    # Disable libitm, libsanitizer, libherbceptions if we're not building libstdc++
     case "${noconfigdirs}" in
       *target-libstdc++-v3*)
-        noconfigdirs="$noconfigdirs target-libitm target-libsanitizer"
+        noconfigdirs="$noconfigdirs target-libitm target-libsanitizer target-libherbceptions"
         ;;
       *) ;;
     esac
     ;;
   *)
-    noconfigdirs="$noconfigdirs target-libitm target-libsanitizer target-libvtv"
+    noconfigdirs="$noconfigdirs target-libitm target-libsanitizer target-libherbceptions target-libvtv"
     ;;
 esac
 
