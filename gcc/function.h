@@ -739,6 +739,7 @@ extern void expand_dummy_function_end (void);
 
 extern void thread_prologue_and_epilogue_insns (void);
 extern void diddle_return_value (void (*)(rtx, void*), void*);
+extern rtx herbceptions_channel_value (tree, tree, tree);
 extern void clobber_return_register (void);
 extern void expand_function_end (void);
 extern rtx get_arg_pointer_save_area (void);

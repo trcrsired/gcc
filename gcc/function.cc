@@ -5474,6 +5474,35 @@ use_return_register (void)
   diddle_return_value (do_use_return_reg, NULL);
 }
 
+/* Return the register(s) a herbceptions channel of type SLOT_TYPE comes
+   back in.  DECL and DECL_TYPE are the returning function's decl and
+   type, or NULL_TREE for a caller that only wants the return registers
+   themselves.
+
+   hard_function_value supplies the right registers for whatever ABI
+   places the payload in registers, but it can also hand back a mode the
+   target promoted the return to (loongarch promotes any integer mode to
+   word_mode).  The channel is always the whole object and is laid out
+   at the least significant end of the first register, so narrow the
+   mode back to the type's own, exactly as expand_call does for an
+   ordinary promoted return value.  */
+
+rtx
+herbceptions_channel_value (tree slot_type, tree decl, tree decl_type)
+{
+  rtx valreg = hard_function_value (slot_type, decl, decl_type, 1);
+  machine_mode tmode = TYPE_MODE (slot_type);
+
+  if (REG_P (valreg)
+      && tmode != BLKmode
+      && tmode != VOIDmode
+      && GET_MODE (valreg) != tmode
+      && known_le (GET_MODE_SIZE (tmode), GET_MODE_SIZE (GET_MODE (valreg))))
+    valreg = gen_rtx_REG (tmode, REGNO (valreg));
+
+  return valreg;
+}
+
 /* Generate RTL for the end of the current function.  */
 
 void
@@ -5555,10 +5584,9 @@ expand_function_end (void)
   if (cfun->herbceptions_error_slot != NULL_TREE)
     {
       tree slot = cfun->herbceptions_error_slot;
-      rtx valreg = hard_function_value (TREE_TYPE (slot),
-					current_function_decl,
-					TREE_TYPE (current_function_decl),
-					1);
+      rtx valreg = herbceptions_channel_value (TREE_TYPE (slot),
+					       current_function_decl,
+					       TREE_TYPE (current_function_decl));
       REG_FUNCTION_VALUE_P (valreg) = 1;
       crtl->return_rtx = valreg;
       /* The union local is an ordinary automatic variable and can be
@@ -5590,7 +5618,18 @@ expand_function_end (void)
 		  && known_eq (GET_MODE_SIZE (vmode),
 			       int_size_in_bytes (TREE_TYPE (slot))))
 		src = adjust_address (src, vmode, 0);
-	      emit_move_insn (valreg, src);
+	      /* The local can also be wider than the channel: a scalar
+		 channel (say `return_failure{int}') is promoted to
+		 word_mode even as an SSA name, so truncate it into the
+		 return register.  Same as the ordinary promoted return
+		 value below.  */
+	      if (GET_MODE (valreg) != GET_MODE (src)
+		  && SCALAR_INT_MODE_P (GET_MODE (valreg))
+		  && SCALAR_INT_MODE_P (GET_MODE (src)))
+		convert_move (valreg, src,
+			      TYPE_UNSIGNED (TREE_TYPE (slot)));
+	      else
+		emit_move_insn (valreg, src);
 	    }
 	}
     }
@@ -5607,6 +5646,10 @@ expand_function_end (void)
 	  && DECL_RTL_SET_P (cfun->herbceptions_failed_slot))
 	emit_insn (gen_herbceptions_load_failed
 		   (DECL_RTL (cfun->herbceptions_failed_slot)));
+#else
+      /* See expand_HERBCEPTION_FAILED: a target that carries the
+	 discriminant must define `herbceptions_load_failed'.  */
+      sorry ("herbceptions are not supported on this target");
 #endif
     }
   /* If scalar return value was computed in a pseudo-reg, or was a named

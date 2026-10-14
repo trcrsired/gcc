@@ -57,6 +57,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-ssa-live.h"
 #include "tree-outof-ssa.h"
 #include "gcc-urlifier.h"
+#include "function.h"
 
 /* For lang_hooks.types.type_for_mode.  */
 #include "langhooks.h"
@@ -3492,13 +3493,52 @@ expand_HERBCEPTION_RESULT (internal_fn, gcall *stmt)
   if (lhs == NULL_TREE)
     return;
   rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
-  rtx valreg = hard_function_value (TREE_TYPE (lhs), NULL_TREE,
-				    NULL_TREE, 1);
+  rtx valreg = herbceptions_channel_value (TREE_TYPE (lhs), NULL_TREE,
+					   NULL_TREE);
   if (GET_CODE (valreg) == PARALLEL)
     emit_group_store (target, valreg, TREE_TYPE (lhs),
 		      int_size_in_bytes (TREE_TYPE (lhs)));
   else
-    emit_move_insn (target, valreg);
+    {
+      /* See expand_function_end.  A target with STRICT_ALIGNMENT
+	 demotes the channel aggregate to BLKmode when its alignment is
+	 less than the integer mode's, so the destination stays BLKmode
+	 memory while hard_function_value hands back a plain register
+	 given the smallest integer mode covering the channel.
+	 Re-interpret the destination in that mode; the sizes then agree
+	 by construction.  */
+      machine_mode vmode = GET_MODE (valreg);
+      machine_mode tmode = GET_MODE (target);
+      if (MEM_P (target)
+	  && tmode == BLKmode
+	  && vmode != BLKmode
+	  && known_eq (GET_MODE_SIZE (vmode),
+		       int_size_in_bytes (TREE_TYPE (lhs))))
+	{
+	  target = adjust_address (target, vmode, 0);
+	  tmode = vmode;
+	}
+      /* The destination can also be wider than the channel: a scalar
+	 channel is promoted to word_mode even as an SSA name.  Widen the
+	 channel value into it through a register when the destination is
+	 not one itself.  */
+      if (tmode != vmode
+	  && SCALAR_INT_MODE_P (tmode)
+	  && SCALAR_INT_MODE_P (vmode)
+	  && known_le (GET_MODE_SIZE (vmode), GET_MODE_SIZE (tmode)))
+	{
+	  if (!REG_P (target))
+	    {
+	      rtx tmp = gen_reg_rtx (tmode);
+	      convert_move (tmp, valreg, TYPE_UNSIGNED (TREE_TYPE (lhs)));
+	      emit_move_insn (target, tmp);
+	    }
+	  else
+	    convert_move (target, valreg, TYPE_UNSIGNED (TREE_TYPE (lhs)));
+	}
+      else
+	emit_move_insn (target, valreg);
+    }
 }
 
 /* LHS = .HERBCEPTION_FAILED ();
@@ -3537,6 +3577,13 @@ expand_HERBCEPTION_FAILED (internal_fn, gcall *stmt)
   /* Some targets (e.g. aarch64) can only materialize the flag into a
      register, so bounce through a scratch when the result is wanted in
      memory.  */
+#ifndef HAVE_herbceptions_failed
+  /* A target that carries the discriminant must define a
+     `herbceptions_failed' pattern: either it reads the flag register,
+     or it reads the nominal register leaf the ABI returns it in.
+     Without one the feature cannot be lowered.  */
+  sorry ("herbceptions are not supported on this target");
+#else
   if (!REG_P (target))
     {
       rtx tmp = gen_reg_rtx (GET_MODE (target));
@@ -3545,6 +3592,7 @@ expand_HERBCEPTION_FAILED (internal_fn, gcall *stmt)
     }
   else
     emit_insn (gen_herbceptions_failed (target));
+#endif
 }
 
 /* Expand the IFN_DEFERRED_INIT function:
