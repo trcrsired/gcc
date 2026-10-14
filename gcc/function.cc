@@ -5573,7 +5573,25 @@ expand_function_end (void)
 	    emit_group_load (valreg, src, TREE_TYPE (slot),
 			     int_size_in_bytes (TREE_TYPE (slot)));
 	  else
-	    emit_move_insn (valreg, src);
+	    {
+	      /* The channel local is addressable -- its error payload has
+		 to be -- so it lives in memory and keeps BLKmode even
+		 though the channel itself comes back in registers.
+		 Targets whose function_value builds a register group for
+		 such a type (x86) return a PARALLEL and take the branch
+		 above; the others hand back a plain BLKmode register,
+		 which hard_function_value has already given the smallest
+		 integer mode covering the channel.  Give the memory the
+		 same mode so that the move can be expanded.  */
+	      machine_mode vmode = GET_MODE (valreg);
+	      if (MEM_P (src)
+		  && GET_MODE (src) == BLKmode
+		  && vmode != BLKmode
+		  && known_eq (GET_MODE_SIZE (vmode),
+			       int_size_in_bytes (TREE_TYPE (slot))))
+		src = adjust_address (src, vmode, 0);
+	      emit_move_insn (valreg, src);
+	    }
 	}
     }
   /* A herbceptions function's failure discriminant is an ordinary

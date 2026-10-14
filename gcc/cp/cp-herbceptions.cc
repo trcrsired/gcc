@@ -90,7 +90,18 @@ hb_channel_type (tree rettype)
 
 /* Build union { C value; P error; } where C is the channel type of
    the success value (T, or T* for reference returns).  If T is void
-   or returns in memory, the payload is just P.  */
+   or returns in memory, the payload is just P.
+
+   "Returns in memory" is aggregate_value_p, not the target's
+   return_in_memory hook.  The C++ ABI decision for a result that
+   needs a hidden pointer is TREE_ADDRESSABLE on its type (cp_genericize
+   sets DECL_BY_REFERENCE from it), which return_in_memory does not
+   answer for a non-trivially-copyable class that happens to fit in
+   registers.  Asking the hook alone built a channel whose value member
+   was such a class, so the union went BLKmode and backends that
+   classify only by mode (aarch64) returned it in a BLKmode register --
+   impossible to move out of the memory the channel has to live in.
+   aggregate_value_p is the predicate the middle end itself asks.  */
 
 static tree
 hb_result_type (tree rettype, tree etype, tree fntype)
@@ -98,7 +109,7 @@ hb_result_type (tree rettype, tree etype, tree fntype)
   if (etype == NULL_TREE || etype == error_mark_node)
     etype = herbceptions_cxx_std_error_node;
   if (VOID_TYPE_P (rettype)
-      || (fntype && targetm.calls.return_in_memory (rettype, fntype)))
+      || (fntype && aggregate_value_p (rettype, fntype)))
     return etype;
   if (same_type_p (rettype, etype))
     return etype;
@@ -538,7 +549,7 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
   tree union_type;
   if (TREE_CODE (call) == AGGR_INIT_EXPR
       || TREE_CODE (call) == TARGET_EXPR
-      || targetm.calls.return_in_memory (ctype, fntype))
+      || aggregate_value_p (ctype, fntype))
     union_type = err;
   else
     union_type = hb_result_type (ctype, err, fntype);
@@ -568,7 +579,7 @@ hb_lower_catch (hb_ctx *ctx, tree stmt, location_t loc)
   tree seq;
   tree valslot;
   if (TREE_CODE (call) == AGGR_INIT_EXPR
-      || targetm.calls.return_in_memory (ctype, fntype))
+      || aggregate_value_p (ctype, fntype))
     {
       tree v = build_decl (loc, VAR_DECL, NULL_TREE, ctype);
       DECL_ARTIFICIAL (v) = 1;
@@ -694,7 +705,7 @@ hb_lower_te_init (hb_ctx *ctx, tree te, tree call, tree fntype,
   bool via_channel = !(VOID_TYPE_P (ctype)
 		       || TREE_CODE (call) == AGGR_INIT_EXPR
 		       || TREE_CODE (call) == TARGET_EXPR
-		       || targetm.calls.return_in_memory (ctype, fntype));
+		       || aggregate_value_p (ctype, fntype));
   tree union_type = via_channel ? hb_result_type (ctype, err, fntype) : err;
 
   tree u = build_decl (loc, VAR_DECL, NULL_TREE, union_type);
@@ -734,7 +745,7 @@ hb_lower_te_init (hb_ctx *ctx, tree te, tree call, tree fntype,
      turns back into a return-slot call.  */
   tree callstmt = call;
   if (!via_channel && !VOID_TYPE_P (ctype)
-      && targetm.calls.return_in_memory (ctype, fntype)
+      && aggregate_value_p (ctype, fntype)
       && TREE_CODE (call) == CALL_EXPR)
     callstmt = build2 (INIT_EXPR, void_type_node, TARGET_EXPR_SLOT (te), call);
 
@@ -847,7 +858,7 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
   tree union_type;
   if (VOID_TYPE_P (rettype) || TREE_CODE (call) == AGGR_INIT_EXPR
       || TREE_CODE (call) == TARGET_EXPR
-      || targetm.calls.return_in_memory (rettype, fntype))
+      || aggregate_value_p (rettype, fntype))
     union_type = err;
   else
     union_type = hb_result_type (rettype, err, fntype);
@@ -866,7 +877,7 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
 
   bool mem_ret = !VOID_TYPE_P (ctype) && !indir
 		 && TREE_CODE (ctype) != REFERENCE_TYPE
-		 && targetm.calls.return_in_memory (rettype, fntype);
+		 && aggregate_value_p (rettype, fntype);
   if (target || TREE_CODE (call) == AGGR_INIT_EXPR || mem_ret)
     {
       /* A materialized (aggregate/sret) call: the callee writes into
@@ -985,7 +996,7 @@ hb_lower_try (hb_ctx *ctx, tree stmt, location_t loc, bool discarded)
       TREE_OPERAND (indir, 0) = hb_value_slot (u, rettype);
       return build2 (COMPOUND_EXPR, ctype, seq, indir);
     }
-  if (targetm.calls.return_in_memory (rettype, fntype)
+  if (aggregate_value_p (rettype, fntype)
       && TREE_CODE (call) == CALL_EXPR)
     /* An sret callee wrote the value into the hidden return-slot
        argument.  */
@@ -1366,7 +1377,7 @@ hb_lower_return (hb_ctx *ctx, tree ret, location_t loc)
 	{
 	  tree rtype = TREE_TYPE (TREE_TYPE (ctx->fndecl));
 	  if (!VOID_TYPE_P (rtype)
-	      && !targetm.calls.return_in_memory (rtype,
+	      && !aggregate_value_p (rtype,
 						  TREE_TYPE (ctx->fndecl)))
 	    {
 	      /* Register-sized return: write into the result local's
