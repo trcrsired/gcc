@@ -14,16 +14,18 @@
 
    The callee is left undefined so that a real call survives: with the
    callee visible the discriminant is promoted to a register and no `cset'
-   is emitted at all.  The discriminant is still wanted afterwards for this
-   function's own return, so the `cset' stays and only the branch changes
-   form.  */
+   is emitted at all.  The success path does something the failure path
+   does not -- `+ 1' -- so that the test of the discriminant cannot be
+   optimized away as redundant; the discriminant is wanted afterwards for
+   this function's own return, so the `cset' stays and only the branch
+   changes form.  */
 
 int callee (int) return_failure{long};
 
 int
 caller (int x) return_failure{long}
 {
-  return try (callee (x));
+  return try (callee (x)) + 1;
 }
 
 /* The discriminant is still wanted for the return, so the `cset' stays ...  */
