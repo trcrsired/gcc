@@ -21177,6 +21177,13 @@ mips_epilogue_uses (unsigned int regno)
   if (regno == RETURN_ADDR_REGNUM)
     return true;
 
+  /* A herbceptions function hands its error-channel discriminant to the
+     caller in $4, so nothing the epilogue does -- including whatever the
+     delay-slot filler wants to put in the return's delay slot -- may
+     overwrite that register.  See the herbceptions patterns in mips.md.  */
+  if (regno == A0_REGNUM && cfun->herbceptions_failed_slot != NULL_TREE)
+    return true;
+
   /* If using a GOT, say that the epilogue also uses GOT_VERSION_REGNUM.
      See the comment above load_call<mode> for details.  */
   if (TARGET_USE_GOT && (regno) == GOT_VERSION_REGNUM)
@@ -23694,6 +23701,23 @@ mips_print_patchable_function_entry (FILE *file ATTRIBUTE_UNUSED,
 #undef TARGET_ASM_PRINT_PATCHABLE_FUNCTION_ENTRY
 #define TARGET_ASM_PRINT_PATCHABLE_FUNCTION_ENTRY \
 mips_print_patchable_function_entry
+
+/* Implement TARGET_HERBCEPTIONS_CAPTURE_FAILED.  A herbceptions callee
+   leaves its discriminant in $4; materialize it as a value in a fresh
+   pseudo right after the call, before anything else gets to decide that
+   $4 is dead and free to use.  */
+
+static rtx
+mips_herbceptions_capture_failed (tree)
+{
+  rtx tmp = gen_reg_rtx (QImode);
+
+  emit_insn (gen_herbceptions_failed (tmp));
+  return tmp;
+}
+
+#undef TARGET_HERBCEPTIONS_CAPTURE_FAILED
+#define TARGET_HERBCEPTIONS_CAPTURE_FAILED mips_herbceptions_capture_failed
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 

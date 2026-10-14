@@ -168,6 +168,10 @@
   UNSPEC_INSN_PSEUDO
   UNSPEC_JRHB
 
+  ;; Herbceptions error-channel discriminant.
+  UNSPEC_HERBCEPTIONS_FAILED
+  UNSPEC_HERBCEPTIONS_SETF
+
   VUNSPEC_SPECULATION_BARRIER
 ])
 
@@ -6857,6 +6861,58 @@
   }
   [(set_attr "type"	"jump")
    (set_attr "mode"	"none")])
+
+;; Herbceptions error-channel discriminant.  MIPS has no condition flags, so
+;; the discriminant is a *nominal register leaf*: the payload comes back
+;; where the ABI puts it (the $v0:$v1 pair), and the discriminant in $4
+;; ($a0) -- exactly where clang's herbceptions return lowering puts it
+;; (`llvm/test/CodeGen/Mips/throws-attr.ll': "On MIPS the discriminant is
+;; carried in $a0 (o32) / $a0_64 (n32/n64), after the $v0:$v1 payload
+;; registers").  $4 is the first argument register as well, but it is
+;; call-clobbered, so no live value can be parked there across a call.
+
+(define_constants
+  [(A0_REGNUM 4)])
+
+(define_insn "herbceptions_failed"
+  [(set (match_operand:QI 0 "register_operand" "=d")
+	(unspec_volatile:QI [(reg:SI A0_REGNUM)]
+			    UNSPEC_HERBCEPTIONS_FAILED))]
+  ""
+  "andi\t%0,$4,1"
+  [(set_attr "type" "arith")])
+
+;; The failure flag is an ordinary stack slot (or a promoted register)
+;; during the body -- calls and cleanups freely clobber $4 -- so it is only
+;; moved into the discriminant register here, at the end of the body.
+
+(define_expand "herbceptions_load_failed"
+  [(match_operand:QI 0 "general_operand")]
+  ""
+{
+  rtx op = operands[0];
+  if (GET_MODE (op) != QImode)
+    op = gen_lowpart (QImode, op);
+  if (MEM_P (op))
+    op = validize_mem (op);
+  if (!register_operand (op, QImode) && !memory_operand (op, QImode)
+      && !satisfies_constraint_I (op))
+    op = force_reg (QImode, op);
+  emit_insn (gen_herbceptions_load_failed_1 (op));
+  DONE;
+})
+
+(define_insn "herbceptions_load_failed_1"
+  [(set (reg:SI A0_REGNUM)
+	(unspec_volatile:SI
+	  [(match_operand:QI 0 "general_operand" "d,m,I")]
+	  UNSPEC_HERBCEPTIONS_SETF))]
+  ""
+  "@
+   andi\t$4,%0,1
+   lbu\t$4,%0
+   li\t$4,%0"
+  [(set_attr "type" "arith,load,arith")])
 
 ;; Insn to clear execution and instruction hazards while returning.
 ;; However, it doesn't clear hazards created by the insn in its delay slot.
