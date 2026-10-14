@@ -1218,3 +1218,13 @@
   DLSTP32
   DLSTP64
 ])
+
+; Herbceptions: the failure discriminant is carried in CPSR.C, so one
+; operation reads the flag into a register and another writes it from the
+; failure slot.  Neither maps to a single instruction that means the
+; whole thing, so they are volatile to keep the scheduler and DCE off
+; them.
+(define_c_enum "unspecv" [
+  UNSPECV_HERBCEPTIONS_FAILED
+  UNSPECV_HERBCEPTIONS_SETF
+])

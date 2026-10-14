@@ -13129,6 +13129,87 @@
   [(set_attr "conds" "unconditional")
    (set_attr "type" "nop")])
 
+;; Herbceptions: the error discriminant is carried in CPSR.C rather than
+;; in a carrier register, so there is nothing to keep live across the
+;; epilogue -- only a flag the epilogue must not overwrite.  The flag is
+;; written once, at the end of the body, after the failure slot has
+;; stopped changing, and the ARM epilogue only uses instructions that
+;; leave CPSR alone (`pop'/`ldr'/`bx lr' to return, `add sp' and
+;; `mov sp, fp' without an `s'), so it survives to the caller.
+
+(define_expand "herbceptions_failed"
+  [(match_operand 0 "s_register_operand")]
+  "TARGET_EITHER"
+{
+  if (TARGET_THUMB1)
+    {
+      /* SBC Rd, Rd, Rd is -(not C), an ordinary borrow operation, and
+	 both halves of the sequence below are Thumb-1 instructions; it
+	 is only the borrow operand itself that Thumb-1 has no pattern
+	 for.  There is also no Thumb-1 way to materialize a value from
+	 a flag without branching, so leave the feature unsupported
+	 there rather than emit something that reads the wrong thing.
+	 Materialize a zero so the expansion still completes.  */
+      sorry ("herbceptions are not supported in Thumb-1 code");
+      emit_move_insn (operands[0], const0_rtx);
+      DONE;
+    }
+
+  /* Materialize the carry flag.  SBC Rd, Rd, Rd is -(not C), so adding
+     one back leaves C itself.  */
+  rtx tmp = gen_reg_rtx (SImode);
+  rtx borrow = gen_rtx_GEU (SImode, gen_rtx_REG (CC_Cmode, CC_REGNUM),
+			    const0_rtx);
+
+  emit_insn (gen_rtx_SET (tmp, gen_rtx_NEG (SImode, borrow)));
+  emit_insn (gen_addsi3 (tmp, tmp, const1_rtx));
+  emit_move_insn (operands[0], gen_lowpart (GET_MODE (operands[0]), tmp));
+  DONE;
+})
+
+;; Set CPSR.C from the failure slot.  The slot is a boolean, so it only
+;; defines its low byte, while CMP compares whole words: zero-extend
+;; first, which also turns a memory slot into the `ldrb' the compare
+;; needs.  C comes out set exactly when the byte was nonzero, which is
+;; what `herbceptions_failed' turns back into a boolean.
+
+(define_expand "herbceptions_load_failed"
+  [(match_operand:QI 0 "general_operand")]
+  "TARGET_EITHER"
+{
+  if (TARGET_THUMB1)
+    {
+      sorry ("herbceptions are not supported in Thumb-1 code");
+      DONE;
+    }
+
+  rtx op = operands[0];
+  rtx tmp = gen_reg_rtx (SImode);
+
+  if (GET_MODE (op) != QImode)
+    op = gen_lowpart (QImode, op);
+
+  /* The slot is an ordinary stack byte the middle end hands over as a bare
+     MEM, so its address has not been through memory_address yet.  A frame
+     larger than an addressing offset allows would otherwise reach recog
+     unlegitimized and be rejected there.  */
+  if (MEM_P (op))
+    op = validize_mem (op);
+
+  emit_insn (gen_zero_extendqisi2 (tmp, op));
+  emit_insn (gen_herbceptions_load_failed_1 (tmp));
+  DONE;
+})
+
+(define_insn "herbceptions_load_failed_1"
+  [(set (reg:CC_C CC_REGNUM)
+	(unspec_volatile:CC_C [(match_operand:SI 0 "s_register_operand" "r")]
+			      UNSPECV_HERBCEPTIONS_SETF))]
+  "TARGET_32BIT"
+  "cmp\t%0, #1"
+  [(set_attr "conds" "set")
+   (set_attr "type" "alus_imm")])
+
 ;; Vector bits common to Neon and MVE
 (include "vec-common.md")
 ;; Load the VFP co-processor patterns

@@ -28184,7 +28184,14 @@ arm_expand_epilogue (bool really_return)
           /* In Thumb-2 mode, the frame pointer points to the last saved
              register.  */
 	  amount = offsets->locals_base - offsets->saved_regs;
-	  if (amount)
+	  /* A herbceptions function has to hand CPSR.C to its caller, so the
+	     teardown must not write the flags.  In Thumb-2 there is no
+	     `sp = fp + imm' encoding, and the 16-bit `adds' the frame
+	     pointer bump below turns into would clobber the carry, so step
+	     the stack pointer over in two flag-free pieces.  */
+	  const bool hb_flags
+	    = cfun->herbceptions_failed_slot != NULL_TREE;
+	  if (amount && !hb_flags)
 	    {
 	      insn = emit_insn (gen_addsi3 (hard_frame_pointer_rtx,
 				hard_frame_pointer_rtx,
@@ -28202,6 +28209,15 @@ arm_expand_epilogue (bool really_return)
 	  arm_add_cfa_adjust_cfa_note (insn, 0,
 				       stack_pointer_rtx,
 				       hard_frame_pointer_rtx);
+	  if (hb_flags && amount)
+	    {
+	      insn = emit_insn (gen_addsi3 (stack_pointer_rtx,
+				    stack_pointer_rtx,
+				    GEN_INT (amount)));
+	      arm_add_cfa_adjust_cfa_note (insn, amount,
+					   stack_pointer_rtx,
+					   stack_pointer_rtx);
+	    }
           /* Emit USE(stack_pointer_rtx) to ensure that stack adjustment is not
              deleted.  */
           emit_insn (gen_force_register_use (stack_pointer_rtx));
@@ -36109,6 +36125,25 @@ arm_mode_base_reg_class (machine_mode mode)
 
 #undef TARGET_DOCUMENTATION_NAME
 #define TARGET_DOCUMENTATION_NAME "ARM"
+
+/* Implement TARGET_HERBCEPTIONS_CAPTURE_FAILED.  A herbceptions callee
+   leaves its discriminant in CPSR.C, and generic code needs it as a
+   value again only when the caller expands a `try'/`throws' result.
+   Capture it into a fresh pseudo right after the call, before the
+   expansion of the result can emit a flag-setting instruction of its
+   own.  */
+
+static rtx
+arm_herbceptions_capture_failed (tree)
+{
+  rtx tmp = gen_reg_rtx (QImode);
+
+  emit_insn (gen_herbceptions_failed (tmp));
+  return tmp;
+}
+
+#undef TARGET_HERBCEPTIONS_CAPTURE_FAILED
+#define TARGET_HERBCEPTIONS_CAPTURE_FAILED arm_herbceptions_capture_failed
 
 struct gcc_target targetm = TARGET_INITIALIZER;
 
