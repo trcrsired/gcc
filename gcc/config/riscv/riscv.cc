@@ -7749,7 +7749,22 @@ riscv_arg_partial_bytes (cumulative_args_t cum,
   return arg.stack_p ? arg.num_gprs * UNITS_PER_WORD : 0;
 }
 
-/* Implements hook TARGET_FUNCTION_VALUE.  */
+/* Implement TARGET_HERBCEPTIONS_CAPTURE_FAILED.  The discriminant is a
+   nominal register leaf in a2 rather than a flag, so unlike a flag
+   target it is not disturbed by the caller's own argument-popping
+   adjustment.  It is however call-clobbered, and materializing the
+   payload next may want a2 as a scratch, so snapshot it into a fresh
+   pseudo here, right after the call.  */
+
+static rtx
+riscv_herbceptions_capture_failed (tree)
+{
+  rtx tmp = gen_reg_rtx (QImode);
+  emit_insn (gen_herbceptions_failed (tmp));
+  return tmp;
+}
+
+/* Implement TARGET_FUNCTION_VALUE.  */
 
 rtx
 riscv_function_value (const_tree ret_type, const_tree fn_decl_or_type,
@@ -11133,9 +11148,21 @@ riscv_expand_epilogue (int style)
 	  && BITSET_P (cfun->machine->frame.mask, RETURN_ADDR_REGNUM)
 	  && !cfun->machine->interrupt_handler_p
 	  && !use_multi_pop)
-	emit_jump_insn (gen_simple_return_internal (t0));
+	{
+	  if (cfun->herbceptions_failed_slot != NULL_TREE)
+	    /* The discriminant rides in a2; keep it live across the
+	       epilogue.  See riscv.md.  */
+	    emit_jump_insn (gen_herbceptions_return (t0));
+	  else
+	    emit_jump_insn (gen_simple_return_internal (t0));
+	}
       else
-	emit_jump_insn (gen_simple_return_internal (ra));
+	{
+	  if (cfun->herbceptions_failed_slot != NULL_TREE)
+	    emit_jump_insn (gen_herbceptions_return (ra));
+	  else
+	    emit_jump_insn (gen_simple_return_internal (ra));
+	}
     }
 }
 
@@ -17339,6 +17366,9 @@ riscv_memtag_tag_bitsize ()
 
 #undef TARGET_FUNCTION_VALUE_REGNO_P
 #define TARGET_FUNCTION_VALUE_REGNO_P riscv_function_value_regno_p
+
+#undef TARGET_HERBCEPTIONS_CAPTURE_FAILED
+#define TARGET_HERBCEPTIONS_CAPTURE_FAILED riscv_herbceptions_capture_failed
 
 #undef TARGET_GET_RAW_RESULT_MODE
 #define TARGET_GET_RAW_RESULT_MODE riscv_get_raw_result_mode

@@ -149,6 +149,10 @@
   ;; XTheadInt unspec
   UNSPECV_XTHEADINT_PUSH
   UNSPECV_XTHEADINT_POP
+
+  ;; Herbceptions error-channel discriminant.
+  UNSPECV_HERBCEPTIONS_FAILED
+  UNSPECV_HERBCEPTIONS_SETF
 ])
 
 (define_constants
@@ -163,6 +167,7 @@
    (S1_REGNUM			9)
    (A0_REGNUM			10)
    (A1_REGNUM			11)
+   (A2_REGNUM			12)
    (S2_REGNUM			18)
    (S3_REGNUM			19)
    (S4_REGNUM			20)
@@ -4165,6 +4170,81 @@
 (define_insn "simple_return_internal"
   [(simple_return)
    (use (match_operand 0 "pmode_register_operand" ""))]
+  ""
+  "jr\t%0"
+  [(set_attr "type"	"jalr")
+   (set_attr "mode"	"none")])
+
+;; Herbceptions error-channel discriminant.  RISC-V has no condition
+;; flags, so the success/failure discriminant is a *nominal register
+;; leaf*: the payload comes back where the ABI puts it (a0, a0:a1 for
+;; values wider than XLEN) and the discriminant in a2 (X12) -- exactly
+;; where clang's herbceptions return lowering puts it
+;; (`llvm/test/CodeGen/RISCV/throws-attr.ll', RISCVCallingConv.cpp:"the
+;; throws (herbception) discriminant is returned in a2 (X12)").  a2 is
+;; also an argument register, but it is call-clobbered, so no live value
+;; can be parked there across a call.
+;;
+;; a2 is referred to as SImode throughout: it is a fixed ABI register
+;; rather than an operand, so it cannot use the `P' iterator (a mode
+;; iterator in the name of a pattern has to appear in the pattern's name
+;; to keep the per-value expansions distinct, and a fixed (reg ...)
+;; cannot do that).  SImode is a valid GPR mode on RV64 too, and the
+;; only reader of the leaf is a bit-0 test, so the width is immaterial --
+;; `andi' zeroes the rest of the register on RV64 anyway.
+;;
+;; Reading it materializes a bool.  Writing it stores the failure flag
+;; there at the end of the body, after every cleanup and the
+;; stack-protector check, on the shared return edge.
+
+(define_insn "herbceptions_failed"
+  [(set (match_operand:QI 0 "register_operand" "=r")
+	(unspec_volatile:QI [(reg:SI A2_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))]
+  ""
+  "andi\t%0,a2,1"
+  [(set_attr "type" "arith")])
+
+;; The failure flag is an ordinary stack slot (or a promoted register)
+;; during the body -- calls and scope-exit cleanups freely clobber a2 --
+;; so it is only moved into the discriminant register here.
+
+(define_expand "herbceptions_load_failed"
+  [(match_operand:QI 0 "general_operand")]
+  ""
+{
+  rtx op = operands[0];
+  if (GET_MODE (op) != QImode)
+    op = gen_lowpart (QImode, op);
+  if (!register_operand (op, QImode) && !memory_operand (op, QImode)
+      && !satisfies_constraint_I (op))
+    op = force_reg (QImode, op);
+  emit_insn (gen_herbceptions_load_failed_1 (op));
+  DONE;
+})
+
+(define_insn "herbceptions_load_failed_1"
+  [(set (reg:SI A2_REGNUM)
+	(unspec_volatile:SI
+	  [(match_operand:QI 0 "general_operand" "r,m,I")]
+	  UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "@
+   andi\ta2,%0,1
+   lbu\ta2,%0
+   li\ta2,%0"
+  [(set_attr "type" "arith")])
+
+;; The discriminant is a real return register, so the epilogue has to
+;; keep a2 live across it: `use' it in the return.  Nothing in the
+;; RISC-V epilogue writes a2 (it restores only ra and the callee-saved
+;; registers, and adjusts sp with an add that has no destination
+;; overlap), so the callee's value reaches the caller untouched.
+
+(define_insn "herbceptions_return"
+  [(parallel [(simple_return)
+	      (use (match_operand 0 "pmode_register_operand" ""))
+	      (use (reg:SI A2_REGNUM))])]
   ""
   "jr\t%0"
   [(set_attr "type"	"jalr")
