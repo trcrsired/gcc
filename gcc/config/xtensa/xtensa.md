@@ -22,6 +22,7 @@
 (define_constants [
   (A0_REG		0)
   (A1_REG		1)
+  (A4_REG		4)
   (A7_REG		7)
   (A8_REG		8)
   (A9_REG		9)
@@ -54,6 +55,8 @@
   UNSPECV_EH_RETURN
   UNSPECV_SET_TP
   UNSPECV_BLOCKAGE
+  UNSPECV_HERBCEPTIONS_FAILED
+  UNSPECV_HERBCEPTIONS_SETF
 ])
 
 ;; This code iterator allows signed and unsigned widening multiplications
@@ -1393,6 +1396,79 @@
     DONE;
   if (xtensa_emit_move_sequence (operands, QImode))
     DONE;
+})
+
+;; Herbceptions error-channel discriminant.  Xtensa has no practical way to
+;; move a boolean out of the boolean registers b0..b15 into a general
+;; register, so the discriminant is a nominal register leaf in a4, exactly
+;; where clang's herbceptions return lowering puts it -- see
+;; llvm/test/CodeGen/Xtensa/throws-attr.ll: the callee writes "movi a4, 0/1"
+;; before ret (call0) or retw (windowed), and the caller reads the leaf back,
+;; which is a4 under call0 and a12 under the windowed ABI, where the callee's
+;; a4 is the caller's a12 after the register window rotation.
+
+(define_expand "herbceptions_load_failed"
+  [(match_operand 0 "general_operand")]
+  ""
+{
+  rtx op = operands[0];
+  rtx tmp = gen_reg_rtx (SImode);
+
+  if (MEM_P (op))
+    op = validize_mem (op);
+
+  if (CONST_INT_P (op))
+    {
+      emit_move_insn (tmp, gen_int_mode (INTVAL (op) & 1, SImode));
+      op = tmp;
+    }
+  else if (GET_MODE (op) != SImode)
+    {
+      /* The flag is a boolean; anything narrower than a word has to be
+	 widened before it goes into the return register.  */
+      if (!REG_P (op))
+	op = force_reg (GET_MODE (op), op);
+      emit_insn (gen_rtx_SET (tmp, gen_rtx_ZERO_EXTEND (SImode, op)));
+      op = tmp;
+    }
+  else if (!REG_P (op))
+    op = force_reg (SImode, op);
+
+  /* The discriminant is left in the callee's own a4 as the last thing
+     the body does before the epilogue.  The insn is volatile because
+     the register is a return channel -- a plain move would look dead
+     and be deleted.  */
+  emit_insn (gen_herbceptions_set_failed (op));
+  DONE;
+})
+
+;; Store the failure discriminant in the callee's a4, the register the
+;; caller looks at.  The value is a plain 0 or 1, matching clang's
+;; herbceptions return lowering ("movi a4, 0/1" before ret/retw).
+
+(define_insn "herbceptions_set_failed"
+  [(set (reg:SI A4_REG)
+	(unspec_volatile:SI [(match_operand:SI 0 "register_operand" "a")]
+			    UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "mov\ta4, %0"
+  [(set_attr "mode" "SI")])
+
+(define_expand "herbceptions_failed"
+  [(match_operand 0 "register_operand")]
+  ""
+{
+  /* What we see is the callee's a4: the register window has already
+     rotated back by WINDOW_SIZE, so under the windowed ABI that is our
+     own a12 -- the third argument register -- and under call0, where
+     there is no rotation, it is our own a4.  */
+  machine_mode mode = GET_MODE (operands[0]);
+  rtx src = gen_rtx_REG (mode, GP_ARG_FIRST + 2 + WINDOW_SIZE);
+
+  if (!REG_P (operands[0]))
+    operands[0] = gen_reg_rtx (mode);
+  emit_move_insn (operands[0], src);
+  DONE;
 })
 
 (define_insn "movqi_internal"

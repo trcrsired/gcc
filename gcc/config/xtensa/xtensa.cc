@@ -405,6 +405,22 @@ TARGET_GNU_ATTRIBUTES (xtensa_attribute_table,
 #undef TARGET_ATTRIBUTE_TABLE
 #define TARGET_ATTRIBUTE_TABLE xtensa_attribute_table
 
+/* Implement TARGET_HERBCEPTIONS_CAPTURE_FAILED.  A herbceptions callee
+   leaves its discriminant in its a4; read it back into a fresh register
+   right after the call, before anything else can overwrite it.  */
+
+static rtx
+xtensa_herbceptions_capture_failed (tree)
+{
+  rtx tmp = gen_reg_rtx (QImode);
+
+  emit_insn (gen_herbceptions_failed (tmp));
+  return tmp;
+}
+
+#undef TARGET_HERBCEPTIONS_CAPTURE_FAILED
+#define TARGET_HERBCEPTIONS_CAPTURE_FAILED xtensa_herbceptions_capture_failed
+
 struct gcc_target targetm = TARGET_INITIALIZER;
 
 
