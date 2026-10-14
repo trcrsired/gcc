@@ -1565,6 +1565,54 @@
   [(set_attr "type" "branch")
    (set_attr "sls_length" "retbr")])
 
+(define_peephole2
+  [(set (match_operand:QI 0 "register_operand")
+	(unspec_volatile:QI [(reg:CC_C CC_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))
+   (parallel
+     [(set (pc)
+	   (if_then_else (ne (zero_extract:GPI
+			       (match_operand:GPI 3 "register_operand")
+			       (const_int 1) (const_int 0))
+			     (const_int 0))
+			  (label_ref (match_operand 2))
+			  (pc)))
+      (clobber (reg:CC CC_REGNUM))])]
+  "REGNO (operands[0]) == REGNO (operands[3])"
+  [(set (match_dup 0)
+	(unspec_volatile:QI [(reg:CC_C CC_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))
+   (set (pc)
+	(if_then_else (ltu (reg:CC_C CC_REGNUM) (const_int 0))
+		      (label_ref (match_dup 2))
+		      (pc)))]
+)
+
+;; Replace `cset Wd, cs' + `tbnz Wd, #0' with a direct `bcs'/`bcc' on the
+;; carry flag.  The byte is dead afterwards, so the two insns collapse to a
+;; single conditional branch.  Mirrors the x86 setc/testb/jcc fold.
+
+(define_peephole2
+  [(set (match_operand:QI 0 "register_operand")
+	(unspec_volatile:QI [(reg:CC_C CC_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))
+   (parallel
+     [(set (pc)
+	   (if_then_else (eq (zero_extract:GPI
+			       (match_operand:GPI 4 "register_operand")
+			       (const_int 1) (const_int 0))
+			     (const_int 0))
+			  (label_ref (match_operand 2))
+			  (pc)))
+      (clobber (reg:CC CC_REGNUM))])]
+  "REGNO (operands[0]) == REGNO (operands[4])"
+  [(set (pc)
+	(if_then_else (geu (reg:CC_C CC_REGNUM) (const_int 0))
+		      (label_ref (match_dup 2))
+		      (pc)))]
+)
+
+
 (define_expand "save_stack_nonlocal"
   [(set (match_operand 0 "memory_operand")
         (match_operand 1 "register_operand"))]
