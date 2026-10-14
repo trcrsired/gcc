@@ -3961,6 +3961,14 @@ ix86_handle_abi_attribute (tree *node, tree name, tree, int,
 	error ("X32 does not support %<wincall%> attribute");
       if (!TARGET_64BIT)
 	error ("%<wincall%> attribute is only supported on x86-64");
+      /* The convention hands out RCX, RDX, R8, R9, R16, R17, R18 and R19
+	 as its integer argument registers, so it is only usable where the
+	 last four exist at all.  Without EGPR the backend cannot encode
+	 them, so reject the attribute up front rather than hand out
+	 registers that cannot appear in an instruction.  */
+      if (TARGET_64BIT && !TARGET_APX_EGPR)
+	error ("%<wincall%> attribute requires APX EGPR support; "
+	       "compile with %<-mapxf%>");
       return NULL_TREE;
     }
   else if (is_attribute_p ("ms_abi", name))

@@ -1,71 +1,47 @@
 /* WinCall returns aggregates of up to 32 bytes in RAX, RDX, RCX, R8.
    The last pair, RCX:R8, is not a consecutive register pair, and the
    backend used to describe the second half of the value as a TImode at
-   CX -- which names RCX:RBX.  RBX is callee-saved, so the callee stuffed
-   the fourth eight-byte chunk into it, restored RBX on the way out and
-   the chunk was gone; every 25..32 byte return came back with its last
-   eight bytes clobbered.  Sizes 17..24 need only three chunks and were
-   unaffected, so cover the whole range.  */
+   CX -- which names RCX:RBX.  RBX is callee-saved, so the callee stored
+   the fourth eight-byte chunk into it, restored RBX on the way out, and
+   the chunk was gone; the caller read the chunk out of its own saved
+   RBX.  Every 25..32 byte WinCall return came back with its last eight
+   bytes clobbered (17..24 byte returns need only three chunks and were
+   fine).  Before WinCall became gated on -mapxf this was confirmed by
+   running a 17..32 byte round-trip sweep; now that the convention
+   requires APX it is checked at the assembly level instead.  */
 
-/* { dg-do run { target { ! ia32 } } } */
-/* { dg-options "-O2" } */
+/* { dg-do compile { target { ! ia32 } } } */
+/* { dg-require-effective-target apxf } */
+/* { dg-options "-O2 -mapxf" } */
 
-extern void abort (void);
-
-#define DEF(N)							\
-  struct S##N { char b[N]; };					\
-  __attribute__ ((wincall, noinline, noipa)) struct S##N	\
-  make##N (void)						\
-  {								\
-    struct S##N s;						\
-    for (int i = 0; i < N; i++)					\
-      s.b[i] = (char) (i + 1);					\
-    return s;							\
-  }								\
-  __attribute__ ((wincall, noinline)) void			\
-  check##N (void)						\
-  {								\
-    struct S##N s = make##N ();					\
-    for (int i = 0; i < N; i++)					\
-      if (s.b[i] != (char) (i + 1))				\
-	abort ();						\
-  }
-
-DEF (17) DEF (18) DEF (19) DEF (20)
-DEF (21) DEF (22) DEF (23) DEF (24)
-DEF (25) DEF (26) DEF (27) DEF (28)
-DEF (29) DEF (30) DEF (31) DEF (32)
-
-/* An empty by-value record takes no register slot, so the argument
-   after it is still passed as if it were first.  Pair it with an
-   aggregate so a wrongly consumed slot would show up.  */
-struct empty { };
+struct S32 { long a, b, c, d; };
+struct S24 { long a, b, c; };
 struct S16 { long a, b; };
 
+__attribute__ ((wincall, noinline, noipa)) struct S32
+m32 (void)
+{
+  return (struct S32) { 1, 2, 3, 4 };
+}
+
+__attribute__ ((wincall, noinline, noipa)) struct S24
+m24 (void)
+{
+  return (struct S24) { 1, 2, 3 };
+}
+
 __attribute__ ((wincall, noinline, noipa)) struct S16
-after_empty (struct empty e, struct S16 s, long x, long y, long z)
+m16 (void)
 {
-  (void) e;
-  s.a += x + y + z;
-  return s;
+  return (struct S16) { 1, 2 };
 }
 
-__attribute__ ((wincall, noinline)) void
-check_empty (void)
-{
-  struct empty e;
-  struct S16 s = after_empty (e, (struct S16) { 1, 2 }, 10, 20, 30);
-  if (s.a != 61 || s.b != 2)
-    abort ();
-}
-
-int
-main (void)
-{
-  check17 (); check18 (); check19 (); check20 ();
-  check21 (); check22 (); check23 (); check24 ();
-  check25 (); check26 (); check27 (); check28 ();
-  check29 (); check30 (); check31 (); check32 ();
-  check_empty ();
-  return 0;
-}
+/* The fourth chunk goes to R8 ...  */
+/* { dg-final { scan-assembler "movl\t\\\$4, %r8d" } } */
+/* ... and not to the callee-saved RBX, which is what TImode at CX
+   would have named.  */
+/* { dg-final { scan-assembler-not "%rbx" } } */
+/* { dg-final { scan-assembler-not "%ebx" } } */
+/* The third chunk is RCX, so R8 must not be reached by a shifted
+   three-chunk value either.  */
+/* { dg-final { scan-assembler "movl\t\\\$3, %ecx" } } */

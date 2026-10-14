@@ -3411,6 +3411,13 @@ function_arg_advance_wincall (CUMULATIVE_ARGS *cum, machine_mode mode,
   if (type != NULL_TREE && is_empty_type (type))
     return 0;
 
+  /* A C empty record is a different animal: it has size zero, and the
+     middle end then hands us no type at all, so the test above cannot
+     see it.  The fallback below would give it a register and shift every
+     following argument by one.  */
+  if (bytes == 0)
+    return 0;
+
   if (wincall_sse_mode_p (mode))
     {
       cum->words += words;
@@ -3811,6 +3818,11 @@ function_arg_wincall (const CUMULATIVE_ARGS *cum, machine_mode mode,
 
   /* Empty C++ records take no register slots.  */
   if (type != NULL_TREE && is_empty_type (type))
+    return NULL_RTX;
+
+  /* As in function_arg_advance_wincall: a C empty record has size zero
+     and arrives with no type, and must not take a register either.  */
+  if (bytes == 0)
     return NULL_RTX;
 
   /* Scalar FP and small complex values are passed in the independent XMM
