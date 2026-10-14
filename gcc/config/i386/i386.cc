@@ -3991,10 +3991,15 @@ ix86_pass_by_reference_abi (enum calling_abi call_abi,
 		}
 	    }
 
-	  /* __m128 is passed by reference.  */
+	  /* __m128 is passed by reference under the MS ABI.  */
 	  if (call_abi == WINCALL_ABI)
-	    return (msize != 1 && msize != 2 && msize != 4 && msize != 8
-		    && msize != 16 && msize != 32);
+	    /* WinCall has no x87 and expands every aggregate of up to 32
+	       bytes into eight-byte chunks in the integer argument
+	       registers, matching function_arg_advance_wincall and
+	       function_arg_wincall; only larger aggregates go by invisible
+	       reference.  The MS power-of-two rule below would send a
+	       24-byte aggregate to memory instead.  */
+	    return msize > 32;
 	  return msize != 1 && msize != 2 && msize != 4 && msize != 8;
 	}
       else if (arg.type && int_size_in_bytes (arg.type) == -1)
