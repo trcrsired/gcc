@@ -690,6 +690,21 @@ loongarch_function_value_1 (const_tree type, const_tree func,
 }
 
 
+/* Implement TARGET_HERBCEPTIONS_CAPTURE_FAILED.  The discriminant is a
+   nominal register leaf in a2 rather than a flag, so unlike a flag
+   target it is not disturbed by the caller's own argument-popping
+   adjustment.  It is however call-clobbered, and materializing the
+   payload next may want a2 as a scratch, so snapshot it into a fresh
+   pseudo here, right after the call.  */
+
+static rtx
+loongarch_herbceptions_capture_failed (tree)
+{
+  rtx tmp = gen_reg_rtx (QImode);
+  emit_insn (gen_herbceptions_failed (tmp));
+  return tmp;
+}
+
 /* Implement TARGET_FUNCTION_VALUE.  */
 
 static rtx
@@ -1456,7 +1471,12 @@ loongarch_expand_epilogue (int style)
   /* Handle simple returns.  */
   if (style == NORMAL_RETURN && loongarch_can_use_return_insn ())
     {
-      emit_jump_insn (gen_return ());
+      if (cfun->herbceptions_failed_slot != NULL_TREE)
+	/* The discriminant rides in $r6; keep it live across the
+	   return.  See loongarch.md.  */
+	emit_jump_insn (gen_herbceptions_return (ra));
+      else
+	emit_jump_insn (gen_return ());
       return;
     }
 
@@ -1559,7 +1579,12 @@ loongarch_expand_epilogue (int style)
 
   /* Emit return unless doing sibcall.  */
   if (style != SIBCALL_RETURN)
-    emit_jump_insn (gen_simple_return_internal (ra));
+    {
+      if (cfun->herbceptions_failed_slot != NULL_TREE)
+	emit_jump_insn (gen_herbceptions_return (ra));
+      else
+	emit_jump_insn (gen_simple_return_internal (ra));
+    }
 }
 
 #define LU32I_B (0xfffffULL << 32)
@@ -12282,6 +12307,10 @@ loongarch_output_asm_load_canary (rtx reg, rtx canary, rtx tmp)
 #define TARGET_FUNCTION_VALUE loongarch_function_value
 #undef TARGET_LIBCALL_VALUE
 #define TARGET_LIBCALL_VALUE loongarch_libcall_value
+
+#undef TARGET_HERBCEPTIONS_CAPTURE_FAILED
+#define TARGET_HERBCEPTIONS_CAPTURE_FAILED \
+  loongarch_herbceptions_capture_failed
 
 #undef TARGET_ASM_OUTPUT_MI_THUNK
 #define TARGET_ASM_OUTPUT_MI_THUNK loongarch_output_mi_thunk

@@ -104,6 +104,10 @@
   UNSPECV_LDPTE
   UNSPECV_ERTN
 
+  ;; Herbceptions error-channel discriminant.
+  UNSPECV_HERBCEPTIONS_FAILED
+  UNSPECV_HERBCEPTIONS_SETF
+
   ;; Stack checking.
   UNSPECV_PROBE_STACK_RANGE
 
@@ -122,6 +126,7 @@
 (define_constants
   [(RETURN_ADDR_REGNUM		1)
    (TP_REGNUM			2)
+   (A2_REGNUM			6)
    (T0_REGNUM			12)
    (T1_REGNUM			13)
    (S0_REGNUM			23)
@@ -4055,6 +4060,81 @@
 (define_insn "<optab>_internal"
   [(any_return)
    (use (match_operand 0 "pmode_register_operand" ""))]
+  ""
+  "jr\t%0"
+  [(set_attr "type" "jump")
+   (set_attr "mode" "none")])
+
+;; Herbceptions error-channel discriminant.  Like the other flagless
+;; targets, LoongArch carries the success/failure discriminant as a
+;; *nominal register leaf*: the payload comes back where the base ABI
+;; puts it (a0, or a0:a1 for values wider than GRLen) and the
+;; discriminant in a2 ($r6) -- exactly where clang's herbceptions return
+;; lowering puts it (`llvm/test/CodeGen/LoongArch/throws-attr.ll',
+;; LoongArchISelLowering.cpp:"the throws (herbception) discriminant is
+;; returned in a2 (R6)").  a2 is an argument register, but it is
+;; call-clobbered, so no live value can be parked there across a call.
+;;
+;; a2 is spelled SImode: it is a fixed ABI register rather than an
+;; operand, so it cannot use the `P' mode iterator (a mode iterator has
+;; to appear in the pattern's name to keep the per-value expansions
+;; apart, which a fixed (reg ...) cannot do).  SImode is a valid GPR
+;; mode on LA64 as well, and the only reader of the leaf is a bit-0 test.
+;;
+;; Reading it materializes a bool.  Writing it stores the failure flag
+;; there at the end of the body, after every cleanup and the
+;; stack-protector check, on the shared return edge.
+
+(define_insn "herbceptions_failed"
+  [(set (match_operand:QI 0 "register_operand" "=r")
+	(unspec_volatile:QI [(reg:SI A2_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))]
+  ""
+  "andi\t%0,$r6,1"
+  [(set_attr "type" "logical")])
+
+;; The failure flag is an ordinary stack slot (or a promoted register)
+;; during the body -- calls and scope-exit cleanups freely clobber a2 --
+;; so it is only moved into the discriminant register here.
+
+(define_expand "herbceptions_load_failed"
+  [(match_operand:QI 0 "general_operand")]
+  ""
+{
+  rtx op = operands[0];
+  if (GET_MODE (op) != QImode)
+    op = gen_lowpart (QImode, op);
+  if (!register_operand (op, QImode) && !memory_operand (op, QImode)
+      && !satisfies_constraint_K (op))
+    op = force_reg (QImode, op);
+  emit_insn (gen_herbceptions_load_failed_1 (op));
+  DONE;
+})
+
+(define_insn "herbceptions_load_failed_1"
+  [(set (reg:SI A2_REGNUM)
+	(unspec_volatile:SI
+	  [(match_operand:QI 0 "general_operand" "r,m,K")]
+	  UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "@
+   andi\t$r6,%0,1
+   ld.bu\t$r6,%0
+   ori\t$r6,$r0,%0"
+  [(set_attr "type" "logical,load,const")])
+
+;; The discriminant is a real return register, so the epilogue has to
+;; keep a2 live across it: `use' it in the return.  Nothing in the
+;; LoongArch epilogue writes a2 (it restores only ra and the callee-saved
+;; registers, and adjusts sp with an add that has no destination
+;; overlap), so the callee's value reaches the caller untouched.  The
+;; trivial-return path has no frame to unwind and so nothing that could
+;; clobber a2 either, but it still has to name the use.
+
+(define_insn "herbceptions_return"
+  [(parallel [(simple_return)
+	      (use (match_operand 0 "pmode_register_operand" ""))
+	      (use (reg:SI A2_REGNUM))])]
   ""
   "jr\t%0"
   [(set_attr "type" "jump")
