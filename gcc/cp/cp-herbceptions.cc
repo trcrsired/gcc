@@ -1065,6 +1065,24 @@ hb_begin_catch_expr (location_t loc)
 			      build_exc_ptr ());
 }
 
+/* __builtin_eh_pointer (0) -- the _Unwind_Exception * the personality
+   handed the landing pad -- passed straight to the fabrication entry
+   point.  That one wants the unwind header, not the object
+   __cxa_begin_catch would return: it classifies the header and adopts
+   the in-flight reference.  It also retires the uncaught-exception
+   count __cxa_throw added itself, so no __cxa_begin_catch may be
+   entered here and no __cxa_end_catch may release the reference the
+   minted code now owns.  clang passes the pointer through and calls
+   neither; feeding it __cxa_begin_catch's object made the header
+   compare as a foreign exception and abort.  */
+
+static tree
+hb_legacy_exc_ptr (void)
+{
+  hb_eh_fndecls ();
+  return build_exc_ptr ();
+}
+
 /* Emit the std::error fabrication for the exception caught by
    __cxa_begin_catch: a channel-local pair bound to
    { __cxa_error_domain_itanium_exception_ptr (),
@@ -1097,7 +1115,7 @@ hb_emit_fab_pair (tree *list, location_t loc)
 			cf, NULL_TREE),
 		build_call_expr_loc (loc, hb_exc_code_fn, 4,
 				     integer_one_node,
-				     hb_begin_catch_expr (loc),
+				     hb_legacy_exc_ptr (),
 				     null_pointer_node,
 				     null_pointer_node)),
      list);
@@ -1105,7 +1123,8 @@ hb_emit_fab_pair (tree *list, location_t loc)
 }
 
 /* Build a catch-all CATCH_EXPR running STMTS with the implicit
-   __cxa_end_catch cleanup.  For a `catch throws' conversion STMTS
+   and, when ENTERED_CATCH, the __cxa_end_catch cleanup it requires.  For a
+   `catch throws' conversion STMTS
    fabricate the handler variable and jump to the dispatch label; for
    a `throws' function boundary they write the channel and return.
    Emit GENERIC CATCH_EXPR directly — the earlier HANDLER form let
@@ -1113,13 +1132,21 @@ hb_emit_fab_pair (tree *list, location_t loc)
    `catch (void)' filter (_ZTIv) that matches nothing.  */
 
 static tree
-hb_legacy_catch_all (location_t loc, tree stmts)
+hb_legacy_catch_all (location_t loc, tree stmts, bool entered_catch)
 {
-  hb_eh_fndecls ();
-  tree endc
-    = build_stmt (loc, EXPR_STMT,
-		  build_call_expr_loc (loc, hb_end_catch_fn, 0));
-  tree body = build_stmt (loc, TRY_FINALLY_EXPR, stmts, endc);
+  /* Only a path that actually entered the catch may end it: the
+     fabrication paths let the minted code adopt the exception's
+     reference instead, so an __cxa_end_catch there would free it from
+     under the code.  */
+  tree body = stmts;
+  if (entered_catch)
+    {
+      hb_eh_fndecls ();
+      tree endc
+	= build_stmt (loc, EXPR_STMT,
+		      build_call_expr_loc (loc, hb_end_catch_fn, 0));
+      body = build_stmt (loc, TRY_FINALLY_EXPR, stmts, endc);
+    }
   return build2 (CATCH_EXPR, void_type_node, NULL_TREE, body);
 }
 
@@ -1158,7 +1185,7 @@ hb_fn_boundary (hb_ctx *ctx, tree body, location_t loc, bool fabricate)
 		      builtin_decl_explicit (BUILT_IN_ABORT), 0)),
 	 &action);
     }
-  tree h = hb_legacy_catch_all (loc, action);
+  tree h = hb_legacy_catch_all (loc, action, !fabricate);
   tree tc = build_stmt (loc, TRY_CATCH_EXPR, body, h);
   tree list = alloc_stmt_list ();
   append_to_statement_list (tc, &list);
@@ -1262,7 +1289,8 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
 	(build_stmt (loc, GOTO_EXPR, disp), &fab);
       if (!legacy)
 	legacy = alloc_stmt_list ();
-      append_to_statement_list (hb_legacy_catch_all (loc, fab),
+      append_to_statement_list (hb_legacy_catch_all (loc, fab,
+						     handler_var == NULL_TREE),
 				&legacy);
     }
 
