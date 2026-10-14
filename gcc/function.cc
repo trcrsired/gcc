@@ -5479,6 +5479,12 @@ use_return_register (void)
    type, or NULL_TREE for a caller that only wants the return registers
    themselves.
 
+   OUTGOING says which end we are: true when this function is the one
+   returning the channel, false at a call site.  The two differ where
+   the ABI has register windows and names the return register from the
+   point of view of each side, as on SPARC (callee %i0, caller %o0) and
+   Xtensa (callee a2, caller a10 under the windowed ABI).
+
    hard_function_value supplies the right registers for whatever ABI
    places the payload in registers, but it can also hand back a mode the
    target promoted the return to (loongarch promotes any integer mode to
@@ -5488,9 +5494,10 @@ use_return_register (void)
    ordinary promoted return value.  */
 
 rtx
-herbceptions_channel_value (tree slot_type, tree decl, tree decl_type)
+herbceptions_channel_value (tree slot_type, tree decl, tree decl_type,
+			     bool outgoing)
 {
-  rtx valreg = hard_function_value (slot_type, decl, decl_type, 1);
+  rtx valreg = hard_function_value (slot_type, decl, decl_type, outgoing);
   machine_mode tmode = TYPE_MODE (slot_type);
 
   if (REG_P (valreg)
@@ -5586,7 +5593,8 @@ expand_function_end (void)
       tree slot = cfun->herbceptions_error_slot;
       rtx valreg = herbceptions_channel_value (TREE_TYPE (slot),
 					       current_function_decl,
-					       TREE_TYPE (current_function_decl));
+					       TREE_TYPE (current_function_decl),
+					       true);
       REG_FUNCTION_VALUE_P (valreg) = 1;
       crtl->return_rtx = valreg;
       /* The union local is an ordinary automatic variable and can be

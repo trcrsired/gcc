@@ -3494,7 +3494,7 @@ expand_HERBCEPTION_RESULT (internal_fn, gcall *stmt)
     return;
   rtx target = expand_expr (lhs, NULL_RTX, VOIDmode, EXPAND_WRITE);
   rtx valreg = herbceptions_channel_value (TREE_TYPE (lhs), NULL_TREE,
-					   NULL_TREE);
+					   NULL_TREE, false);
   if (GET_CODE (valreg) == PARALLEL)
     emit_group_store (target, valreg, TREE_TYPE (lhs),
 		      int_size_in_bytes (TREE_TYPE (lhs)));
