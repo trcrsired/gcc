@@ -3963,7 +3963,13 @@ declare_return_variable (copy_body_data *id, tree return_slot, tree modify_dest,
 	    temp = make_ssa_name (temp);
 	    insert_decl_map (id, default_def, temp);
 	  }
-      insert_init_stmt (id, entry_bb, gimple_build_assign (temp, var));
+      /* VAR is the caller's destination lvalue (or its address).  The
+	 body being inlined keeps referring to that same tree node -- the
+	 front end may have materialised the result through it -- so the
+	 initialising statement has to use its own copy, or the two
+	 statements share a node and verify_gimple rejects the function.  */
+      insert_init_stmt (id, entry_bb,
+			gimple_build_assign (temp, unshare_expr (var)));
     }
   else
     insert_decl_map (id, result, var);
