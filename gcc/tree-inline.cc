@@ -5331,7 +5331,17 @@ expand_call_inline (basic_block bb, gimple *stmt, copy_body_data *id,
       && gimple_call_lhs (stmt) != NULL_TREE
       && !VOID_TYPE_P (TREE_TYPE (gimple_call_lhs (stmt)))
       && !targetm.calls.return_in_memory (TREE_TYPE (gimple_call_lhs (stmt)),
-					  TREE_TYPE (id->src_fn)))
+					  TREE_TYPE (id->src_fn))
+      /* The front end decides "returned in memory" with
+	 aggregate_value_p (it honours DECL_BY_REFERENCE and the
+	 transparent-aggregate rule); a target hook can disagree --
+	 notably an sret coroutine ramp whose result type is
+	 non-trivially destructible.  Only redirect genuinely
+	 scalar/register returns to the channel: an in-memory
+	 result is written to DECL_RESULT, not the channel, so
+	 redirecting it would hand back an uninitialised value.  */
+      && !aggregate_value_p (TREE_TYPE (gimple_call_lhs (stmt)),
+			     TREE_TYPE (id->src_fn)))
     use_retvar = build1 (VIEW_CONVERT_EXPR,
 			 TREE_TYPE (gimple_call_lhs (stmt)), hb_new_error);
 
