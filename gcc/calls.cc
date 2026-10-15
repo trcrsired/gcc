@@ -2631,6 +2631,23 @@ can_implement_as_sibling_call_p (tree exp,
       return false;
     }
 
+  /* A herbceptions function returns an out-of-band failure discriminant
+     in a flag register, materialised from its own failure slot at the
+     return point.  A sibling call skips that point and lets the callee
+     supply the caller's result; that is only sound when the callee also
+     produces a herbceptions discriminant, which then is exactly the one
+     the caller would have returned.  When the callee has no spec it
+     establishes nothing, so the caller's success edge would inherit
+     whatever the callee left in the flag register.  */
+  if (cfun->herbceptions_failed_slot != NULL_TREE
+      && !fn_has_herbceptions_spec_p (funtype))
+    {
+      maybe_complain_about_tail_call (exp,
+				      _("callee does not produce a "
+					"herbceptions failure discriminant"));
+      return false;
+    }
+
   if (TYPE_VOLATILE (TREE_TYPE (TREE_TYPE (addr)))
       && !CALL_EXPR_MUST_TAIL_CALL (exp))
     {
