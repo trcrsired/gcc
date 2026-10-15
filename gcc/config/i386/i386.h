@@ -1044,14 +1044,16 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
    Bit three is set if the register is call used on TARGET_64BIT_MS_ABI.
 
    R30 and R31 (the upper APX registers) use value 4: the Win64-family
-   callee-saved set includes them -- this is the in-tree draft rule that
-   clang implements as CSR_Win64_APX -- so they are call used only on
-   the 64-bit SysV ABI.  The point is to keep the classic x64
+   callee-saved set includes them -- Microsoft publishes this rule for
+   APX ("When APX support is present, registers R16-R29 are volatile.
+   R30 and R31 are nonvolatile", x64 calling convention) and clang
+   implements the same set as CSR_Win64_APX -- so they are call used
+   only on the 64-bit SysV ABI.  The point is to keep the classic x64
    callee-saved set bit-identical to WinCall's, so that switching
    between the two conventions needs no callee-saved register shuffling
-   at all.  (Both compilers carry that rule as a draft; it is the
-   herbceptions convention, not something taken from a published
-   Microsoft document.)
+   at all.  setjmp and longjmp cannot carry them across (the 256-byte
+   _JUMP_BUFFER is frozen); the unwinder restores them instead, per the
+   x64 unwind information V3 format.
 
    Proper values are computed in TARGET_CONDITIONAL_REGISTER_USAGE.  */
 
