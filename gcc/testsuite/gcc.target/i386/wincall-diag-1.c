@@ -1,8 +1,8 @@
 /* WinCall attribute diagnostics.  `wincall' is a distinct calling
    convention, so it may not be combined with the two x86 ABI attributes,
-   and it is only meaningful where the four extended argument registers
-   exist (x86-64 with APX EGPR).  The no-APX error and the 32-bit error
-   are covered separately in wincall-no-apx-1.c; this pins the two
+   and it is only meaningful on x86-64.  A function that uses WinCall now
+   implies APX EGPR instead of rejecting the attribute without -mapxf;
+   that is checked in wincall-implies-apx-1.c and -2.c.  This pins the two
    attribute-compatibility errors and the X32 rejection.  */
 
 /* { dg-do compile { target { ! ia32 } } } */

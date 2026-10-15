@@ -1043,6 +1043,16 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
    Bit two is set if the register is call used on TARGET_64BIT ABI.
    Bit three is set if the register is call used on TARGET_64BIT_MS_ABI.
 
+   R30 and R31 (the upper APX registers) use value 4: the Win64-family
+   callee-saved set includes them -- this is the in-tree draft rule that
+   clang implements as CSR_Win64_APX -- so they are call used only on
+   the 64-bit SysV ABI.  The point is to keep the classic x64
+   callee-saved set bit-identical to WinCall's, so that switching
+   between the two conventions needs no callee-saved register shuffling
+   at all.  (Both compilers carry that rule as a draft; it is the
+   herbceptions convention, not something taken from a published
+   Microsoft document.)
+
    Proper values are computed in TARGET_CONDITIONAL_REGISTER_USAGE.  */
 
 #define CALL_USED_REGISTERS_MASK(IS_64BIT_MS_ABI) \
@@ -1070,7 +1080,7 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 /*  r16,  r17, r18, r19, r20, r21, r22, r23*/			\
      1,   1,   1,   1,   1,   1,   1,   1,			\
 /*  r24,  r25, r26, r27, r28, r29, r30, r31*/			\
-     1,   1,   1,   1,   1,   1,   1,   1,			\
+     1,   1,   1,   1,   1,   1,   4,   4,			\
 /*  tmm*/							\
      1,								\
 /*  bsr0*/							\

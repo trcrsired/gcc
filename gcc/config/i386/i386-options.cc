@@ -66,6 +66,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "pass_manager.h"
 #include "target-globals.h"
 #include "gimple-iterator.h"
+#include "gimple-walk.h"
 #include "shrink-wrap.h"
 #include "builtins.h"
 #include "rtl-iter.h"
@@ -3243,6 +3244,115 @@ ix86_option_override (void)
 /* Remember the last target of ix86_set_current_function.  */
 static GTY(()) tree ix86_previous_fndecl;
 
+/* The WinCall convention hands out RCX, RDX, R8, R9, R16, R17, R18 and R19
+   as its integer argument registers, so it needs APX EGPR: the WinCall
+   function itself reads the extra registers, and every caller has to be able
+   to name R16-R19 in order to forward the fifth and later arguments.  Rather
+   than reject the attribute without -mapxf, a function that uses the
+   convention as callee or caller is compiled with EGPR enabled; see
+   ix86_set_current_function.  */
+
+/* Target-option node with EGPR turned on, built from the translation unit
+   defaults the first time a WinCall function is compiled.  Functions that
+   use it get the APX register file because the per-function target globals
+   are recomputed from it.  */
+static GTY(()) tree ix86_wincall_target_node;
+
+/* Return a copy of target-option node BASE with APX EGPR enabled.  */
+
+static tree
+ix86_egpr_target_node (tree base)
+{
+  struct gcc_options opts = global_options;
+  struct gcc_options opts_set = global_options_set;
+  cl_target_option_restore (&opts, &opts_set, TREE_TARGET_OPTION (base));
+  opts.x_ix86_apx_features |= apx_egpr;
+  return build_target_option_node (&opts, &opts_set);
+}
+
+/* Return true if statement STMT is a call to a function that uses the
+   WinCall convention.  */
+
+static bool
+ix86_call_uses_wincall_p (gimple *stmt)
+{
+  gcall *call = dyn_cast <gcall *> (stmt);
+  tree fntype = call ? gimple_call_fntype (call) : NULL_TREE;
+  return fntype != NULL_TREE && ix86_function_type_abi (fntype) == WINCALL_ABI;
+}
+
+/* walk_gimple_seq callback for ix86_caller_uses_wincall_p.  Abort the walk as
+   soon as a WinCall call is found.  */
+
+static tree
+ix86_wincall_call_walk (gimple_stmt_iterator *gsi, bool *handled_ops,
+			struct walk_stmt_info *wi)
+{
+  if (ix86_call_uses_wincall_p (gsi_stmt (*gsi)))
+    {
+      *((bool *) wi->info) = true;
+      *handled_ops = true;
+      return integer_zero_node;
+    }
+  return NULL_TREE;
+}
+
+/* Return true if FNDECL calls a function that uses the WinCall convention.
+
+   WinCall passes the fifth and later integer arguments in R16-R19, so a
+   caller has to be able to name those registers and therefore needs APX EGPR
+   just as the WinCall function it calls does.  */
+
+static bool
+ix86_caller_uses_wincall_p (tree fndecl)
+{
+  struct function *fn = DECL_STRUCT_FUNCTION (fndecl);
+  basic_block bb;
+
+  if (fn == NULL)
+    return false;
+
+  if (fn->cfg)
+    {
+      FOR_EACH_BB_FN (bb, fn)
+	for (gimple_stmt_iterator gsi = gsi_start_bb (bb);
+	     !gsi_end_p (gsi); gsi_next (&gsi))
+	  if (ix86_call_uses_wincall_p (gsi_stmt (gsi)))
+	    return true;
+      return false;
+    }
+
+  /* Before the CFG is built the statements are still in the body
+     sequence.  */
+  if (fn->gimple_body)
+    {
+      struct walk_stmt_info wi;
+      bool found = false;
+      memset (&wi, 0, sizeof (wi));
+      wi.info = &found;
+      walk_gimple_seq (fn->gimple_body, ix86_wincall_call_walk, NULL, &wi);
+      return found;
+    }
+
+  return false;
+}
+
+/* Return true if FNDECL needs APX EGPR because it uses the WinCall convention
+   either as a callee (it carries the attribute) or as a caller (its body
+   calls a WinCall function).  This mirrors the LLVM port, which adds "+egpr"
+   to the subtarget of every function that uses WinCall as callee or caller
+   (X86TargetMachine::getSubtargetImpl).  */
+
+static bool
+ix86_uses_wincall_p (tree fndecl)
+{
+  if (fndecl == NULL_TREE || TREE_CODE (fndecl) != FUNCTION_DECL)
+    return false;
+  if (ix86_function_type_abi (TREE_TYPE (fndecl)) == WINCALL_ABI)
+    return true;
+  return ix86_caller_uses_wincall_p (fndecl);
+}
+
 /* Set targets globals to the default (or current #pragma GCC target
    if active).  Invalidate ix86_previous_fndecl cache.  */
 
@@ -3560,6 +3670,25 @@ ix86_set_current_function (tree fndecl)
   tree new_tree = DECL_FUNCTION_SPECIFIC_TARGET (fndecl);
   if (new_tree == NULL_TREE)
     new_tree = target_option_default_node;
+
+  /* A function that uses the WinCall convention as callee or caller runs
+     with APX EGPR: the WinCall function reads R16-R19, and every caller must
+     be able to name those registers when it passes the fifth and later
+     arguments.  Give the function a target-option node with EGPR set so its
+     register file contains R16-R31; the defaults are shared.  */
+  if (ix86_uses_wincall_p (fndecl)
+      && !(TREE_TARGET_OPTION (new_tree)->x_ix86_apx_features & apx_egpr))
+    {
+      if (new_tree == target_option_default_node)
+	{
+	  if (ix86_wincall_target_node == NULL_TREE)
+	    ix86_wincall_target_node = ix86_egpr_target_node (new_tree);
+	  new_tree = ix86_wincall_target_node;
+	}
+      else
+	new_tree = ix86_egpr_target_node (new_tree);
+      DECL_FUNCTION_SPECIFIC_TARGET (fndecl) = new_tree;
+    }
 
   bool fp_flag_change
     = (flag_unsafe_math_optimizations
@@ -3963,12 +4092,12 @@ ix86_handle_abi_attribute (tree *node, tree name, tree, int,
 	error ("%<wincall%> attribute is only supported on x86-64");
       /* The convention hands out RCX, RDX, R8, R9, R16, R17, R18 and R19
 	 as its integer argument registers, so it is only usable where the
-	 last four exist at all.  Without EGPR the backend cannot encode
-	 them, so reject the attribute up front rather than hand out
-	 registers that cannot appear in an instruction.  */
-      if (TARGET_64BIT && !TARGET_APX_EGPR)
-	error ("%<wincall%> attribute requires APX EGPR support; "
-	       "compile with %<-mapxf%>");
+	 last four exist at all.  Those registers need APX EGPR, which cannot
+	 be confined to the WinCall function itself: every caller has to be
+	 able to name R16-R19 in order to forward the fifth and later
+	 arguments.  Rather than reject the attribute without -mapxf, the
+	 functions that use the convention as callee or caller are compiled
+	 with EGPR enabled; ix86_set_current_function applies it.  */
       return NULL_TREE;
     }
   else if (is_attribute_p ("ms_abi", name))

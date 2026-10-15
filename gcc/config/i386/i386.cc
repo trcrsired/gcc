@@ -1698,14 +1698,37 @@ int
 ix86_reg_parm_stack_space (const_tree fndecl)
 {
   enum calling_abi call_abi = SYSV_ABI;
+  const_tree fntype;
   if (fndecl != NULL_TREE && TREE_CODE (fndecl) == FUNCTION_DECL)
-    call_abi = ix86_function_abi (fndecl);
+    {
+      call_abi = ix86_function_abi (fndecl);
+      fntype = TREE_TYPE (fndecl);
+    }
   else
-    call_abi = ix86_function_type_abi (fndecl);
+    {
+      call_abi = ix86_function_type_abi (fndecl);
+      fntype = fndecl;
+    }
   if (TARGET_64BIT)
     {
       if (call_abi == WINCALL_ABI)
-	return 64;
+	{
+	  /* WinCall passes every named argument in a register, and just as
+	     clang it never stores them into a caller-provided home area:
+	     R16-R19 and the eight XMM argument registers would need far more
+	     room than the area any convention reserves, and the per-argument
+	     home slots the middle end hands out would then overrun what the
+	     caller allocated.  The one exception is the Microsoft style
+	     register save area of a variable argument function, which is 32
+	     bytes and is written into the home area by
+	     setup_incoming_varargs_ms_64.  */
+	  if (fntype != NULL_TREE
+	      && (TREE_CODE (fntype) == FUNCTION_TYPE
+		  || TREE_CODE (fntype) == METHOD_TYPE)
+	      && stdarg_p (fntype))
+	    return 32;
+	  return 0;
+	}
       if (call_abi == MS_ABI)
 	return 32;
     }
@@ -3375,7 +3398,11 @@ function_arg_advance_ms_64 (CUMULATIVE_ARGS *cum, HOST_WIDE_INT bytes,
 
 /* True when MODE is a scalar floating-point (or small complex) mode that
    WinCall passes in the independent XMM bank rather than in an integer
-   register.  */
+   register.  `_Float128' is sixteen bytes wide but still fits one XMM
+   register, so it goes to the XMM bank like `float' and `double' rather
+   than being split into two integer registers the way `__int128' is.
+   That also covers aggregates whose natural mode is one of these, i.e.
+   aggregates holding a single floating-point member.  */
 
 static bool
 wincall_sse_mode_p (machine_mode mode)
@@ -3387,10 +3414,39 @@ wincall_sse_mode_p (machine_mode mode)
     case E_HFmode:
     case E_SFmode:
     case E_DFmode:
+    case E_TFmode:
       return true;
     case E_SCmode:
     case E_DCmode:
       return COMPLEX_MODE_P (mode);
+    default:
+      return false;
+    }
+}
+
+/* True when MODE is a 128-, 256- or 512-bit vector mode that WinCall
+   passes and returns in the XMM/YMM/ZMM bank, one register per value.
+   The three widths share the single `sse_regno' allocation counter, so a
+   256-bit value and a 128-bit value never land in the same physical
+   register -- exactly like clang's register allocator, which models
+   XMM/YMM/ZMM as aliasing views of one register file.  A 256-bit vector
+   needs AVX and a 512-bit vector needs AVX-512, again like clang's
+   CC_X86_Win64_WinCall table.  */
+
+static bool
+wincall_vector_mode_p (machine_mode mode)
+{
+  if (!VECTOR_MODE_P (mode))
+    return false;
+  switch (GET_MODE_SIZE (mode))
+    {
+    case 16:
+      return (TARGET_SSE && VALID_SSE_REG_MODE (mode))
+	     || (TARGET_SSE2 && VALID_SSE2_REG_MODE (mode));
+    case 32:
+      return TARGET_AVX && VALID_AVX256_REG_MODE (mode);
+    case 64:
+      return TARGET_AVX512F && VALID_AVX512F_REG_MODE (mode);
     default:
       return false;
     }
@@ -3418,7 +3474,7 @@ function_arg_advance_wincall (CUMULATIVE_ARGS *cum, machine_mode mode,
   if (bytes == 0)
     return 0;
 
-  if (wincall_sse_mode_p (mode))
+  if (wincall_sse_mode_p (mode) || wincall_vector_mode_p (mode))
     {
       cum->words += words;
       if (cum->sse_nregs > 0)
@@ -3802,6 +3858,50 @@ function_arg_ms_64 (const CUMULATIVE_ARGS *cum, machine_mode mode,
   return gen_reg_or_parallel (mode, orig_mode, regno);
 }
 
+/* The single-register mode WinCall uses to hold the complex scalar MODE.  A
+   complex scalar is its two components side by side, so it fits in one XMM
+   register; that is exactly what the LLVM port coerces `_Complex float' and
+   `_Complex double' to (<2 x float> and <2 x double>).  GCC treats the complex
+   modes SCmode and DCmode as *two* hard registers (see
+   ix86_hard_regno_nregs), which would put the real and imaginary parts in two
+   consecutive XMM registers and collide with the following argument, so use an
+   ordinary single-register mode of the same size instead: a DImode register
+   for the eight-byte `_Complex float' and a V2DFmode register for the
+   sixteen-byte `_Complex double'.  Both have the same layout as the LLVM
+   vector, and neither is a complex mode, so it occupies one hard register.  */
+
+static machine_mode
+wincall_complex_reg_mode (machine_mode mode)
+{
+  switch (mode)
+    {
+    case E_SCmode:
+      return DImode;
+    case E_DCmode:
+      return V2DFmode;
+    default:
+      return mode;
+    }
+}
+
+/* The register rtx handing back WinCall's single XMM register (REGNO) that
+   holds the complex scalar MODE.  The middle end insists that the mode of an
+   incoming or outgoing register match the mode of the argument or result, so
+   the plain DImode/V2DFmode register is wrapped in a one-element PARALLEL
+   whose mode is the complex mode -- precisely the shape the SysV path uses
+   for `_Complex float'.  A complex scalar is thus one XMM register, and
+   function_arg_advance_wincall's single-register accounting is right.  */
+
+static rtx
+wincall_complex_reg (machine_mode mode, unsigned int regno)
+{
+  rtx part = gen_rtx_EXPR_LIST (VOIDmode,
+				gen_rtx_REG (wincall_complex_reg_mode (mode),
+					     regno),
+				const0_rtx);
+  return gen_rtx_PARALLEL (mode, gen_rtvec (1, part));
+}
+
 /* WinCall argument location.  Mirrors function_arg_advance_wincall: the
    eight integer registers and the eight XMM registers are independent, and
    aggregates of up to 32 bytes are expanded into their eight-byte parts.  */
@@ -3825,21 +3925,40 @@ function_arg_wincall (const CUMULATIVE_ARGS *cum, machine_mode mode,
   if (bytes == 0)
     return NULL_RTX;
 
+  /* Vectors travel in the XMM/YMM/ZMM bank, one register each.  */
+  if (wincall_vector_mode_p (mode))
+    {
+      if (cum->sse_nregs == 0)
+	return NULL_RTX;
+      return gen_rtx_REG (mode, cum->sse_regno + FIRST_SSE_REG);
+    }
+
   /* Scalar FP and small complex values are passed in the independent XMM
      bank.  */
   if (wincall_sse_mode_p (mode))
     {
+      machine_mode reg_mode = wincall_complex_reg_mode (mode);
       if (cum->sse_nregs == 0)
 	return NULL_RTX;
       if (named || type == NULL_TREE || !AGGREGATE_TYPE_P (type))
-	return gen_rtx_REG (mode, cum->sse_regno + FIRST_SSE_REG);
+	{
+	  unsigned int regno = cum->sse_regno + FIRST_SSE_REG;
+	  if (COMPLEX_MODE_P (mode))
+	    return wincall_complex_reg (mode, regno);
+	  return gen_rtx_REG (reg_mode, regno);
+	}
       /* Unnamed (varargs) FP scalars are shadowed in the next integer
-	 register as well.  */
-      if (cum->nregs == 0)
+	 register as well, so that the callee can find them in its
+	 homogeneous integer save area.  A sixteen-byte value (`__float128'
+	 and the single-member aggregates that share its mode) does not fit
+	 one integer register, so it stays in the XMM bank alone.  */
+      if (cum->nregs == 0 || GET_MODE_SIZE (reg_mode) > UNITS_PER_WORD)
 	return NULL_RTX;
       {
-	rtx t1 = gen_rtx_REG (mode, cum->sse_regno + FIRST_SSE_REG);
-	rtx t2 = gen_rtx_REG (mode, x86_64_wincall_int_parameter_registers[cum->regno]);
+	rtx t1 = COMPLEX_MODE_P (mode)
+	  ? wincall_complex_reg (mode, cum->sse_regno + FIRST_SSE_REG)
+	  : gen_rtx_REG (reg_mode, cum->sse_regno + FIRST_SSE_REG);
+	rtx t2 = gen_rtx_REG (reg_mode, x86_64_wincall_int_parameter_registers[cum->regno]);
 	t1 = gen_rtx_EXPR_LIST (VOIDmode, t1, const0_rtx);
 	t2 = gen_rtx_EXPR_LIST (VOIDmode, t2, const0_rtx);
 	return gen_rtx_PARALLEL (mode, gen_rtvec (2, t1, t2));
@@ -3991,15 +4110,33 @@ ix86_pass_by_reference_abi (enum calling_abi call_abi,
 		}
 	    }
 
-	  /* __m128 is passed by reference under the MS ABI.  */
 	  if (call_abi == WINCALL_ABI)
-	    /* WinCall has no x87 and expands every aggregate of up to 32
-	       bytes into eight-byte chunks in the integer argument
-	       registers, matching function_arg_advance_wincall and
-	       function_arg_wincall; only larger aggregates go by invisible
-	       reference.  The MS power-of-two rule below would send a
-	       24-byte aggregate to memory instead.  */
-	    return msize > 32;
+	    {
+	      /* 128-, 256- and 512-bit vectors travel in the vector
+		 registers, one slot each; they are never passed
+		 indirectly while the vector unit they need is enabled.  */
+	      if (arg.type != NULL_TREE && VECTOR_TYPE_P (arg.type)
+		  && wincall_vector_mode_p (type_natural_mode (arg.type, NULL,
+							       false)))
+		return false;
+	      /* WinCall has no x87 register bank, so `long double' and
+		 `_Complex long double' are passed by invisible reference,
+		 exactly as clang does; `_Complex _Float128' is 32 bytes of
+		 scalar floating-point and is likewise passed indirectly
+		 (each of its components fits one XMM register, but the
+		 convention keeps a complex value in a single register or
+		 none at all).  Every other aggregate of up to 32
+		 bytes is expanded into eight-byte chunks in the integer
+		 argument registers, matching function_arg_advance_wincall
+		 and function_arg_wincall; only larger aggregates go by
+		 invisible reference.  The MS power-of-two rule below would
+		 send a 24-byte aggregate to memory instead.  */
+	      if (arg.mode == XFmode || arg.mode == XCmode
+		  || arg.mode == TCmode)
+		return true;
+	      return msize > 32;
+	    }
+	  /* __m128 is passed by reference under the MS ABI.  */
 	  return msize != 1 && msize != 2 && msize != 4 && msize != 8;
 	}
       else if (arg.type && int_size_in_bytes (arg.type) == -1)
@@ -4243,7 +4380,8 @@ ix86_function_value_regno_p (const unsigned int regno)
       /* TODO: An ABI identifier should be passed as a parameter.
 	 For now, most callers, including those in builtins.cc,
 	 expect us to use the default ABI.  */
-      if (TARGET_64BIT && ix86_abi == MS_ABI)
+      if (TARGET_64BIT && ix86_abi == MS_ABI
+	  && ix86_cfun_abi () != WINCALL_ABI)
 	return false;
       return TARGET_FLOAT_RETURNS_IN_80387;
 
@@ -4750,9 +4888,22 @@ static rtx
 function_value_wincall (machine_mode orig_mode, machine_mode mode,
 			const_tree valtype)
 {
-  /* FP scalars and small complex values are returned in XMM0.  */
-  if (TARGET_SSE && wincall_sse_mode_p (mode))
-    return gen_rtx_REG (orig_mode, FIRST_SSE_REG);
+  /* Vectors come back in XMM0, YMM0 or ZMM0.  FP scalars are returned in
+     XMM0; a complex scalar's two components sit side by side in XMM0
+     (see wincall_complex_reg).  */
+  if (wincall_vector_mode_p (mode))
+    return gen_rtx_REG (mode, FIRST_SSE_REG);
+
+  if (wincall_sse_mode_p (mode))
+    {
+      if (COMPLEX_MODE_P (mode))
+	return wincall_complex_reg (mode, FIRST_SSE_REG);
+      return gen_rtx_REG (orig_mode, FIRST_SSE_REG);
+    }
+
+  /* An x87 `long double' is returned on the x87 stack, matching clang.  */
+  if (mode == XFmode)
+    return gen_rtx_REG (orig_mode, FIRST_FLOAT_REG);
 
   /* Aggregates up to 32 bytes are returned in RAX,RDX,RCX,R8.  */
   if (valtype != NULL_TREE && AGGREGATE_TYPE_P (valtype))
@@ -4895,12 +5046,28 @@ ix86_return_in_memory (const_tree type, const_tree fntype)
     {
       if (ix86_function_type_abi (fntype) == WINCALL_ABI)
 	{
-	  /* WinCall returns FP scalars/complex in XMM0 and aggregates of up
-	     to 32 bytes in RAX,RDX,RCX,R8; only larger objects and x87
-	     `long double' go through memory.  */
-	  if (mode == XFmode || mode == TFmode || mode == XCmode
-	      || mode == TCmode)
+	  /* WinCall returns FP scalars, complex scalars and aggregates of up
+	     to 32 bytes in registers: FP scalars in XMM0, an x87
+	     `long double' on the x87 stack, a 128-bit integer in RAX:RDX,
+	     larger objects by invisible reference.  `_Complex long double'
+	     and `_Complex _Float128' do not fit the XMM bank and are
+	     returned by invisible reference, as clang does.  */
+	  if (mode == XCmode || mode == TCmode)
 	    return true;
+	  /* 128-, 256- and 512-bit vectors are returned in XMM0, YMM0 and
+	     ZMM0, one register each.  */
+	  if (wincall_vector_mode_p (mode))
+	    return false;
+	  /* The scalars that come back in registers: an x87 `long double' on
+	     the x87 stack, `_Complex float'/`_Complex double' and every
+	     floating-point scalar that fits an XMM register in XMM0, and a
+	     128-bit integer as the register pair RAX (low), RDX (high).
+	     clang and WinCall.md agree on all of these.  TImode is not an
+	     aggregate, so it does not take the eight-byte-chunk path
+	     below.  */
+	  if (mode == XFmode || mode == TImode || mode == TFmode
+	      || mode == SCmode || mode == DCmode)
+	    return false;
 	  size = int_size_in_bytes (type);
 	  if (AGGREGATE_TYPE_P (type))
 	    return size < 0 || size > 32;
@@ -7329,7 +7496,18 @@ ix86_nsaved_sseregs (void)
   int nregs = 0;
   int regno;
 
+  /* The Windows x64 ABI and WinCall both keep XMM6-XMM15 callee-saved
+     (`ix86_wincall_abi' leaves them out of its clobber set, matching
+     clang's CSR_Win64_APX).  WinCall is not MS_ABI, so it needs to be
+     named here explicitly; without it a WinCall function in a SysV
+     translation unit would silently clobber XMM6-XMM15, and a caller
+     that keeps live values there across the call would be corrupted.
+     Only the registers the function actually writes are saved, so a
+     WinCall callee that does not touch XMM8-XMM15 pays nothing and the
+     transition to and from the classic x64 conventions needs no
+     callee-saved register shuffling at all.  */
   if (!TARGET_64BIT_MS_ABI
+      && ix86_cfun_abi () != WINCALL_ABI
       && (cfun->machine->call_saved_registers
 	  != TYPE_NO_CALLER_SAVED_REGISTERS))
     return 0;
@@ -22590,6 +22768,10 @@ ix86_wincall_abi (void)
 	    || (ix86_call_used_regs[i] & c_mask))
 	  SET_HARD_REG_BIT (full_reg_clobbers, i);
 
+      /* CALL_USED_REGISTERS already leaves R30/R31 out of the MS_ABI
+	 mask, so these two clears are redundant; they are kept so that
+	 the WinCall set (CSR_Win64_APX in clang) stays obvious here even
+	 if the table changes.  */
       CLEAR_HARD_REG_BIT (full_reg_clobbers, R30_REG);
       CLEAR_HARD_REG_BIT (full_reg_clobbers, R31_REG);
 
