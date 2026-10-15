@@ -493,6 +493,8 @@
 ; to share pipeline descriptions.
 (include "../arm/types.md")
 
+(include "aarch64-sched-types.md")
+
 ;; It is important to set the fp or simd attributes to yes when a pattern
 ;; alternative uses the FP or SIMD register files, usually signified by use of
 ;; the 'w' constraint.  This will ensure that the alternative will be
@@ -685,26 +687,6 @@
 ;; Currently the attribute is only applied to the non-writeback ldp/stp
 ;; patterns.
 (define_attr "ldpstp" "ldp,stp,none" (const_string "none"))
-
-;; Attribute that classifies SVE instructions by their functional type.
-;; This attribute is currently only used for dispatch scheduling.
-(define_attr "sve_type"
-  "none,\
-   sve_pred_logical,sve_pred_cnt_ctrl,sve_pred_cnt_scalar,sve_pred_misc,\
-   sve_pred_vec,\
-   sve_fp_arith,sve_fp_mul,sve_fp_assoc_add,sve_fp_cmp,sve_fp_cvt,sve_fp_log,\
-   sve_fp_exp,sve_fp_div,sve_fp_sqrt,sve_fp_reduc,sve_fp_misc,\
-   sve_int_general,sve_int_shift,sve_int_mul,sve_int_dot,sve_int_cmp_set,\
-   sve_int_extend,sve_int_extract,sve_int_cvt,sve_int_div,sve_int_index,\
-   sve_int_match,sve_int_recip_est,sve_int_reduc,sve_int_accum,\
-   sve_int_pmul,sve_int_bit_perm,\
-   sve_load_pred,sve_load_1reg,sve_load_2reg,sve_load_3reg,sve_load_4reg,\
-   sve_gatherload_32,sve_gatherload_64,\
-   sve_store_pred,sve_store_1reg,sve_store_2reg,sve_store_3reg,sve_store_4reg,\
-   sve_scatterstore_32,sve_scatterstore_64,\
-   sve_ffr,\
-   sve_crypto_sha3"
-  (const_string "none"))
 
 ;; -------------------------------------------------------------------
 ;; Pipeline descriptions and scheduling
@@ -2120,18 +2102,27 @@
   [(set (match_operand:TI 0 "nonimmediate_operand")
 	(match_operand:TI 1 "general_operand"))]
   ""
-  "
+  {
     if (GET_CODE (operands[0]) == MEM && operands[1] != const0_rtx)
       operands[1] = force_reg (TImode, operands[1]);
 
     if (GET_CODE (operands[1]) == CONST_POLY_INT)
       {
-	emit_move_insn (gen_lowpart (DImode, operands[0]),
+	rtx op0 = operands[0];
+	/* It's not generally safe to use gen_highpart on a SUBREG, so
+	   write the initial result to a temporary.  The optimizer will
+	   simplify things later.  */
+	if (SUBREG_P (op0))
+	  op0 = gen_reg_rtx (TImode);
+
+	emit_move_insn (gen_lowpart (DImode, op0),
 			gen_lowpart (DImode, operands[1]));
-	emit_move_insn (gen_highpart (DImode, operands[0]), const0_rtx);
+	emit_move_insn (gen_highpart (DImode, op0), const0_rtx);
+	if (op0 != operands[0])
+	  emit_move_insn (operands[0], op0);
 	DONE;
       }
-  "
+  }
 )
 
 (define_insn "*movti_aarch64"
@@ -3093,7 +3084,7 @@
 })
 
 (define_expand "addti3"
-  [(set (match_operand:TI 0 "register_operand")
+  [(set (match_operand:TI 0 "pure_register_operand")
 	(plus:TI (match_operand:TI 1 "register_operand")
 		 (match_operand:TI 2 "aarch64_reg_or_imm")))]
   ""
@@ -3126,7 +3117,7 @@
 })
 
 (define_expand "addvti4"
-  [(match_operand:TI 0 "register_operand")
+  [(match_operand:TI 0 "pure_register_operand")
    (match_operand:TI 1 "register_operand")
    (match_operand:TI 2 "aarch64_reg_or_imm")
    (label_ref (match_operand 3 "" ""))]
@@ -3160,7 +3151,7 @@
 })
 
 (define_expand "uaddvti4"
-  [(match_operand:TI 0 "register_operand")
+  [(match_operand:TI 0 "pure_register_operand")
    (match_operand:TI 1 "register_operand")
    (match_operand:TI 2 "aarch64_reg_or_imm")
    (label_ref (match_operand 3 "" ""))]
@@ -3868,7 +3859,7 @@
 })
 
 (define_expand "subti3"
-  [(set (match_operand:TI 0 "register_operand")
+  [(set (match_operand:TI 0 "pure_register_operand")
 	(minus:TI (match_operand:TI 1 "aarch64_reg_or_zero")
 		  (match_operand:TI 2 "register_operand")))]
   ""
@@ -3888,7 +3879,7 @@
 })
 
 (define_expand "subvti4"
-  [(match_operand:TI 0 "register_operand")
+  [(match_operand:TI 0 "pure_register_operand")
    (match_operand:TI 1 "register_operand")
    (match_operand:TI 2 "aarch64_reg_or_imm")
    (label_ref (match_operand 3 "" ""))]
@@ -3907,7 +3898,7 @@
 })
 
 (define_expand "usubvti4"
-  [(match_operand:TI 0 "register_operand")
+  [(match_operand:TI 0 "pure_register_operand")
    (match_operand:TI 1 "register_operand")
    (match_operand:TI 2 "aarch64_reg_or_imm")
    (label_ref (match_operand 3 "" ""))]
@@ -4689,7 +4680,7 @@
 )
 
 (define_expand "<su_optab>mulditi3"
-  [(set (match_operand:TI 0 "register_operand")
+  [(set (match_operand:TI 0 "pure_register_operand")
 	(mult:TI (ANY_EXTEND:TI (match_operand:DI 1 "register_operand"))
 		 (ANY_EXTEND:TI (match_operand:DI 2 "register_operand"))))]
   ""
@@ -4708,9 +4699,9 @@
 ;; The default expansion of multi3 using umuldi3_highpart will perform
 ;; the additions in an order that fails to combine into two madd insns.
 (define_expand "multi3"
-  [(set (match_operand:TI 0 "register_operand")
-	(mult:TI (match_operand:TI 1 "register_operand")
-		 (match_operand:TI 2 "register_operand")))]
+  [(set (match_operand:TI 0 "pure_register_operand")
+	(mult:TI (match_operand:TI 1 "pure_register_operand")
+		 (match_operand:TI 2 "pure_register_operand")))]
   ""
 {
   rtx l0 = gen_reg_rtx (DImode);

@@ -7384,17 +7384,24 @@ vectorizable_reduction (loop_vec_info loop_vinfo,
 	      && types_compatible_p (TREE_TYPE (cond_initial_val),
 				     TREE_TYPE (cond_reduc_val)))
 	    {
-	      tree e = fold_binary (LE_EXPR, boolean_type_node,
-				    cond_initial_val, cond_reduc_val);
-	      if (e && (integer_onep (e) || integer_zerop (e)))
+	      tree lt, gt;
+	      enum tree_code cond_reduc_code = ERROR_MARK;
+	      if ((lt = fold_binary (LT_EXPR, boolean_type_node,
+				     cond_initial_val, cond_reduc_val))
+		  && integer_onep (lt))
+		cond_reduc_code = MAX_EXPR;
+	      else if ((gt = fold_binary (GT_EXPR, boolean_type_node,
+					  cond_initial_val, cond_reduc_val))
+		       && integer_onep (gt))
+		cond_reduc_code = MIN_EXPR;
+	      if (cond_reduc_code != ERROR_MARK)
 		{
 		  if (dump_enabled_p ())
 		    dump_printf_loc (MSG_NOTE, vect_location,
 				     "condition expression based on "
 				     "compile time constant.\n");
 		  /* Record reduction code at analysis stage.  */
-		  VECT_REDUC_INFO_CODE (reduc_info)
-		    = integer_onep (e) ? MAX_EXPR : MIN_EXPR;
+		  VECT_REDUC_INFO_CODE (reduc_info) = cond_reduc_code;
 		  VECT_REDUC_INFO_TYPE (reduc_info) = CONST_COND_REDUCTION;
 		}
 	    }
@@ -9333,9 +9340,9 @@ vectorizable_nonlinear_induction (loop_vec_info loop_vinfo,
       if (!directly_supported_p (RSHIFT_EXPR, vectype, optab_vector))
 	return false;
 
-      /* Don't shift more than type precision to avoid UD.  */
+      /* Don't shift more than type precision to avoid UB.  */
       if (!tree_fits_uhwi_p (step_expr)
-	  || maybe_ge (nunits * tree_to_uhwi (step_expr),
+	  || maybe_ge (vf * tree_to_uhwi (step_expr),
 		       TYPE_PRECISION (TREE_TYPE (init_expr))))
 	return false;
       break;
@@ -9345,12 +9352,11 @@ vectorizable_nonlinear_induction (loop_vec_info loop_vinfo,
       if (!directly_supported_p (LSHIFT_EXPR, vectype, optab_vector))
 	return false;
 
-      /* Don't shift more than type precision to avoid UD.  */
+      /* Don't shift more than type precision to avoid UB.  */
       if (!tree_fits_uhwi_p (step_expr)
-	  || maybe_ge (nunits * tree_to_uhwi (step_expr),
+	  || maybe_ge (vf * tree_to_uhwi (step_expr),
 		       TYPE_PRECISION (TREE_TYPE (init_expr))))
 	return false;
-
       break;
 
     default:

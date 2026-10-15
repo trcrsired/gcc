@@ -12373,6 +12373,15 @@ vect_schedule_slp_node (vec_info *vinfo,
 	      }
 	  }
 
+      /* When we face existing vector defs that are external, make sure
+	 to insert at region boundary.  */
+      if (last_stmt
+	  && is_a <bb_vec_info> (vinfo)
+	  && vinfo->bbs[0] != gimple_bb (last_stmt)
+	  && dominated_by_p (CDI_DOMINATORS, vinfo->bbs[0],
+			     gimple_bb (last_stmt)))
+	last_stmt = NULL;
+
       /* We split regions to vectorize at control altering stmts
 	 with a definition so this can only be an external.  */
       gcc_checking_assert (!last_stmt

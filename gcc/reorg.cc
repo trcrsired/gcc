@@ -138,7 +138,7 @@ skip_consecutive_labels (rtx label_or_return)
 
      So we explicitly disallow looking through BARRIERS here.  */
   for (insn = label;
-       insn != 0 && !INSN_P (insn) && !BARRIER_P (insn);
+       insn != 0 && !NONDEBUG_INSN_P (insn) && !BARRIER_P (insn);
        insn = NEXT_INSN (insn))
     if (LABEL_P (insn))
       label = insn;
@@ -3091,7 +3091,7 @@ relax_delay_slots (rtx_insn *first)
 	      && ! (next && switch_text_sections_between_p (jump_insn, next)))
 	    {
 	      rtx_insn *direct_label = as_a<rtx_insn *> (JUMP_LABEL (insn));
-	      rtx_insn *prev = prev_nonnote_insn (direct_label);
+	      rtx_insn *prev = prev_nonnote_nondebug_insn (direct_label);
 
 	      /* If the insn jumps over a BARRIER and is the only way to reach
 		 its target, then we need to delete the BARRIER before the jump
@@ -3338,7 +3338,8 @@ relax_delay_slots (rtx_insn *first)
 	  && !INSN_ANNULLED_BRANCH_P (delay_jump_insn)
 	  && !condjump_in_parallel_p (delay_jump_insn)
 	  && prev_active_insn (as_a<rtx_insn *> (target_label)) == insn
-	  && !BARRIER_P (prev_nonnote_insn (as_a<rtx_insn *> (target_label))))
+	  && !BARRIER_P (prev_nonnote_nondebug_insn
+			   (as_a<rtx_insn *> (target_label))))
 	{
 	  rtx_insn *after;
 	  int i;

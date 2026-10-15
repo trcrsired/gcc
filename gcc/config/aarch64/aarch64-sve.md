@@ -3030,10 +3030,10 @@
 	   (match_operand:<VEL> 2 "register_operand")]
 	  UNSPEC_INSR))]
   "TARGET_SVE"
-  {@ [ cons: =0 , 1  , 2 ]
-     [ w        , Dz , w ] fmov\t%<Vetype>0, %<Vetype>2
+  {@ [ cons: =0 , 1  , 2 ; attrs: type ]
+     [ w        , Dz , w ; neon_move    ] fmov\t%<Vetype>0, %<Vetype>2
+     [ w        , Dz , r ; f_mcr        ] fmov\t%<Vetype>0, %<vccore>2
   }
-  [(set_attr "type" "neon_move")]
 )
 
 ;; Shift an SVE vector left and insert a scalar into element 0 of a zero
@@ -3045,10 +3045,10 @@
 	   (match_operand:QI 2 "register_operand")]
 	  UNSPEC_INSR))]
   "TARGET_SVE"
-  {@ [ cons: =0 , 1  , 2 ; attrs: length ]
-     [ w        , Dz , w ; 8              ] fmov\t%h0, %h2\;and\t%0.h, %0.h, #0xff
+  {@ [ cons: =0 , 1  , 2 ; attrs: length , type      ]
+     [ w        , Dz , w ; 8              , neon_move ] fmov\t%h0, %h2\;and\t%0.h, %0.h, #0xff
+     [ w        , Dz , r ; 8              , f_mcr     ] fmov\t%h0, %w2\;and\t%0.h, %0.h, #0xff
   }
-  [(set_attr "type" "neon_move")]
 )
 
 ;; Shift an SVE vector left and insert a scalar into element 0 from a memory
@@ -7530,7 +7530,7 @@
 	  (match_operand:SVE_I 3 "register_operand")))]
   "TARGET_SVE"
   {
-    if (aarch64_prepare_sve_int_fma (operands, PLUS))
+    if (aarch64_prepare_int_fma (operands, PLUS))
       DONE;
     operands[4] = aarch64_ptrue_reg (<VPRED>mode);
   }
@@ -7676,7 +7676,7 @@
 	    UNSPEC_PRED_X)))]
   "TARGET_SVE"
   {
-    if (aarch64_prepare_sve_int_fma (operands, MINUS))
+    if (aarch64_prepare_int_fma (operands, MINUS))
       DONE;
     operands[4] = aarch64_ptrue_reg (<VPRED>mode);
   }

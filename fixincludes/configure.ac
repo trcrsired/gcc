@@ -7,6 +7,7 @@ AC_CANONICAL_TARGET
 AC_PROG_CC
 AC_USE_SYSTEM_EXTENSIONS
 AC_PROG_SED
+AC_CONFIG_MACRO_DIRS([.. ../config])
 
 # Figure out what compiler warnings we can enable.
 # See config/warnings.m4 for details.
@@ -95,9 +96,6 @@ define(fixincludes_UNLOCKED_FUNCS, clearerr_unlocked feof_unlocked dnl
 AC_CHECK_FUNCS(fixincludes_UNLOCKED_FUNCS)
 AC_CHECK_DECLS([abort, asprintf, basename(char *), errno, vasprintf, memmem])
 AC_CHECK_DECLS(m4_split(m4_normalize(fixincludes_UNLOCKED_FUNCS)))
-
-# Checks for typedefs, structures, and compiler characteristics.
-AC_C_CONST
 
 # Checks for library functions.
 GCC_AC_FUNC_MMAP_BLACKLIST
