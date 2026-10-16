@@ -3681,9 +3681,9 @@ extern machine_mode choose_hard_reg_mode (unsigned int, unsigned int,
 extern const HARD_REG_SET &simplifiable_subregs (const subreg_shape &);
 
 /* In emit-rtl.cc  */
-extern rtx set_for_reg_notes (rtx);
-extern rtx set_unique_reg_note (rtx, enum reg_note, rtx);
-extern rtx set_dst_reg_note (rtx, enum reg_note, rtx, rtx);
+extern rtx set_for_reg_notes (rtx_insn *);
+extern rtx set_unique_reg_note (rtx_insn *, enum reg_note, rtx);
+extern rtx set_dst_reg_note (rtx_insn *, enum reg_note, rtx, rtx);
 extern void set_insn_deleted (rtx_insn *);
 
 /* Functions in rtlanal.cc */
@@ -4642,7 +4642,7 @@ extern rtx get_reg_base_value (unsigned int);
 extern rtx extract_mem_from_operand (rtx);
 
 #ifdef STACK_REGS
-extern bool stack_regs_mentioned (const_rtx insn);
+extern bool stack_regs_mentioned (const rtx_insn *insn);
 #endif
 
 /* In toplev.cc */

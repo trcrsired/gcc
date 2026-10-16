@@ -5904,7 +5904,7 @@ ix86_gimplify_va_arg (tree valist, tree type, gimple_seq *pre_p,
    in movabs* patterns.  */
 
 bool
-ix86_check_movabs (rtx insn, int opnum)
+ix86_check_movabs (rtx_insn *insn, int opnum)
 {
   rtx set, mem;
 
@@ -5921,7 +5921,7 @@ ix86_check_movabs (rtx insn, int opnum)
 
 /* Return true if XVECEXP idx of INSN satisfies MOVS arguments.  */
 bool
-ix86_check_movs (rtx insn, int idx)
+ix86_check_movs (rtx_insn *insn, int idx)
 {
   rtx pat = PATTERN (insn);
   gcc_assert (GET_CODE (pat) == PARALLEL);
@@ -5942,7 +5942,7 @@ ix86_check_movs (rtx insn, int idx)
 
 /* Return false if INSN contains a MEM with a non-default address space.  */
 bool
-ix86_check_no_addr_space (rtx insn)
+ix86_check_no_addr_space (rtx_insn *insn)
 {
   subrtx_var_iterator::array_type array;
   FOR_EACH_SUBRTX_VAR (iter, array, PATTERN (insn), ALL)
@@ -16897,7 +16897,7 @@ insn_defines_reg (unsigned int regno1, unsigned int regno2,
    REGNO as a part of address expression.  */
 
 static bool
-insn_uses_reg_mem (unsigned int regno, rtx insn)
+insn_uses_reg_mem (unsigned int regno, rtx_insn *insn)
 {
   df_ref use;
 
@@ -17472,7 +17472,7 @@ ix86_dep_by_shift_count_body (const_rtx set_body, const_rtx use_body)
    USE_INSN.  */
 
 bool
-ix86_dep_by_shift_count (const_rtx set_insn, const_rtx use_insn)
+ix86_dep_by_shift_count (const rtx_insn *set_insn, const rtx_insn *use_insn)
 {
   return ix86_dep_by_shift_count_body (PATTERN (set_insn),
 				       PATTERN (use_insn));
@@ -17706,7 +17706,7 @@ int ix86_get_flags_cc (rtx_code code)
    CC mode is at least as constrained as REQ_MODE.  */
 
 bool
-ix86_match_ccmode (rtx insn, machine_mode req_mode)
+ix86_match_ccmode (rtx_insn *insn, machine_mode req_mode)
 {
   rtx set;
   machine_mode set_mode;
@@ -17857,7 +17857,7 @@ ix86_cc_mode (enum rtx_code code, rtx op0, rtx op1)
    INSN has source and destination with suitable matching CC modes.  */
 
 bool
-ix86_match_ptest_ccmode (rtx insn)
+ix86_match_ptest_ccmode (rtx_insn *insn)
 {
   rtx set, src;
   machine_mode set_mode;
@@ -18925,7 +18925,7 @@ ix86_class_likely_spilled_p (reg_class_t);
 /* Returns true if lhs of insn is HW function argument register and set up
    is_spilled to true if it is likely spilled HW register.  */
 static bool
-insn_is_function_arg (rtx insn, bool* is_spilled)
+insn_is_function_arg (rtx_insn *insn, bool* is_spilled)
 {
   rtx dst;
 
@@ -18934,12 +18934,12 @@ insn_is_function_arg (rtx insn, bool* is_spilled)
   /* Call instructions are not movable, ignore it.  */
   if (CALL_P (insn))
     return false;
-  insn = PATTERN (insn);
-  if (GET_CODE (insn) == PARALLEL)
-    insn = XVECEXP (insn, 0, 0);
-  if (GET_CODE (insn) != SET)
+  rtx pat = PATTERN (insn);
+  if (GET_CODE (pat) == PARALLEL)
+    pat = XVECEXP (pat, 0, 0);
+  if (GET_CODE (pat) != SET)
     return false;
-  dst = SET_DEST (insn);
+  dst = SET_DEST (pat);
   if (REG_P (dst) && HARD_REGISTER_P (dst)
       && ix86_function_arg_regno_p (REGNO (dst)))
     {
@@ -21078,7 +21078,7 @@ ix86_gimple_fold_builtin (gimple_stmt_iterator *gsi)
 	  else if (tree_to_uhwi (arg4) != 8)
 	    /* Invalid round argument.  */
 	    break;
-	  else if (HONOR_NANS (arg0))
+	  else if (HONOR_NANS (arg0) || flag_trapping_math)
 	    /* Lowering to comparison would raise exceptions which
 	       shouldn't be raised.  */
 	    break;
@@ -23711,6 +23711,16 @@ ix86_rtx_costs (rtx x, machine_mode mode, int outer_code_i, int opno,
       if (TARGET_64BIT && mode == DImode
 	  && GET_MODE (XEXP (x, 0)) == SImode)
 	*total = 1;
+      /* Zero extension to a double-word mode (TImode on x86-64, DImode
+	 on ia32) is not a single movzx: the upper word must be cleared
+	 by a separate instruction.  Charge for it; a zero or too-low
+	 cost makes the extension look free, so CSE copies the extended
+	 value into every double-word store and STV can no longer share
+	 one vector register.  */
+      else if (speed && GET_MODE_SIZE (mode) > UNITS_PER_WORD
+	       && outer_code == SET
+	       && GET_MODE (XEXP (x, 0)) == word_mode)
+	*total = cost->add;
       else if (TARGET_ZERO_EXTEND_WITH_AND)
 	*total = cost->add;
       else
@@ -23718,7 +23728,16 @@ ix86_rtx_costs (rtx x, machine_mode mode, int outer_code_i, int opno,
       return false;
 
     case SIGN_EXTEND:
-      *total = cost->movsx;
+      /* Similarly to zero_extend for a double-word mode, but cost one
+	 more than zero_extend, so that when the sign bit is known to be
+	 zero, zero_extend is preferred to sign_extend: zero_extend needs
+	 an extra xor, while sign_extend needs an extra cdq.  */
+      if (speed && GET_MODE_SIZE (mode) > UNITS_PER_WORD
+	  && outer_code == SET
+	  && GET_MODE (XEXP (x, 0)) == word_mode)
+	*total = cost->add + 1;
+      else
+	*total = cost->movsx;
       return false;
 
     case ASHIFT:

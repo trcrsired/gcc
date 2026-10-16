@@ -3159,18 +3159,18 @@ reset_all_used_flags (void)
     if (INSN_P (p))
       {
 	rtx pat = PATTERN (p);
-	if (GET_CODE (pat) != SEQUENCE)
-	  reset_insn_used_flags (p);
-	else
+	if (rtx_sequence *seq = dyn_cast<rtx_sequence *> (pat))
 	  {
 	    gcc_assert (REG_NOTES (p) == NULL);
-	    for (int i = 0; i < XVECLEN (pat, 0); i++)
+	    for (int i = 0; i < seq->len (); i++)
 	      {
-		rtx insn = XVECEXP (pat, 0, i);
+		rtx insn = seq->element (i);
 		if (INSN_P (insn))
 		  reset_insn_used_flags (insn);
 	      }
 	  }
+	else
+	  reset_insn_used_flags (p);
       }
 }
 
@@ -3202,15 +3202,15 @@ verify_rtl_sharing (void)
     if (INSN_P (p))
       {
 	rtx pat = PATTERN (p);
-	if (GET_CODE (pat) != SEQUENCE)
-	  verify_insn_sharing (p);
-	else
-	  for (int i = 0; i < XVECLEN (pat, 0); i++)
+	if (rtx_sequence *seq = dyn_cast<rtx_sequence *> (pat))
+	  for (int i = 0; i < seq->len (); i++)
 	      {
-		rtx insn = XVECEXP (pat, 0, i);
+		rtx insn = seq->element (i);
 		if (INSN_P (insn))
 		  verify_insn_sharing (insn);
 	      }
+	else
+	  verify_insn_sharing (p);
       }
 
   reset_all_used_flags ();
@@ -3557,9 +3557,10 @@ get_first_nonnote_insn (void)
 	  continue;
       else
 	{
+	  rtx_sequence *seq;
 	  if (NONJUMP_INSN_P (insn)
-	      && GET_CODE (PATTERN (insn)) == SEQUENCE)
-	    insn = as_a <rtx_sequence *> (PATTERN (insn))->insn (0);
+	      && (seq = dyn_cast<rtx_sequence *> (PATTERN (insn))))
+	    insn = seq->insn (0);
 	}
     }
 
@@ -5552,7 +5553,7 @@ gen_use (rtx x)
    have no meaning for INSN.  */
 
 rtx
-set_for_reg_notes (rtx insn)
+set_for_reg_notes (rtx_insn *insn)
 {
   rtx pat, reg;
 
@@ -5591,7 +5592,7 @@ set_for_reg_notes (rtx insn)
    note of this type already exists, remove it first.  */
 
 rtx
-set_unique_reg_note (rtx insn, enum reg_note kind, rtx datum)
+set_unique_reg_note (rtx_insn *insn, enum reg_note kind, rtx datum)
 {
   rtx note = find_reg_note (insn, kind, NULL_RTX);
 
@@ -5633,7 +5634,7 @@ set_unique_reg_note (rtx insn, enum reg_note kind, rtx datum)
     {
     case REG_EQUAL:
     case REG_EQUIV:
-      df_notes_rescan (as_a <rtx_insn *> (insn));
+      df_notes_rescan (insn);
       break;
     default:
       break;
@@ -5644,7 +5645,7 @@ set_unique_reg_note (rtx insn, enum reg_note kind, rtx datum)
 
 /* Like set_unique_reg_note, but don't do anything unless INSN sets DST.  */
 rtx
-set_dst_reg_note (rtx insn, enum reg_note kind, rtx datum, rtx dst)
+set_dst_reg_note (rtx_insn *insn, enum reg_note kind, rtx datum, rtx dst)
 {
   rtx set = set_for_reg_notes (insn);
 
