@@ -373,8 +373,6 @@ AM_CPPFLAGS = \
 
 AM_CXXFLAGS = \
 	-std=c++23 \
-	-fherbceptions \
-	-fexceptions \
 	$(LIBSTDCXX_RAW_CXX_CXXFLAGS) \
 	$(WARN_FLAGS) \
 	$(EXTRA_CXXFLAGS)
@@ -400,7 +398,7 @@ herbceptions_sources = \
 # freestanding builds of libherbceptions outside of GCC.
 libherbceptions_la_SOURCES = $(herbceptions_sources)
 @USING_WIN32_TRUE@libherbceptions_la_LIBADD = -lntdll
-herbceptionsincludedir = $(includedir)/herbceptions
+herbceptionsincludedir = $(target_alias)/include/herbceptions
 herbceptionsinclude_HEADERS = include/herbceptions/error
 herbceptions_detailsincludedir = $(herbceptionsincludedir)/__details
 herbceptions_detailsinclude_HEADERS = \

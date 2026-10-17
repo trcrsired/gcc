@@ -13,8 +13,6 @@ AM_CPPFLAGS = \
 
 AM_CXXFLAGS = \
 	-std=c++23 \
-	-fherbceptions \
-	-fexceptions \
 	$(LIBSTDCXX_RAW_CXX_CXXFLAGS) \
 	$(WARN_FLAGS) \
 	$(EXTRA_CXXFLAGS)
@@ -44,7 +42,7 @@ if USING_WIN32
 libherbceptions_la_LIBADD = -lntdll
 endif
 
-herbceptionsincludedir = $(includedir)/herbceptions
+herbceptionsincludedir = $(target_alias)/include/herbceptions
 herbceptionsinclude_HEADERS = include/herbceptions/error
 
 herbceptions_detailsincludedir = $(herbceptionsincludedir)/__details
