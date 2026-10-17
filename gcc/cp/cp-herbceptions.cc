@@ -333,18 +333,41 @@ hb_fabricate_error (tree target, tree expr, location_t loc)
     }
 
   /* { .domain = dcall, .code = ccall } in the ABI record's own
-     field order.  */
+     field order.  When TARGET is a distinct record sharing the
+     channel's two-word layout -- libherbceptions' std::error class is
+     the common case -- build the constructor directly in TARGET
+     instead of viewing a __cxx_std_error constructor.  That record is
+     TREE_ADDRESSABLE, and gimplifying a VIEW_CONVERT_EXPR over an
+     aggregate constructor needs a register temporary that
+     create_tmp_var refuses to make for an addressable type.  */
+  tree ctor_type = fabtype;
+  if (!same_type_p (target, fabtype)
+      && TREE_CODE (target) == RECORD_TYPE
+      && COMPLETE_TYPE_P (target)
+      && TYPE_SIZE (target) && TYPE_SIZE (fabtype)
+      && tree_int_cst_equal (TYPE_SIZE (target), TYPE_SIZE (fabtype)))
+    {
+      unsigned nfields = 0;
+      for (tree f = TYPE_FIELDS (target); f; f = DECL_CHAIN (f))
+	if (TREE_CODE (f) == FIELD_DECL)
+	  nfields++;
+      if (nfields == 2)
+	ctor_type = target;
+    }
+
   vec<constructor_elt, va_gc> *elts = NULL;
-  for (tree f = TYPE_FIELDS (fabtype); f; f = DECL_CHAIN (f))
+  unsigned idx = 0;
+  for (tree f = TYPE_FIELDS (ctor_type); f; f = DECL_CHAIN (f))
     {
       if (TREE_CODE (f) != FIELD_DECL)
 	continue;
-      tree val = id_equal (DECL_NAME (f), "domain") ? dcall : ccall;
+      tree val = (idx == 0) ? dcall : ccall;
+      idx++;
       constructor_elt e = { f, convert (TREE_TYPE (f), val) };
       vec_safe_push (elts, e);
     }
-  tree r = build_constructor (fabtype, elts);
-  if (!same_type_p (target, fabtype))
+  tree r = build_constructor (ctor_type, elts);
+  if (!same_type_p (target, ctor_type))
     r = build1 (VIEW_CONVERT_EXPR, target, r);
   return r;
 }
