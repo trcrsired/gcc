@@ -165,22 +165,11 @@ extern int fprintf_unlocked (FILE *, const char *, ...);
 #include <sys/types.h>
 #include <errno.h>
 
-#if !defined (errno) && defined (HAVE_DECL_ERRNO) && !HAVE_DECL_ERRNO
-extern int errno;
-#endif
-
 /* Some of glibc's string inlines cause warnings.  Plus we'd rather
    rely on (and therefore test) GCC's string builtins.  */
 #define __NO_STRING_INLINES
 
-#ifdef HAVE_STRING_H
-# include <string.h>
-#else
-# ifdef HAVE_STRINGS_H
-#  include <strings.h>
-# endif
-#endif
-
+#include <string.h>
 #include <stdlib.h>
 
 #ifdef HAVE_UNISTD_H
@@ -199,10 +188,6 @@ extern int errno;
    are defined to 0 then we must provide the relevant declaration
    here.  These checks will be in the undefined state while configure
    is running so be careful to test "defined (HAVE_DECL_*)".  */
-
-#if defined (HAVE_DECL_ABORT) && !HAVE_DECL_ABORT
-extern void abort (void);
-#endif
 
 #if defined (HAVE_DECL_MEMMEM) && !HAVE_DECL_MEMMEM
 extern void *memmem (const void *, size_t, const void *, size_t);

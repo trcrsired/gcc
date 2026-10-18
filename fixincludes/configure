@@ -4865,7 +4865,7 @@ _ACEOF
 
 
 # Checks for header files.
-for ac_header in strings.h unistd.h fcntl.h sys/file.h sys/stat.h
+for ac_header in unistd.h fcntl.h sys/file.h sys/stat.h
 do :
   as_ac_Header=`$as_echo "ac_cv_header_$ac_header" | $as_tr_sh`
 ac_fn_c_check_header_mongrel "$LINENO" "$ac_header" "$as_ac_Header" "$ac_includes_default"
@@ -4891,16 +4891,6 @@ _ACEOF
 fi
 done
 
-ac_fn_c_check_decl "$LINENO" "abort" "ac_cv_have_decl_abort" "$ac_includes_default"
-if test "x$ac_cv_have_decl_abort" = xyes; then :
-  ac_have_decl=1
-else
-  ac_have_decl=0
-fi
-
-cat >>confdefs.h <<_ACEOF
-#define HAVE_DECL_ABORT $ac_have_decl
-_ACEOF
 ac_fn_c_check_decl "$LINENO" "asprintf" "ac_cv_have_decl_asprintf" "$ac_includes_default"
 if test "x$ac_cv_have_decl_asprintf" = xyes; then :
   ac_have_decl=1
@@ -4921,16 +4911,6 @@ fi
 
 cat >>confdefs.h <<_ACEOF
 #define HAVE_DECL_BASENAME $ac_have_decl
-_ACEOF
-ac_fn_c_check_decl "$LINENO" "errno" "ac_cv_have_decl_errno" "$ac_includes_default"
-if test "x$ac_cv_have_decl_errno" = xyes; then :
-  ac_have_decl=1
-else
-  ac_have_decl=0
-fi
-
-cat >>confdefs.h <<_ACEOF
-#define HAVE_DECL_ERRNO $ac_have_decl
 _ACEOF
 ac_fn_c_check_decl "$LINENO" "vasprintf" "ac_cv_have_decl_vasprintf" "$ac_includes_default"
 if test "x$ac_cv_have_decl_vasprintf" = xyes; then :
