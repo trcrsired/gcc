@@ -197,8 +197,8 @@ static tree fold_negate_expr (location_t, tree);
    The form is "(exp0 CMP cst1) ? exp0 : cst2". */
 tree_code
 minmax_from_comparison (tree_code cmp, tree exp0,
-			const widest_int cst1,
-			const widest_int cst2)
+			const widest_int &cst1,
+			const widest_int &cst2)
 {
   if (cst1 == cst2)
     {
@@ -7138,9 +7138,10 @@ fold_real_zero_addition_p (const_tree type, const_tree arg,
    due to truncation/rounding.
 */
 bool
-fold_cmp_float_cst_p (wide_int lo, wide_int hi, enum tree_code cmp,
+fold_cmp_float_cst_p (const wide_int &lo, const wide_int &hi,
+		      enum tree_code cmp,
 		      const REAL_VALUE_TYPE *r, format_helper fmt,
-		      wide_int i, signop isign)
+		      const wide_int &i, signop isign)
 {
   REAL_VALUE_TYPE raw;
   REAL_VALUE_TYPE rnd;
@@ -14417,6 +14418,13 @@ tree_expr_maybe_signaling_nan_p (const_tree x)
     {
     case REAL_CST:
       return real_issignaling_nan (TREE_REAL_CST_PTR (x));
+    case PLUS_EXPR:
+    case MINUS_EXPR:
+    case MULT_EXPR:
+    case RDIV_EXPR:
+    case MIN_EXPR:
+    case MAX_EXPR:
+    case FIX_TRUNC_EXPR:
     case FLOAT_EXPR:
       return false;
     case ABS_EXPR:
@@ -14425,10 +14433,6 @@ tree_expr_maybe_signaling_nan_p (const_tree x)
     case NON_LVALUE_EXPR:
     case SAVE_EXPR:
       return tree_expr_maybe_signaling_nan_p (TREE_OPERAND (x, 0));
-    case MIN_EXPR:
-    case MAX_EXPR:
-      return tree_expr_maybe_signaling_nan_p (TREE_OPERAND (x, 0))
-	     || tree_expr_maybe_signaling_nan_p (TREE_OPERAND (x, 1));
     case COND_EXPR:
       return tree_expr_maybe_signaling_nan_p (TREE_OPERAND (x, 1))
 	     || tree_expr_maybe_signaling_nan_p (TREE_OPERAND (x, 2));
@@ -14438,12 +14442,44 @@ tree_expr_maybe_signaling_nan_p (const_tree x)
 	CASE_CFN_FABS:
 	CASE_CFN_FABS_FN:
 	  return tree_expr_maybe_signaling_nan_p (CALL_EXPR_ARG (x, 0));
+	CASE_CFN_COPYSIGN:
+	CASE_CFN_COPYSIGN_FN:
+	  return tree_expr_maybe_signaling_nan_p (CALL_EXPR_ARG (x, 0));
+	CASE_CFN_ATAN:
+	CASE_CFN_ATAN_FN:
+	CASE_CFN_CEIL:
+	CASE_CFN_CEIL_FN:
+	CASE_CFN_COS:
+	CASE_CFN_COS_FN:
+	CASE_CFN_ERF:
+	CASE_CFN_ERF_FN:
+	CASE_CFN_EXP:
+	CASE_CFN_EXP_FN:
+	CASE_CFN_FLOOR:
+	CASE_CFN_FLOOR_FN:
 	CASE_CFN_FMAX:
 	CASE_CFN_FMAX_FN:
 	CASE_CFN_FMIN:
 	CASE_CFN_FMIN_FN:
-	  return tree_expr_maybe_signaling_nan_p (CALL_EXPR_ARG (x, 0))
-		 || tree_expr_maybe_signaling_nan_p (CALL_EXPR_ARG (x, 1));
+	CASE_CFN_FMOD:
+	CASE_CFN_FMOD_FN:
+	CASE_CFN_HYPOT:
+	CASE_CFN_HYPOT_FN:
+	CASE_CFN_MODF:
+	CASE_CFN_MODF_FN:
+	CASE_CFN_POW:
+	CASE_CFN_POW_FN:
+	CASE_CFN_ROUND:
+	CASE_CFN_ROUND_FN:
+	CASE_CFN_SIN:
+	CASE_CFN_SIN_FN:
+	CASE_CFN_SQRT:
+	CASE_CFN_SQRT_FN:
+	CASE_CFN_TAN:
+	CASE_CFN_TAN_FN:
+	CASE_CFN_TRUNC:
+	CASE_CFN_TRUNC_FN:
+	  return false;
 	default:
 	  return true;
 	}

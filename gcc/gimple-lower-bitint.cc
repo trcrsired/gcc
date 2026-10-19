@@ -58,6 +58,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-lower-bitint.h"
 #include "attribs.h"
 #include "asan.h"
+#include "tree-outof-ssa.h"
 
 /* Split BITINT_TYPE precisions in 4 categories.  Small _BitInt, where
    target hook says it is a single limb, middle _BitInt which per ABI
@@ -7489,10 +7490,11 @@ gimple_lower_bitint (void)
 			rhs1 = fold_convert (utype, rhs1);
 		      else
 			{
-			  tree t = make_ssa_name (type);
+			  tree t = make_ssa_name (utype);
 			  g = gimple_build_assign (t, NOP_EXPR, rhs1);
 			  gsi_insert_before (&gsi, g, GSI_SAME_STMT);
 			  gimple_set_location (g, loc);
+			  rhs1 = t;
 			}
 		    }
 		  g = gimple_build_assign (make_ssa_name (TREE_TYPE (rhs1)),
@@ -7635,6 +7637,17 @@ gimple_lower_bitint (void)
 	      default:
 		break;
 	      }
+	  else if (gphi *phi = dyn_cast <gphi *> (stmt))
+	    {
+	      /* Remove PHIs with no uses, coalescing apparently
+		 relies on this.  */
+	      if (has_zero_uses (s))
+		{
+		  remove_gimple_phi_args (phi);
+		  gsi = gsi_for_stmt (stmt);
+		  remove_phi_node (&gsi, true);
+		}
+	    }
 	}
       /* We need to also rewrite stores of large/huge _BitInt INTEGER_CSTs
 	 into memory.  Such functions could have no large/huge SSA_NAMEs.  */
