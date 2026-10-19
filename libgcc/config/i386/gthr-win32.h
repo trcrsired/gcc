@@ -62,10 +62,10 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #define __GTHREADS 1
 
 /* Condition variables are supported on Vista and Server 2008 or later.  */
-#if _WIN32_WINNT >= 0x0600
+//#if _WIN32_WINNT >= 0x0600
 #define __GTHREAD_HAS_COND 1
 #define __GTHREADS_CXX0X 1
-#endif
+//#endif
 
 #if _GTHREAD_USE_MUTEX_TIMEDLOCK
 #error Timed lock primitives are not supported on Windows targets
