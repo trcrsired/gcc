@@ -2432,6 +2432,7 @@ match_derived_type_spec (gfc_typespec *ts)
   bool is_pdt_template = false;
 
   old_locus = gfc_current_locus;
+  type_param_spec_list = NULL;
 
   if (gfc_match ("%n", name) != MATCH_YES)
     {
@@ -5346,17 +5347,24 @@ gfc_match_allocate (void)
 	  goto cleanup;
 	}
 
-      if (tail->expr->ts.deferred
-	  || (tail->expr->symtree->n.sym->param_list
-	      && spec_list_type (tail->expr->symtree->n.sym->param_list)
+      bool deferrable = !(tail->expr->ts.type != BT_UNKNOWN
+			   && tail->expr->ts.type != BT_CHARACTER
+			   && !IS_PDT (tail->expr) && !IS_CLASS_PDT (tail->expr)
+			   && (gfc_expr_attr (tail->expr).allocatable
+			       || gfc_expr_attr (tail->expr).pointer));
+
+      if ((tail->expr->ts.deferred
+	   || (tail->expr->symtree->n.sym->param_list
+	       && spec_list_type (tail->expr->symtree->n.sym->param_list)
 				 == SPEC_DEFERRED))
+	  && deferrable)
 	{
 	  saw_deferred = true;
 	  deferred_locus = tail->expr->where;
 	}
       else if ((tail->expr->ts.type == BT_DERIVED
 		|| tail->expr->ts.type == BT_CLASS)
-	       && tail->expr->ref)
+	       && tail->expr->ref && deferrable)
 	{
 	  for (ref = tail->expr->ref; ref; ref = ref->next)
 	    if (ref->type == REF_COMPONENT
@@ -8306,6 +8314,7 @@ gfc_match_class_is (void)
   c = gfc_get_case ();
   c->where = gfc_current_locus;
 
+  type_param_spec_list = NULL;
   m = match_derived_type_spec (&c->ts);
   if (m == MATCH_NO)
     goto syntax;
@@ -8314,6 +8323,9 @@ gfc_match_class_is (void)
 
   if (c->ts.type == BT_DERIVED)
     c->ts.type = BT_CLASS;
+
+  /* Distinguish CLASS IS cases to prevent collisions.  */
+  c->ts.u.derived->hash_value = gfc_hash_value (c->ts.u.derived);
 
   if (gfc_match_char (')') != MATCH_YES)
     goto syntax;
