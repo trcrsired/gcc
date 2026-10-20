@@ -4091,8 +4091,9 @@ level_name:     LEVEL ctx_name
                   if( !namcpy(@ctx_name, field.name, $2) ) YYERROR;
 
                   if( 0 == strcasecmp(field.name, "errno") ) {
-                    warn_msg(@ctx_name, "%<errno%> does not refer to the C variable, "
-                             "see posix-errno function");
+                      cbl_message(@ctx_name, ParErrno,
+                                  "%<errno%> does not refer to the C variable, "
+                                  "see posix-errno function");
                   }
 
                   $$ = field_add(@$, &field);
@@ -9195,8 +9196,11 @@ write_body:     write_what[field] advance_when[when] advancing
                     YYERROR;
                   }
 		  cbl_refer_t lines;
+                  bool after = false;
                   switch(file->org) {
                   case file_sequential_e:
+                    after = true;
+                    lines.field = literally_zero;
                     break;
                   case file_line_sequential_e:
                     lines.field = literally_one;
@@ -9206,7 +9210,7 @@ write_body:     write_what[field] advance_when[when] advancing
                   case file_relative_e:
                     break;
                   }
-                  $$ = file_write_args.init( file, $field, false, &lines );
+                  $$ = file_write_args.init( file, $field, after, &lines );
                 }
                 ;
 write_what:     file_record FROM alpha_val[input]

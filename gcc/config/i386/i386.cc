@@ -4523,8 +4523,7 @@ zero_all_st_registers (HARD_REG_SET need_zeroed_hardregs)
 
   for (unsigned int i = 0; i < num_of_st; i++)
     {
-      rtx insn;
-      insn = emit_insn (gen_rtx_SET (st_reg, st_reg));
+      rtx_insn *insn = emit_insn (gen_rtx_SET (st_reg, st_reg));
       add_reg_note (insn, REG_DEAD, st_reg);
     }
   return num_of_st;
@@ -8308,7 +8307,7 @@ ix86_emit_save_reg_using_mov (machine_mode mode, unsigned int regno,
 {
   struct machine_function *m = cfun->machine;
   rtx reg = gen_rtx_REG (mode, regno);
-  rtx mem, addr, base, insn;
+  rtx mem, addr, base;
   unsigned int align = GET_MODE_ALIGNMENT (mode);
 
   addr = choose_baseaddr (cfa_offset, &align);
@@ -8319,7 +8318,7 @@ ix86_emit_save_reg_using_mov (machine_mode mode, unsigned int regno,
   gcc_assert (! (cfa_offset & (align / BITS_PER_UNIT - 1)));
   set_mem_align (mem, align);
 
-  insn = emit_insn (gen_rtx_SET (mem, reg));
+  rtx_insn *insn = emit_insn (gen_rtx_SET (mem, reg));
   RTX_FRAME_RELATED_P (insn) = 1;
 
   base = addr;
@@ -8460,7 +8459,7 @@ pro_epilogue_adjust_stack (rtx dest, rtx src, rtx offset,
 {
   struct machine_function *m = cfun->machine;
   rtx addend = offset;
-  rtx insn;
+  rtx_insn *insn;
   bool add_frame_related_expr = false;
 
   if (!x86_64_immediate_operand (offset, Pmode))
@@ -8791,13 +8790,16 @@ get_scratch_register_on_entry (struct scratch_reg *sr)
 	       && !static_chain_p
 	       && drap_regno != CX_REG)
 	regno = CX_REG;
-      else if (ix86_save_reg (BX_REG, true, false))
+      else if (ix86_save_reg (BX_REG, true, false)
+	       && drap_regno != BX_REG)
 	regno = BX_REG;
       /* esi is the static chain register.  */
       else if (!(regparm == 3 && static_chain_p)
-	       && ix86_save_reg (SI_REG, true, false))
+	       && ix86_save_reg (SI_REG, true, false)
+	       && drap_regno != SI_REG)
 	regno = SI_REG;
-      else if (ix86_save_reg (DI_REG, true, false))
+      else if (ix86_save_reg (DI_REG, true, false)
+	       && drap_regno != DI_REG)
 	regno = DI_REG;
       else
 	{
@@ -8832,7 +8834,8 @@ release_scratch_register_on_entry (struct scratch_reg *sr, HOST_WIDE_INT offset,
       if (release_via_pop)
 	{
 	  struct machine_function *m = cfun->machine;
-	  rtx x, insn = emit_insn (gen_pop (sr->reg));
+	  rtx_insn *insn = emit_insn (gen_pop (sr->reg));
+	  rtx x;
 
 	  /* The RX FRAME_RELATED_P mechanism doesn't know about pop.  */
 	  RTX_FRAME_RELATED_P (insn) = 1;
@@ -9005,7 +9008,7 @@ ix86_adjust_stack_and_probe (HOST_WIDE_INT size,
       /* Step 2: compute final value of the loop counter.  Use lea if
 	 possible.  */
       rtx addr = plus_constant (Pmode, stack_pointer_rtx, -rounded_size);
-      rtx insn;
+      rtx_insn *insn;
       if (address_no_seg_operand (addr, Pmode))
 	insn = emit_insn (gen_rtx_SET (sr.reg, addr));
       else
@@ -9902,7 +9905,7 @@ void
 ix86_expand_prologue (void)
 {
   struct machine_function *m = cfun->machine;
-  rtx insn, t;
+  rtx t;
   HOST_WIDE_INT allocate;
   bool int_registers_saved;
   bool sse_registers_saved;
@@ -9984,7 +9987,7 @@ ix86_expand_prologue (void)
 	     I don't expect Wine generates dwarf2 unwind info for the
 	     system libraries that use this feature.  */
 
-	  insn = emit_insn (gen_blockage ());
+	  rtx_insn *insn = emit_insn (gen_blockage ());
 
 	  push = gen_push (hard_frame_pointer_rtx);
 	  mov = gen_rtx_SET (hard_frame_pointer_rtx,
@@ -10016,7 +10019,7 @@ ix86_expand_prologue (void)
   else if (ix86_static_chain_on_stack)
     {
       static_chain = ix86_static_chain (cfun->decl, false);
-      insn = emit_insn (gen_push (static_chain));
+      rtx_insn *insn = emit_insn (gen_push (static_chain));
       emit_insn (gen_blockage ());
 
       /* We don't want to interpret this push insn as a register save,
@@ -10033,6 +10036,7 @@ ix86_expand_prologue (void)
   if (stack_realign_drap)
     {
       int align_bytes = crtl->stack_alignment_needed / BITS_PER_UNIT;
+      rtx_insn *insn;
 
       /* Can't use DRAP in interrupt function.  */
       if (cfun->machine->func_type != TYPE_NORMAL)
@@ -10079,7 +10083,7 @@ ix86_expand_prologue (void)
 	  /* Replicate static chain on the stack so that static chain
 	     can be reached via (argp - 2) slot.  This is needed for
 	     nested function with stack realignment.  */
-	  insn = emit_insn (gen_push (static_chain));
+	  rtx_insn *insn = emit_insn (gen_push (static_chain));
 	  RTX_FRAME_RELATED_P (insn) = 1;
 	}
     }
@@ -10093,12 +10097,13 @@ ix86_expand_prologue (void)
     {
       /* Note: AT&T enter does NOT have reversed args.  Enter is probably
          slower on all targets.  Also sdb didn't like it.  */
-      insn = emit_insn (gen_push (hard_frame_pointer_rtx));
+      rtx_insn *insn = emit_insn (gen_push (hard_frame_pointer_rtx));
       RTX_FRAME_RELATED_P (insn) = 1;
 
       if (m->fs.sp_offset == frame.hard_frame_pointer_offset)
 	{
-	  insn = emit_move_insn (hard_frame_pointer_rtx, stack_pointer_rtx);
+	  rtx_insn *insn
+	    = emit_move_insn (hard_frame_pointer_rtx, stack_pointer_rtx);
 	  RTX_FRAME_RELATED_P (insn) = 1;
 
 	  if (m->fs.cfa_reg == stack_pointer_rtx)
@@ -10343,7 +10348,7 @@ ix86_expand_prologue (void)
 
       if (eax_live)
 	{
-	  insn = emit_insn (gen_push (eax));
+	  rtx_insn *insn = emit_insn (gen_push (eax));
 	  allocate -= UNITS_PER_WORD;
 	  /* Note that SEH directives need to continue tracking the stack
 	     pointer even after the frame pointer has been set up.  */
@@ -10363,7 +10368,7 @@ ix86_expand_prologue (void)
       if (r10_live)
 	{
 	  r10 = gen_rtx_REG (Pmode, R10_REG);
-	  insn = emit_insn (gen_push (r10));
+	  rtx_insn *insn = emit_insn (gen_push (r10));
 	  allocate -= UNITS_PER_WORD;
 	  if (sp_is_cfa_reg || TARGET_SEH)
 	    {
@@ -10382,7 +10387,7 @@ ix86_expand_prologue (void)
       emit_insn (gen_allocate_stack_worker_probe (Pmode, eax, eax));
 
       /* Use the fact that AX still contains ALLOCATE.  */
-      insn = emit_insn (gen_pro_epilogue_adjust_stack_sub
+      rtx_insn *insn = emit_insn (gen_pro_epilogue_adjust_stack_sub
 			(Pmode, stack_pointer_rtx, stack_pointer_rtx, eax));
 
       if (sp_is_cfa_reg || TARGET_SEH)
@@ -10424,7 +10429,7 @@ ix86_expand_prologue (void)
   /* If we haven't already set up the frame pointer, do so now.  */
   if (frame_pointer_needed && !m->fs.fp_valid)
     {
-      insn = gen_add3_insn (hard_frame_pointer_rtx, stack_pointer_rtx,
+      rtx_insn *insn = gen_add3_insn (hard_frame_pointer_rtx, stack_pointer_rtx,
 			    GEN_INT (frame.stack_pointer_offset
 				     - frame.hard_frame_pointer_offset));
       insn = emit_insn (insn);
@@ -10449,7 +10454,7 @@ ix86_expand_prologue (void)
   if (!TARGET_64BIT && pic_offset_table_rtx && crtl->profile && !flag_fentry)
     {
       rtx pic = gen_rtx_REG (Pmode, REAL_PIC_OFFSET_TABLE_REGNUM);
-      insn = emit_insn (gen_set_got (pic));
+      rtx_insn *insn = emit_insn (gen_set_got (pic));
       RTX_FRAME_RELATED_P (insn) = 1;
       add_reg_note (insn, REG_CFA_FLUSH_QUEUE, NULL_RTX);
       emit_insn (gen_prologue_use (pic));

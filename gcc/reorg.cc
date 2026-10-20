@@ -186,7 +186,7 @@ static rtx_insn *delete_from_delay_slot (rtx_insn *);
 static void delete_scheduled_jump (rtx_insn *);
 static void note_delay_statistics (int, int);
 static int get_jump_flags (const rtx_insn *, rtx);
-static int mostly_true_jump (rtx);
+static int mostly_true_jump (rtx_insn *);
 static rtx get_branch_condition (const rtx_insn *, rtx);
 static bool condition_dominates_p (rtx, const rtx_insn *);
 static bool redirect_with_delay_slots_safe_p (rtx_insn *, rtx, rtx);
@@ -775,7 +775,7 @@ get_jump_flags (const rtx_insn *insn, rtx label)
    return 0 and if the branch is highly unlikely to be taken, return -1.  */
 
 static int
-mostly_true_jump (rtx jump_insn)
+mostly_true_jump (rtx_insn *jump_insn)
 {
   /* If branch probabilities are available, then use that number since it
      always gives a correct answer.  */
@@ -3281,7 +3281,7 @@ relax_delay_slots (rtx_insn *first)
 	 We use next_real_nondebug_insn instead of next_active_insn so we
 	 don't skip USE-markers, or we'll end up with incorrect
 	 liveness info.  */
-      trial = next_real_nondebug_insn (target_label);
+      trial = next_real_nondebug_insn (as_a<rtx_insn *> (target_label));
       if (trial && GET_CODE (PATTERN (trial)) != SEQUENCE
 	  && redundant_insn (trial, insn, vNULL)
 	  && ! can_throw_internal (trial))
@@ -3470,8 +3470,8 @@ make_return_insns (rtx_insn *first)
 {
   rtx_insn *insn;
   rtx_jump_insn *jump_insn;
-  rtx real_return_label = function_return_label;
-  rtx real_simple_return_label = function_simple_return_label;
+  rtx_insn *real_return_label = function_return_label;
+  rtx_insn *real_simple_return_label = function_simple_return_label;
   int slots, i;
 
   /* See if there is a RETURN insn in the function other than the one we
@@ -3480,7 +3480,7 @@ make_return_insns (rtx_insn *first)
   for (insn = first; insn; insn = NEXT_INSN (insn))
     if (JUMP_P (insn) && ANY_RETURN_P (PATTERN (insn)))
       {
-	rtx t = get_label_before (insn, NULL_RTX);
+	rtx_insn *t = get_label_before (insn, NULL_RTX);
 	if (PATTERN (insn) == ret_rtx)
 	  real_return_label = t;
 	else

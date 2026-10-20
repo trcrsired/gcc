@@ -3172,28 +3172,39 @@ sequential_file_write(cblc_file_t    *file,
 
   int lcount;
 
-  if( lines < -1 )
-    {
-    // We are using -666 for a form feed
-    chvert = ascii_ff;
-    lcount = 1;
-    }
-  else if( lines == -1 )
-    {
-    // -1 is a flag that no vertical control is requested
+  switch(file->org) {
+  case file_disorganized_e:
+  case file_indexed_e:
+  case file_relative_e:
+    assert(false);
+    break;
+  case file_sequential_e:
     lcount = 0;
-    }
-  else if( lines == 0 )
-    {
-    lcount = 1;
-    chvert = ascii_newline;
-    }
-  else /* if( lines > 0 ) */
-    {
-    lcount = lines;
-    chvert = ascii_newline;
-    }
-
+    break;
+  case file_line_sequential_e:
+    if( lines < -1 )
+      {
+      // We are using -666 for a form feed
+      chvert = ascii_ff;
+      lcount = 1;
+      }
+    else if( lines == -1 )
+      {
+      // -1 is a flag that no vertical control is requested
+      lcount = 0;
+      }
+    else if( lines == 0 )
+      {
+      lcount = 1;
+      chvert = ascii_newline;
+      }
+    else /* if( lines > 0 ) */
+      {
+      lcount = lines;
+      chvert = ascii_newline;
+      }
+    break;
+  }
   // By default, we write out the number of characters in the record area
   bytes_to_write = length;
 
@@ -5334,114 +5345,6 @@ __gg__file_stash( cblc_file_t *file )
   ::stashed = file;
   }
 
-    /*
-     * The following constitutes a proposal for a public API to gcobol I/O.
-     *
-     * The class gcobol_io_t would be in a public header file that
-     * would be used by any library that provides an I/O
-     * implementation.  Additionally, that header would be where
-     * cblc_file_t is defined, and where the valid file status values
-     * (and relops) are enumerated.
-     *
-     * The library constructs the class, providing its own pointers,
-     * and supplies a known function, gcobol_fileops, to return
-     * it. gcobol-compiled programs call the functions, or others
-     * supplied by a different implementation, through the pointers.
-     *
-     * This design makes it possible to run the same code, unaltered,
-     * simply by relinking.
-     *
-     * This design is commonly used, and is similar to the one used in
-     * GnuCOBOL.  One difference is that the file status is captured
-     * in the cblc_file_t, whereas in GnuCOBOL it is the return value.
-     *
-     * There is no provision for using more than one implementation at
-     * a time in the same program, as would be needed for CODE-SET
-     * support.  To achieve that in C++ without dynamic linking, there
-     * would have to be a set of known implementations, each with its
-     * own namespace, in which gcobol_fileops would be defined.
-     */
-
-class gcobol_io_t {
-public:
-  static const char constexpr marquee[64] = "libgcobol: gfileio.cc";
-
-  typedef void (open_t)( cblc_file_t *file,
-                   const char *filename,
-                         int mode_char);
-  typedef void (close_t)( cblc_file_t *file,
-                          int how );
-  typedef void (start_t)( cblc_file_t *file,
-                          int relop, // needs enum
-                          int first_last_key,
-                          size_t length );
-  typedef void (read_t)( cblc_file_t *file,
-                         int where );
-  typedef void (write_t)( cblc_file_t *file,
-                          const unsigned char  *location,
-                          size_t length,
-                          int after,
-                          int lines,
-                          int is_random );
-  typedef void (rewrite_t)(cblc_file_t *file,
-                           size_t length, bool is_random );
-  typedef void (delete_t)(cblc_file_t *file,
-                          bool is_random );
-  typedef void (remove_t)(cblc_file_t  *file,
-                    const char         *filename);
-  open_t      *Open;
-  close_t     *Close;
-  start_t     *Start;
-  read_t      *Read;
-  write_t     *Write;
-  rewrite_t   *Rewrite;
-  delete_t    *Delete;
-  remove_t    *Remove;
-
-  gcobol_io_t()
-    : Open(NULL)
-    , Close(NULL)
-    , Start(NULL)
-    , Read(NULL)
-    , Write(NULL)
-    , Rewrite(NULL)
-    , Delete(NULL)
-    , Remove(NULL)
-  {}
-
-  gcobol_io_t(   open_t      *Open,
-                 close_t     *Close,
-                 start_t     *Start,
-                 read_t      *Read,
-                 write_t     *Write,
-                 rewrite_t   *Rewrite,
-                 delete_t    *Delete,
-                 remove_t    *Remove)
-    : Open(Open)
-    , Close(Close)
-    , Start(Start)
-    , Read(Read)
-    , Write(Write)
-    , Rewrite(Rewrite)
-    , Delete(Delete)
-    , Remove(Remove)
-  {}
-
-#if FILE_IO_IMPLEMENTED
-  int     read_next();
-  int     fildelete();
-  void    ioinit();
-  void    ioexit();
-  int     iofork();
-  int     iosync();
-  int     commit();
-  int     rollback();
-  int     iounlock();
-  char *  ioversion();
-#endif
-};
-
-
 // Our implementation returns this populated structure
 
 gcobol_io_t*
@@ -5491,6 +5394,11 @@ gcobol_io_funcs() {
         }
     }
   return gcobol_io;
+}
+
+gcobol_io_t *
+__gg__file_io_funcs() {
+  return gcobol_io_funcs();
 }
 
 extern "C"
@@ -5576,4 +5484,3 @@ __gg__file_remove(      cblc_file_t *file,
   }
 
 /* end interface functions */
-
