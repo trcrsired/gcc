@@ -3275,6 +3275,76 @@ diagnose_trait_expr (location_t loc, tree expr, tree args)
     case CPTK_IS_FUNCTION:
       inform (loc, "%qT is not a function", t1);
       break;
+    /* Herbceptions channel traits.  */
+    case CPTK_IS_HERBCEPTIONS_THROWSABLE:
+      inform (decl_loc, "%qT is not throwsable; no complete "
+	      "%<std::error_domain%> specialization is available", t1);
+      break;
+    case CPTK_IS_INVOKE_HERBCEPTIONS_RETURN_FAILURE:
+      inform (loc, "%qT is not a function type with a %<return_failure%> "
+	      "specifier", t1);
+      break;
+    case CPTK_HAS_HERBCEPTIONS_THROWS_CONSTRUCTOR:
+      inform (decl_loc, "%qT does not have a %<throws%> default constructor",
+	      t1);
+      break;
+    case CPTK_HAS_HERBCEPTIONS_THROWS_COPY:
+      inform (decl_loc, "%qT does not have a %<throws%> copy constructor", t1);
+      break;
+    case CPTK_HAS_HERBCEPTIONS_THROWS_ASSIGN:
+      inform (decl_loc, "%qT does not have a %<throws%> copy assignment "
+	      "operator", t1);
+      break;
+    case CPTK_HAS_HERBCEPTIONS_THROWS_MOVE_ASSIGN:
+      inform (decl_loc, "%qT does not have a %<throws%> move assignment "
+	      "operator", t1);
+      break;
+    case CPTK_IS_HERBCEPTIONS_THROWS_CONSTRUCTIBLE:
+      if (!TREE_VEC_LENGTH (t2))
+	inform (loc, "%qT is not throws default constructible, because", t1);
+      else
+	inform (loc, "%qT is not throws constructible from %qT, because",
+		t1, t2);
+      is_xible (INIT_EXPR, t1, t2, /*explain=*/true);
+      break;
+    case CPTK_IS_HERBCEPTIONS_THROWS_INVOCABLE:
+      {
+	if (!TREE_VEC_LENGTH (t2))
+	  inform (loc, "%qT is not throws invocable, because", t1);
+	else
+	  inform (loc, "%qT is not throws invocable by %qT, because", t1, t2);
+	tree call = build_invoke (t1, t2, tf_error);
+	if (call != error_mark_node && !hb_op_throws (call))
+	  inform (loc, "the selected function is not declared %<throws%>");
+      }
+      break;
+    case CPTK_IS_HERBCEPTIONS_THROWS_INVOCABLE_R:
+      {
+	/* Args are (R, F, A...): type1 = R, type2 = vec (F, A...).  */
+	tree f = TREE_VEC_ELT (t2, 0);
+	tree a = make_tree_vec (TREE_VEC_LENGTH (t2) - 1);
+	for (int i = 1; i < TREE_VEC_LENGTH (t2); ++i)
+	  TREE_VEC_ELT (a, i - 1) = TREE_VEC_ELT (t2, i);
+	inform (loc, "%qT is not throws invocable with result type %qT, "
+		"because", f, t1);
+	tree call = build_invoke (f, a, tf_error);
+	if (call == error_mark_node)
+	  break;
+	if (!hb_op_throws (call))
+	  inform (loc, "the selected function is not declared %<throws%>");
+	else if (t1 && !VOID_TYPE_P (t1)
+		 && !is_convertible (TREE_TYPE (call), t1))
+	  is_convertible (TREE_TYPE (call), t1, /*explain=*/true);
+      }
+      break;
+    case CPTK_IS_HERBCEPTIONS_THROWS_ASSIGNABLE:
+      inform (loc, "%qT is not throws assignable from %qT, because", t1, t2);
+      is_xible (MODIFY_EXPR, t1, t2, /*explain=*/true);
+      break;
+    case CPTK_IS_HERBCEPTIONS_THROWS_CONVERTIBLE:
+      inform (loc, "%qT is not throws convertible from %qT, because", t1, t2);
+      is_convertible (t1, t2, /*explain=*/true);
+      break;
     case CPTK_IS_IMPLICIT_LIFETIME:
       inform (decl_loc, "%qT is not an implicit-lifetime type", t1);
       break;

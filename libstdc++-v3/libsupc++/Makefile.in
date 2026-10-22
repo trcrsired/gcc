@@ -153,7 +153,8 @@ am__uninstall_files_from_dir = { \
 am__installdirs = "$(DESTDIR)$(toolexeclibdir)" "$(DESTDIR)$(bitsdir)" \
 	"$(DESTDIR)$(stddir)"
 LTLIBRARIES = $(noinst_LTLIBRARIES) $(toolexeclib_LTLIBRARIES)
-libsupc___la_LIBADD =
+mingw_ntdll = $(if $(findstring mingw,$(host_os)),-lntdll)
+libsupc___la_LIBADD = $(mingw_ntdll)
 am__objects_1 = array_type_info.lo atexit_arm.lo atexit_thread.lo \
 	atomicity.lo bad_alloc.lo bad_array_length.lo bad_array_new.lo \
 	bad_cast.lo bad_typeid.lo class_type_info.lo del_op.lo \

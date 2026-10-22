@@ -129,6 +129,11 @@ endif
 libsupc___la_SOURCES = $(sources) $(c_sources) $(vtv_sources)
 libsupc__convenience_la_SOURCES = $(sources) $(c_sources) $(vtv_sources)
 
+# The Itanium exception_ptr domain takes its heap from ntdll on MinGW so it
+# does not depend on the C runtime, so the link needs the import library.
+mingw_ntdll = $(if $(findstring mingw,$(host_os)),-lntdll)
+libsupc___la_LIBADD = $(mingw_ntdll)
+
 cp-demangle.c:
 	rm -f $@
 	$(LN_S) $(toplevel_srcdir)/libiberty/cp-demangle.c $@
