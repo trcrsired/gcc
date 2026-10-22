@@ -169,8 +169,7 @@ am__objects_1 = array_type_info.lo atexit_arm.lo atexit_thread.lo \
 	new_opa.lo new_opant.lo new_opva.lo new_opvant.lo del_opa.lo \
 	del_opant.lo del_opsa.lo del_opva.lo del_opvant.lo \
 	del_opvsa.lo pbase_type_info.lo pmem_type_info.lo \
-	pointer_type_info.lo pure.lo query_information.lo \
-	si_class_type_info.lo tinfo.lo \
+	pointer_type_info.lo pure.lo si_class_type_info.lo tinfo.lo \
 	tinfo2.lo vec.lo vmi_class_type_info.lo vterminate.lo
 @GLIBCXX_HOSTED_TRUE@am__objects_2 = cp-demangle.lo
 @ENABLE_VTABLE_VERIFY_TRUE@@VTV_CYGMIN_FALSE@am__objects_3 =  \
@@ -576,7 +575,6 @@ sources = \
 	pmem_type_info.cc \
 	pointer_type_info.cc \
 	pure.cc \
-	query_information.cc \
 	si_class_type_info.cc \
 	tinfo.cc \
 	tinfo2.cc \
@@ -990,14 +988,10 @@ atomicity.o: atomicity.cc
 	$(CXXCOMPILE) -fwrapv -c $<
 
 # The exception_ptr error domain is written against the C++23 herbception
-# headers, so only these two translation units opt into gnu++23.
+# headers, so this translation unit opts into gnu++23.
 itanium_exception_ptr.lo: itanium_exception_ptr.cc
 	$(LTCXXCOMPILE) -std=gnu++23 -c $<
 itanium_exception_ptr.o: itanium_exception_ptr.cc
-	$(CXXCOMPILE) -std=gnu++23 -c $<
-query_information.lo: query_information.cc
-	$(LTCXXCOMPILE) -std=gnu++23 -c $<
-query_information.o: query_information.cc
 	$(CXXCOMPILE) -std=gnu++23 -c $<
 
 # See PR 112397
