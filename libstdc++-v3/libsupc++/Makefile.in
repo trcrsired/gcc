@@ -163,12 +163,14 @@ am__objects_1 = array_type_info.lo atexit_arm.lo atexit_thread.lo \
 	eh_ptr.lo eh_term_handler.lo eh_terminate.lo eh_tm.lo \
 	eh_throw.lo eh_type.lo eh_unex_handler.lo enum_type_info.lo \
 	function_type_info.lo fundamental_type_info.lo guard.lo \
-	guard_error.lo hash_bytes.lo nested_exception.lo \
-	new_handler.lo new_op.lo new_opnt.lo new_opv.lo new_opvnt.lo \
+	guard_error.lo hash_bytes.lo itanium_exception_ptr.lo \
+	nested_exception.lo new_handler.lo new_op.lo new_opnt.lo \
+	new_opv.lo new_opvnt.lo \
 	new_opa.lo new_opant.lo new_opva.lo new_opvant.lo del_opa.lo \
 	del_opant.lo del_opsa.lo del_opva.lo del_opvant.lo \
 	del_opvsa.lo pbase_type_info.lo pmem_type_info.lo \
-	pointer_type_info.lo pure.lo si_class_type_info.lo tinfo.lo \
+	pointer_type_info.lo pure.lo query_information.lo \
+	si_class_type_info.lo tinfo.lo \
 	tinfo2.lo vec.lo vmi_class_type_info.lo vterminate.lo
 @GLIBCXX_HOSTED_TRUE@am__objects_2 = cp-demangle.lo
 @ENABLE_VTABLE_VERIFY_TRUE@@VTV_CYGMIN_FALSE@am__objects_3 =  \
@@ -491,7 +493,10 @@ WARN_CXXFLAGS = \
 
 
 # -I/-D flags to pass when compiling.
-AM_CPPFLAGS = $(GLIBCXX_INCLUDES) $(CPPFLAGS)
+AM_CPPFLAGS = $(GLIBCXX_INCLUDES) $(CPPFLAGS) \
+	-I$(top_srcdir)/../libherbceptions/include \
+	-I$(top_srcdir)/../libherbceptions/src \
+	-D_HERBCEPTIONS_BUILDING_RUNTIME=1
 
 # Need this library to both be part of libstdc++.a, and installed
 # separately too.
@@ -550,6 +555,7 @@ sources = \
 	guard.cc \
 	guard_error.cc \
 	hash_bytes.cc \
+	itanium_exception_ptr.cc \
 	nested_exception.cc \
 	new_handler.cc \
 	new_op.cc \
@@ -570,6 +576,7 @@ sources = \
 	pmem_type_info.cc \
 	pointer_type_info.cc \
 	pure.cc \
+	query_information.cc \
 	si_class_type_info.cc \
 	tinfo.cc \
 	tinfo2.cc \
@@ -981,6 +988,17 @@ atomicity.lo: atomicity.cc
 	$(LTCOMPILE) -fwrapv -c $<
 atomicity.o: atomicity.cc
 	$(CXXCOMPILE) -fwrapv -c $<
+
+# The exception_ptr error domain is written against the C++23 herbception
+# headers, so only these two translation units opt into gnu++23.
+itanium_exception_ptr.lo: itanium_exception_ptr.cc
+	$(LTCXXCOMPILE) -std=gnu++23 -c $<
+itanium_exception_ptr.o: itanium_exception_ptr.cc
+	$(CXXCOMPILE) -std=gnu++23 -c $<
+query_information.lo: query_information.cc
+	$(LTCXXCOMPILE) -std=gnu++23 -c $<
+query_information.o: query_information.cc
+	$(CXXCOMPILE) -std=gnu++23 -c $<
 
 # See PR 112397
 @OS_IS_DARWIN_TRUE@new_opvnt.lo: new_opvnt.cc
