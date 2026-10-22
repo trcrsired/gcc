@@ -21,10 +21,11 @@ Two heap flavors live side by side:
   - The NT flavor goes straight to ntdll's RtlAllocateHeap/RtlFreeHeap with
     the process heap handle read out of the PEB through the TEB ("register"
     part), so no kernel32 import is needed for it. Used by the exception
-    domains on MinGW, which deliberately do not depend on the C runtime:
-    its heap is tied to the CRT version, which can differ between modules.
+    domains, which only ever run on NT-family kernels. The declarations
+    mirror fast_io_core_impl/allocation/nt_preliminary_definition.h.
   - The win32 flavor uses kernel32's HeapAlloc/HeapFree, which exists since
-    Windows 95; used by the win32/com message machinery.
+    Windows 95; used by the win32/com message machinery and by the itanium
+    domain so they keep working everywhere.
 
 Every imported function is declared noexcept so no exception semantics can
 bite across the C ABI boundary.
@@ -91,8 +92,8 @@ inline void __win32_heap_free(void *__bufferptr) noexcept {
 
 #endif
 
-// Dispatchers used by the runtime code: the nt flavor on MinGW, malloc
-// elsewhere.
+// Dispatchers used by the runtime code: the nt flavor for the exception
+// domains, the win32 flavor elsewhere.
 inline void *__malloc_or_heap_alloc_or_die(::std::size_t __sz) noexcept {
 #ifdef _WIN32
   return __nt_heap_alloc_or_die(__sz);
