@@ -496,7 +496,8 @@ WARN_CXXFLAGS = \
 AM_CPPFLAGS = $(GLIBCXX_INCLUDES) $(CPPFLAGS) \
 	-I$(top_srcdir)/../libherbceptions/include \
 	-I$(top_srcdir)/../libherbceptions/src \
-	-D_HERBCEPTIONS_BUILDING_RUNTIME=1
+	-D_HERBCEPTIONS_BUILDING_RUNTIME=1 \
+	-D_HERBCEPTIONS_LIBSTDCXX=1
 
 # Need this library to both be part of libstdc++.a, and installed
 # separately too.
