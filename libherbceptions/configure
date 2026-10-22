@@ -646,6 +646,7 @@ ENABLE_DARWIN_AT_RPATH_FALSE
 ENABLE_DARWIN_AT_RPATH_TRUE
 enable_static
 enable_shared
+lt_host_flags
 CXXCPP
 OTOOL64
 OTOOL
@@ -675,6 +676,7 @@ CXXDEPMODE
 ac_ct_CXX
 CXXFLAGS
 CXX
+herbceptionsincludedir
 toolexeclibdir
 toolexecdir
 MAINT
@@ -2428,7 +2430,7 @@ if test $cross_compiling = no && test $multilib = yes \
    cross_compiling=maybe
 fi
 
-ac_config_commands="$ac_config_commands default-1"
+ac_config_commands="$ac_config_commands multilib"
 
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for --enable-version-specific-runtime-libs" >&5
@@ -4774,6 +4776,16 @@ case ${version_specific_libs} in
     ;;
 esac
 
+
+
+# A cross compiler only searches the target's sysroot include directory,
+# whereas a native compiler already searches $(includedir).
+if test -n "$with_cross_host" &&
+   test x"$with_cross_host" != x"no"; then
+  herbceptionsincludedir='$(toolexecdir)/include/herbceptions'
+else
+  herbceptionsincludedir='$(includedir)/herbceptions'
+fi
 
 
 # Checks for programs.
@@ -12571,7 +12583,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 12560 "configure"
+#line 12572 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -12677,7 +12689,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 12666 "configure"
+#line 12678 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -16011,6 +16023,31 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
 
 
 
+# On PE targets libtool only creates a DLL when every symbol is resolved,
+# and a cross build wants it next to the import library, not in $(bindir).
+
+
+
+case $host in
+  *-cygwin* | *-mingw*)
+    # 'host' will be top-level target in the case of a target lib,
+    # we must compare to with_cross_host to decide if this is a native
+    # or cross-compiler and select where to install dlls appropriately.
+    if test -n "$with_cross_host" &&
+	test x"$with_cross_host" != x"no"; then
+      lt_host_flags='-no-undefined -bindir "$(toolexeclibdir)"';
+    else
+      lt_host_flags='-no-undefined -bindir "$(bindir)"';
+    fi
+    ;;
+  *)
+    lt_host_flags=
+    ;;
+esac
+
+
+
+
 
 
 
@@ -17362,7 +17399,7 @@ cat >>$CONFIG_STATUS <<\_ACEOF || ac_write_fail=1
 for ac_config_target in $ac_config_targets
 do
   case $ac_config_target in
-    "default-1") CONFIG_COMMANDS="$CONFIG_COMMANDS default-1" ;;
+    "multilib") CONFIG_COMMANDS="$CONFIG_COMMANDS multilib" ;;
     "depfiles") CONFIG_COMMANDS="$CONFIG_COMMANDS depfiles" ;;
     "libtool") CONFIG_COMMANDS="$CONFIG_COMMANDS libtool" ;;
     "Makefile") CONFIG_FILES="$CONFIG_FILES Makefile" ;;
@@ -17795,7 +17832,7 @@ $as_echo "$as_me: executing $ac_file commands" >&6;}
 
 
   case $ac_file$ac_mode in
-    "default-1":C)
+    "multilib":C)
 # Only add multilib support code if we just rebuilt the top-level
 # Makefile.
 case " $CONFIG_FILES " in

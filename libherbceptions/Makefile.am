@@ -42,7 +42,9 @@ if USING_WIN32
 libherbceptions_la_LIBADD = -lntdll
 endif
 
-herbceptionsincludedir = $(target_alias)/include/herbceptions
+libherbceptions_la_LDFLAGS = $(lt_host_flags)
+
+herbceptionsincludedir = @herbceptionsincludedir@
 herbceptionsinclude_HEADERS = include/herbceptions/error
 
 herbceptions_detailsincludedir = $(herbceptionsincludedir)/__details
