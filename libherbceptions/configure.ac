@@ -69,6 +69,16 @@ esac
 AC_SUBST(toolexecdir)
 AC_SUBST(toolexeclibdir)
 
+# A cross compiler only searches the target's sysroot include directory,
+# whereas a native compiler already searches $(includedir).
+if test -n "$with_cross_host" &&
+   test x"$with_cross_host" != x"no"; then
+  herbceptionsincludedir='$(toolexecdir)/include/herbceptions'
+else
+  herbceptionsincludedir='$(includedir)/herbceptions'
+fi
+AC_SUBST(herbceptionsincludedir)
+
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_CXX
@@ -77,6 +87,10 @@ AC_PROG_RANLIB
 
 AC_LIBTOOL_DLOPEN
 LT_INIT
+
+# On PE targets libtool only creates a DLL when every symbol is resolved,
+# and a cross build wants it next to the import library, not in $(bindir).
+ACX_LT_HOST_FLAGS
 
 AC_SUBST(enable_shared)
 AC_SUBST(enable_static)

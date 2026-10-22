@@ -98,6 +98,7 @@ am__aclocal_m4_deps = $(top_srcdir)/../config/acx.m4 \
 	$(top_srcdir)/../config/gcc-plugin.m4 \
 	$(top_srcdir)/../config/lead-dot.m4 \
 	$(top_srcdir)/../config/libstdc++-raw-cxx.m4 \
+	$(top_srcdir)/../config/lthostflags.m4 \
 	$(top_srcdir)/../config/multi.m4 \
 	$(top_srcdir)/../config/override.m4 \
 	$(top_srcdir)/../config/toolexeclibdir.m4 \
@@ -158,6 +159,10 @@ AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
 am__v_lt_1 = 
+libherbceptions_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CXXLD) \
+	$(AM_CXXFLAGS) $(CXXFLAGS) $(libherbceptions_la_LDFLAGS) \
+	$(LDFLAGS) -o $@
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
 am__v_P_0 = false
@@ -322,6 +327,7 @@ enable_shared = @enable_shared@
 enable_static = @enable_static@
 exec_prefix = @exec_prefix@
 get_gcc_base_ver = @get_gcc_base_ver@
+herbceptionsincludedir = @herbceptionsincludedir@
 host = @host@
 host_alias = @host_alias@
 host_cpu = @host_cpu@
@@ -335,6 +341,7 @@ libdir = @libdir@
 libexecdir = @libexecdir@
 localedir = @localedir@
 localstatedir = @localstatedir@
+lt_host_flags = @lt_host_flags@
 mandir = @mandir@
 mkdir_p = @mkdir_p@
 multi_basedir = @multi_basedir@
@@ -398,7 +405,7 @@ herbceptions_sources = \
 # freestanding builds of libherbceptions outside of GCC.
 libherbceptions_la_SOURCES = $(herbceptions_sources)
 @USING_WIN32_TRUE@libherbceptions_la_LIBADD = -lntdll
-herbceptionsincludedir = $(target_alias)/include/herbceptions
+libherbceptions_la_LDFLAGS = $(lt_host_flags)
 herbceptionsinclude_HEADERS = include/herbceptions/error
 herbceptions_detailsincludedir = $(herbceptionsincludedir)/__details
 herbceptions_detailsinclude_HEADERS = \
@@ -496,7 +503,7 @@ clean-toolexeclibLTLIBRARIES:
 	}
 
 libherbceptions.la: $(libherbceptions_la_OBJECTS) $(libherbceptions_la_DEPENDENCIES) $(EXTRA_libherbceptions_la_DEPENDENCIES) 
-	$(AM_V_CXXLD)$(CXXLINK) -rpath $(toolexeclibdir) $(libherbceptions_la_OBJECTS) $(libherbceptions_la_LIBADD) $(LIBS)
+	$(AM_V_CXXLD)$(libherbceptions_la_LINK) -rpath $(toolexeclibdir) $(libherbceptions_la_OBJECTS) $(libherbceptions_la_LIBADD) $(LIBS)
 
 mostlyclean-compile:
 	-rm -f *.$(OBJEXT)
