@@ -22,6 +22,14 @@
 
 include $(top_srcdir)/fragment.am
 
+# The Itanium exception_ptr error domain lives in libsupc++ and consumes the
+# herbception headers; those are header-only here, so building libstdc++ does
+# not require --enable-libherbceptions.
+AM_CPPFLAGS += \
+	-I$(top_srcdir)/../libherbceptions/include \
+	-I$(top_srcdir)/../libherbceptions/src \
+	-D_HERBCEPTIONS_BUILDING_RUNTIME=1
+
 # Need this library to both be part of libstdc++.a, and installed
 # separately too.
 # 1) separate libsupc++.la
@@ -83,6 +91,7 @@ sources = \
 	guard.cc \
 	guard_error.cc \
 	hash_bytes.cc \
+	itanium_exception_ptr.cc \
 	nested_exception.cc \
 	new_handler.cc \
 	new_op.cc \
@@ -103,6 +112,7 @@ sources = \
 	pmem_type_info.cc \
 	pointer_type_info.cc \
 	pure.cc \
+	query_information.cc \
 	si_class_type_info.cc \
 	tinfo.cc \
 	tinfo2.cc \
@@ -136,6 +146,17 @@ atomicity.lo: atomicity.cc
 	$(LTCOMPILE) -fwrapv -c $<
 atomicity.o: atomicity.cc
 	$(CXXCOMPILE) -fwrapv -c $<
+
+# The exception_ptr error domain is written against the C++23 herbception
+# headers, so only these two translation units opt into gnu++23.
+itanium_exception_ptr.lo: itanium_exception_ptr.cc
+	$(LTCXXCOMPILE) -std=gnu++23 -c $<
+itanium_exception_ptr.o: itanium_exception_ptr.cc
+	$(CXXCOMPILE) -std=gnu++23 -c $<
+query_information.lo: query_information.cc
+	$(LTCXXCOMPILE) -std=gnu++23 -c $<
+query_information.o: query_information.cc
+	$(CXXCOMPILE) -std=gnu++23 -c $<
 
 if OS_IS_DARWIN
 # See PR 112397

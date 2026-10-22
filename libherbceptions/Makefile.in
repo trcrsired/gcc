@@ -149,16 +149,22 @@ am__installdirs = "$(DESTDIR)$(toolexeclibdir)" \
 	"$(DESTDIR)$(herbceptions_detailsincludedir)" \
 	"$(DESTDIR)$(herbceptionsincludedir)"
 LTLIBRARIES = $(toolexeclib_LTLIBRARIES)
+herbceptions_la_DEPENDENCIES =
 libherbceptions_la_DEPENDENCIES =
 am__objects_1 = posix.lo parse.lo cmath_errc.lo http_errc.lo \
-	tls_alert.lo query_information.lo win32.lo nt.lo com.lo \
-	wine.lo msvc_exception_ptr.lo
+	tls_alert.lo win32.lo nt.lo com.lo wine.lo msvc_exception_ptr.lo
+am_herbceptions_la_OBJECTS = $(am__objects_1)
+herbceptions_la_OBJECTS = $(am_herbceptions_la_OBJECTS)
 am_libherbceptions_la_OBJECTS = $(am__objects_1)
 libherbceptions_la_OBJECTS = $(am_libherbceptions_la_OBJECTS)
 AM_V_lt = $(am__v_lt_@AM_V@)
 am__v_lt_ = $(am__v_lt_@AM_DEFAULT_V@)
 am__v_lt_0 = --silent
 am__v_lt_1 = 
+herbceptions_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX \
+	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CXXLD) \
+	$(AM_CXXFLAGS) $(CXXFLAGS) $(herbceptions_la_LDFLAGS) \
+	$(LDFLAGS) -o $@
 libherbceptions_la_LINK = $(LIBTOOL) $(AM_V_lt) --tag=CXX \
 	$(AM_LIBTOOLFLAGS) $(LIBTOOLFLAGS) --mode=link $(CXXLD) \
 	$(AM_CXXFLAGS) $(CXXFLAGS) $(libherbceptions_la_LDFLAGS) \
@@ -197,7 +203,7 @@ AM_V_CXXLD = $(am__v_CXXLD_@AM_V@)
 am__v_CXXLD_ = $(am__v_CXXLD_@AM_DEFAULT_V@)
 am__v_CXXLD_0 = @echo "  CXXLD   " $@;
 am__v_CXXLD_1 = 
-SOURCES = $(libherbceptions_la_SOURCES)
+SOURCES = $(herbceptions_la_SOURCES) $(libherbceptions_la_SOURCES)
 am__can_run_installinfo = \
   case $$AM_UPDATE_INFO_DIR in \
     n|no|NO) false;; \
@@ -382,16 +388,23 @@ AM_CXXFLAGS = \
 	-std=c++23 \
 	$(LIBSTDCXX_RAW_CXX_CXXFLAGS) \
 	$(WARN_FLAGS) \
-	$(EXTRA_CXXFLAGS)
+	$(EXTRA_CXXFLAGS) \
+	-fno-exceptions -fno-rtti -fno-unwind-tables \
+	-fno-asynchronous-unwind-tables -fno-ident
 
-toolexeclib_LTLIBRARIES = libherbceptions.la
+# Rethrowing a Microsoft-ABI legacy exception calls RaiseException; the
+# frames between the raise and the caller must be unwindable, so this one
+# translation unit needs unwind tables despite the flags above.
+msvc_exception_ptr.lo msvc_exception_ptr.o: CXXFLAGS += -funwind-tables
+
+@USING_WIN32_TRUE@toolexeclib_LTLIBRARIES = herbceptions.la
+@USING_WIN32_FALSE@toolexeclib_LTLIBRARIES = libherbceptions.la
 herbceptions_sources = \
 	src/posix.cpp \
 	src/parse.cpp \
 	src/cmath_errc.cpp \
 	src/http_errc.cpp \
 	src/tls_alert.cpp \
-	src/query_information.cpp \
 	src/win32.cpp \
 	src/nt.cpp \
 	src/com.cpp \
@@ -399,13 +412,19 @@ herbceptions_sources = \
 	src/msvc_exception_ptr.cpp
 
 
-# src/itanium_exception_ptr.cpp is deliberately not built: the Itanium
-# exception_ptr error domain is supplied by the C++ runtime (libsupc++ /
-# libc++abi).  The file is kept in the tree for reference and for
-# freestanding builds of libherbceptions outside of GCC.
-libherbceptions_la_SOURCES = $(herbceptions_sources)
-@USING_WIN32_TRUE@libherbceptions_la_LIBADD = -lntdll
-libherbceptions_la_LDFLAGS = $(lt_host_flags)
+# src/itanium_exception_ptr.cpp and src/query_information.cpp are
+# deliberately not built: the Itanium exception_ptr error domain and the
+# legacy-box buffer ABI it depends on are supplied by the C++ runtime
+# (libsupc++ / libc++abi).  The files are kept in the tree for reference and
+# for freestanding builds of libherbceptions outside of GCC.
+@USING_WIN32_TRUE@herbceptions_la_SOURCES = $(herbceptions_sources)
+@USING_WIN32_TRUE@herbceptions_la_LIBADD = -lntdll
+# -module drops libtool's "lib" prefix and -avoid-version drops the "-0"
+# suffix, so the output is herbceptions.dll: the same file name the MSVC
+# build produces, letting one DLL serve both ABIs.
+@USING_WIN32_TRUE@herbceptions_la_LDFLAGS = $(lt_host_flags) -module -avoid-version
+@USING_WIN32_FALSE@libherbceptions_la_SOURCES = $(herbceptions_sources)
+@USING_WIN32_FALSE@libherbceptions_la_LDFLAGS = $(lt_host_flags)
 herbceptionsinclude_HEADERS = include/herbceptions/error
 herbceptions_detailsincludedir = $(herbceptionsincludedir)/__details
 herbceptions_detailsinclude_HEADERS = \
@@ -502,6 +521,9 @@ clean-toolexeclibLTLIBRARIES:
 	  rm -f $${locs}; \
 	}
 
+herbceptions.la: $(herbceptions_la_OBJECTS) $(herbceptions_la_DEPENDENCIES) $(EXTRA_herbceptions_la_DEPENDENCIES) 
+	$(AM_V_CXXLD)$(herbceptions_la_LINK) -rpath $(toolexeclibdir) $(herbceptions_la_OBJECTS) $(herbceptions_la_LIBADD) $(LIBS)
+
 libherbceptions.la: $(libherbceptions_la_OBJECTS) $(libherbceptions_la_DEPENDENCIES) $(EXTRA_libherbceptions_la_DEPENDENCIES) 
 	$(AM_V_CXXLD)$(libherbceptions_la_LINK) -rpath $(toolexeclibdir) $(libherbceptions_la_OBJECTS) $(libherbceptions_la_LIBADD) $(LIBS)
 
@@ -518,7 +540,6 @@ distclean-compile:
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/nt.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/parse.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/posix.Plo@am__quote@
-@AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/query_information.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/tls_alert.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/win32.Plo@am__quote@
 @AMDEP_TRUE@@am__include@ @am__quote@./$(DEPDIR)/wine.Plo@am__quote@

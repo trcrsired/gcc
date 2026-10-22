@@ -15,9 +15,20 @@ AM_CXXFLAGS = \
 	-std=c++23 \
 	$(LIBSTDCXX_RAW_CXX_CXXFLAGS) \
 	$(WARN_FLAGS) \
-	$(EXTRA_CXXFLAGS)
+	$(EXTRA_CXXFLAGS) \
+	-fno-exceptions -fno-rtti -fno-unwind-tables \
+	-fno-asynchronous-unwind-tables -fno-ident
 
+# Rethrowing a Microsoft-ABI legacy exception calls RaiseException; the
+# frames between the raise and the caller must be unwindable, so this one
+# translation unit needs unwind tables despite the flags above.
+msvc_exception_ptr.lo msvc_exception_ptr.o: CXXFLAGS += -funwind-tables
+
+if USING_WIN32
+toolexeclib_LTLIBRARIES = herbceptions.la
+else
 toolexeclib_LTLIBRARIES = libherbceptions.la
+endif
 
 herbceptions_sources = \
 	src/posix.cpp \
@@ -25,24 +36,28 @@ herbceptions_sources = \
 	src/cmath_errc.cpp \
 	src/http_errc.cpp \
 	src/tls_alert.cpp \
-	src/query_information.cpp \
 	src/win32.cpp \
 	src/nt.cpp \
 	src/com.cpp \
 	src/wine.cpp \
 	src/msvc_exception_ptr.cpp
 
-# src/itanium_exception_ptr.cpp is deliberately not built: the Itanium
-# exception_ptr error domain is supplied by the C++ runtime (libsupc++ /
-# libc++abi).  The file is kept in the tree for reference and for
-# freestanding builds of libherbceptions outside of GCC.
-libherbceptions_la_SOURCES = $(herbceptions_sources)
-
+# src/itanium_exception_ptr.cpp and src/query_information.cpp are
+# deliberately not built: the Itanium exception_ptr error domain and the
+# legacy-box buffer ABI it depends on are supplied by the C++ runtime
+# (libsupc++ / libc++abi).  The files are kept in the tree for reference and
+# for freestanding builds of libherbceptions outside of GCC.
 if USING_WIN32
-libherbceptions_la_LIBADD = -lntdll
-endif
-
+herbceptions_la_SOURCES = $(herbceptions_sources)
+herbceptions_la_LIBADD = -lntdll
+# -module drops libtool's "lib" prefix and -avoid-version drops the "-0"
+# suffix, so the output is herbceptions.dll: the same file name the MSVC
+# build produces, letting one DLL serve both ABIs.
+herbceptions_la_LDFLAGS = $(lt_host_flags) -module -avoid-version
+else
+libherbceptions_la_SOURCES = $(herbceptions_sources)
 libherbceptions_la_LDFLAGS = $(lt_host_flags)
+endif
 
 herbceptionsincludedir = @herbceptionsincludedir@
 herbceptionsinclude_HEADERS = include/herbceptions/error
