@@ -159,6 +159,13 @@ else
 libstdc___la_SOURCES =
 endif
 
+# libsupc++ carries the Itanium exception_ptr domain, which reaches ntdll
+# directly when there is no hosted C library to allocate from.
+if !GLIBCXX_HOSTED
+freestanding_ntdll = \
+	$(if $(or $(findstring cygwin,$(host_os)),$(findstring mingw,$(host_os))),-lntdll)
+endif
+
 libstdc___la_LIBADD = \
 	$(GLIBCXX_LIBS) \
 	$(top_builddir)/libsupc++/libsupc++convenience.la \
@@ -166,7 +173,8 @@ libstdc___la_LIBADD = \
 	$(top_builddir)/src/c++11/libc++11convenience.la \
 	$(top_builddir)/src/c++17/libc++17convenience.la \
 	$(top_builddir)/src/c++20/libc++20convenience.la \
-	$(top_builddir)/src/c++23/libmodulesconvenience.la
+	$(top_builddir)/src/c++23/libmodulesconvenience.la \
+	$(freestanding_ntdll)
 
 libstdc___la_DEPENDENCIES = \
 	${version_dep} \

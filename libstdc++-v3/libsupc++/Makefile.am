@@ -129,6 +129,15 @@ endif
 libsupc___la_SOURCES = $(sources) $(c_sources) $(vtv_sources)
 libsupc__convenience_la_SOURCES = $(sources) $(c_sources) $(vtv_sources)
 
+# The Itanium exception_ptr domain allocates from ntdll's heap when there is
+# no hosted C library, so freestanding Cygwin/MinGW links need the import
+# library.  A hosted build uses malloc/free and has no ntdll import.
+if !GLIBCXX_HOSTED
+freestanding_ntdll = \
+	$(if $(or $(findstring cygwin,$(host_os)),$(findstring mingw,$(host_os))),-lntdll)
+libsupc___la_LIBADD = $(freestanding_ntdll)
+endif
+
 cp-demangle.c:
 	rm -f $@
 	$(LN_S) $(toplevel_srcdir)/libiberty/cp-demangle.c $@
