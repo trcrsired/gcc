@@ -1233,16 +1233,16 @@ comp_except_specs (const_tree t1, const_tree t2, int exact)
     {
       if (!HERBCEPTION_SPEC_P (t1) || !HERBCEPTION_SPEC_P (t2))
 	return false;
-      const_tree h1 = TREE_PURPOSE (t1);
-      const_tree h2 = TREE_PURPOSE (t2);
+      tree h1 = TREE_PURPOSE (t1);
+      tree h2 = TREE_PURPOSE (t2);
       if (HERBCEPTION_SPEC_KIND (h1) != HERBCEPTION_SPEC_KIND (h2))
 	return false;
       if (HERBCEPTION_SPEC_KIND (h1) == hsk_return_failure)
 	return same_type_p (HERBCEPTION_SPEC_ERROR_TYPE (h1),
 			    HERBCEPTION_SPEC_ERROR_TYPE (h2));
       if (HERBCEPTION_SPEC_KIND (h1) == hsk_throws_expr)
-	return cp_tree_equal (const_cast<tree> (HERBCEPTION_SPEC_EXPR (h1)),
-			      const_cast<tree> (HERBCEPTION_SPEC_EXPR (h2)));
+	return cp_tree_equal (HERBCEPTION_SPEC_EXPR (h1),
+			      HERBCEPTION_SPEC_EXPR (h2));
       return true;
     }
 
