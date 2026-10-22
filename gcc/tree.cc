@@ -11840,7 +11840,8 @@ walk_type_fields (tree type, walk_tree_fn func, void *data,
    called with the DATA and the address of each sub-tree.  If FUNC returns a
    non-NULL value, the traversal is stopped, and the value returned by FUNC
    is returned.  If PSET is non-NULL it is used to record the nodes visited,
-   and to avoid visiting a node more than once.  */
+   and to avoid visiting a node more than once.
+   Note that TREE_PURPOSE is not walked.  */
 
 tree
 walk_tree_1 (tree *tp, walk_tree_fn func, void *data,
@@ -11996,6 +11997,16 @@ walk_tree_1 (tree *tp, walk_tree_fn func, void *data,
 	  WALK_SUBTREE (OMP_CLAUSE_OPERAND (t, i));
 	WALK_SUBTREE_TAIL (OMP_CLAUSE_CHAIN (t));
       }
+
+    case OMP_METADIRECTIVE:
+      /* Handle this explicitly as TREE_PURPOSE is usually not walked.  */
+      for (tree t2 = OMP_METADIRECTIVE_VARIANTS (t); t2; t2 = TREE_CHAIN (t2))
+	{
+	  WALK_SUBTREE (OMP_METADIRECTIVE_VARIANT_SELECTOR (t2));
+	  WALK_SUBTREE (OMP_METADIRECTIVE_VARIANT_DIRECTIVE (t2));
+	  WALK_SUBTREE (OMP_METADIRECTIVE_VARIANT_BODY (t2));
+	}
+      break;
 
     case TARGET_EXPR:
       {
@@ -14200,10 +14211,16 @@ type_with_interoperable_signedness (const_tree type)
      signed char and unsigned char.  Similarly fortran FE builds
      C_SIZE_T as signed type, while C defines it unsigned.  */
 
-  return tree_code_for_canonical_type_merging (TREE_CODE (type))
-	   == INTEGER_TYPE
-         && (TYPE_PRECISION (type) == TYPE_PRECISION (signed_char_type_node)
-	     || TYPE_PRECISION (type) == TYPE_PRECISION (size_type_node));
+  if (tree_code_for_canonical_type_merging (TREE_CODE (type)) == INTEGER_TYPE)
+    return (TYPE_PRECISION (type) == TYPE_PRECISION (signed_char_type_node)
+	    || TYPE_PRECISION (type) == TYPE_PRECISION (size_type_node));
+
+  /* The C standard allows aliasing between signed and unsigned variants
+     of the same type.  For INTEGER_TYPEs gimple_get_alias_set handles
+     this and this works because the integer type cache is pre-loaded
+     during streaming.  We do not do this for bitint_type_cache, so handle
+     the aliasing via assigning the same canonical type.  */
+  return TREE_CODE (type) == BITINT_TYPE;
 }
 
 /* Return true iff T1 and T2 are structurally identical for what

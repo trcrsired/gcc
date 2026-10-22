@@ -1351,7 +1351,7 @@ AC_HEADER_TIME
 ACX_HEADER_STRING
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIOCGWINSZ
-AC_CHECK_HEADERS(stddef.h string.h strings.h time.h iconv.h \
+AC_CHECK_HEADERS(string.h strings.h iconv.h \
 		 fcntl.h ftw.h unistd.h sys/auxv.h sys/file.h sys/time.h sys/mman.h \
 		 sys/resource.h sys/param.h sys/times.h sys/stat.h sys/locking.h \
 		 direct.h malloc.h langinfo.h ldfcn.h wchar.h libgen.h)
@@ -1487,86 +1487,10 @@ if test $gcc_cv_header_afunix_h = yes; then
 fi
 
 # Look for the ZSTD package.
-ZSTD_INCLUDE=
-ZSTD_LIB=
-AC_SUBST(ZSTD_INCLUDE)
-AC_SUBST(ZSTD_LIB)
-ZSTD_CPPFLAGS=
-ZSTD_LDFLAGS=
-AC_SUBST(ZSTD_CPPFLAGS)
-AC_SUBST(ZSTD_LDFLAGS)
-AC_ARG_WITH(zstd,
-	[AS_HELP_STRING([--with-zstd=PATH],
-		[specify prefix directory for installed zstd library.
-		 Equivalent to --with-zstd-include=PATH/include
-		 plus --with-zstd-lib=PATH/lib])])
-AC_ARG_WITH(zstd-include,
-	[AS_HELP_STRING([--with-zstd-include=PATH],
-		[specify directory for installed zstd include files])])
-AC_ARG_WITH(zstd-lib,
-	[AS_HELP_STRING([--with-zstd-lib=PATH],
-		[specify directory for the installed zstd library])])
-case "x$with_zstd" in
-  x) ;;
-  xno)
-    ZSTD_INCLUDE=
-    ZSTD_LIB=
-    ;;
-  *) ZSTD_INCLUDE=$with_zstd/include
-     ZSTD_LIB=$with_zstd/lib
-     ;;
-esac
-
-if test "x$with_zstd" != xno; then
-if test "x$with_zstd_include" != x; then
-  ZSTD_INCLUDE=$with_zstd_include
-fi
-if test "x$with_zstd_lib" != x; then
-  ZSTD_LIB=$with_zstd_lib
-fi
-if test "x$ZSTD_INCLUDE" != x \
-   && test "x$ZSTD_INCLUDE" != xno; then
-  ZSTD_CPPFLAGS=-I$ZSTD_INCLUDE
-fi
-if test "x$ZSTD_LIB" != x \
-   && test "x$ZSTD_LIB" != xno; then
-  ZSTD_LDFLAGS=-L$ZSTD_LIB
-fi
-
-saved_CXXFLAGS="$CXXFLAGS"
-saved_LDFLAGS="$LDFLAGS"
-CXXFLAGS="$CXXFLAGS $ZSTD_CPPFLAGS"
-LDFLAGS="$LDFLAGS $ZSTD_LDFLAGS"
-
-# LTO can use zstd compression algorithm
-save_LIBS="$LIBS"
-LIBS=
-AC_SEARCH_LIBS(ZSTD_compress, zstd,, gcc_cv_header_zstd_h=no)
-ZSTD_LIB="$LIBS"
-LIBS="$save_LIBS"
-AC_SUBST(ZSTD_LIB)
-
-AC_MSG_CHECKING(for zstd.h)
-AC_CACHE_VAL(gcc_cv_header_zstd_h,
-# We require version 1.3.0 or later.  This is the first version that has
-# ZSTD_getFrameContentSize.
-[AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
-[[#include <zstd.h>
-#if ZSTD_VERSION_NUMBER < 10300
-#error "need zstd 1.3.0 or better"
-#endif]])],
-  [gcc_cv_header_zstd_h=yes],
-  [gcc_cv_header_zstd_h=no])])
-AC_MSG_RESULT($gcc_cv_header_zstd_h)
-if test $gcc_cv_header_zstd_h = yes; then
+AC_ZSTD
+if test "$zstd_enabled" = yes; then
   AC_DEFINE(HAVE_ZSTD_H, 1,
 	[Define if you have a working <zstd.h> header file.])
-elif test "x$with_zstd" != x; then
-    as_fn_error $? "Unable to find zstd.h.  See config.log for details." "$LINENO" 5
-fi
-
-CXXFLAGS="$saved_CXXFLAGS"
-LDFLAGS="$saved_LDFLAGS"
 fi
 
 dnl Disabled until we have a complete test for buggy enum bitfields.
@@ -1577,7 +1501,7 @@ define(gcc_UNLOCKED_FUNCS, clearerr_unlocked feof_unlocked dnl
   fileno_unlocked fprintf_unlocked fputc_unlocked fputs_unlocked dnl
   fread_unlocked fwrite_unlocked getchar_unlocked getc_unlocked dnl
   putchar_unlocked putc_unlocked)
-AC_CHECK_FUNCS(times clock kill getrlimit setrlimit atoq \
+AC_CHECK_FUNCS(times kill getrlimit setrlimit atoq \
 	popen sysconf strsignal getrusage nl_langinfo \
 	gettimeofday mbstowcs wcswidth mmap posix_fallocate setlocale \
 	gcc_UNLOCKED_FUNCS madvise mallinfo mallinfo2 fstatat getauxval \
@@ -1648,6 +1572,18 @@ CFLAGS="$CFLAGS -I${srcdir} -I${srcdir}/../include $GMPINC"
 saved_CXXFLAGS="$CXXFLAGS"
 CXXFLAGS="$CXXFLAGS -I${srcdir} -I${srcdir}/../include $GMPINC"
 
+# The declaration checks include system.h, which includes gmp.h.  An
+# in-tree gmp is only configured, not built, when this script runs (see
+# configure-gcc in ../Makefile.def), so gmp.h must come from its
+# configure.  Stop here if gmp.h cannot be used.
+AC_MSG_CHECKING([whether gmp.h can be used])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <gmp.h>]],
+				   [[mpz_t x; mpz_init (x);]])],
+  [AC_MSG_RESULT(yes)],
+  [AC_MSG_RESULT(no)
+   AC_MSG_ERROR([cannot compile with gmp.h using GMPINC ($GMPINC).
+An in-tree gmp must create gmp.h when it is configured.])])
+
 # gcc_AC_CHECK_DECLS doesn't support overloaded functions, so use the
 # normal autoconf function for these.  But force definition of
 # HAVE_DECL_BASENAME like gcc_AC_CHECK_DECLS does, to suppress the bizarre
@@ -1662,15 +1598,11 @@ AC_CHECK_DECLS([basename(char*)], , ,[
 #include "ansidecl.h"
 #include "system.h"])
 
-AC_CHECK_DECLS([strstr(const char*,const char*)], , ,[
-#include "ansidecl.h"
-#include "system.h"])
-
-gcc_AC_CHECK_DECLS(getenv atol atoll asprintf sbrk abort atof getcwd getwd \
+gcc_AC_CHECK_DECLS(atoll asprintf sbrk getcwd getwd \
 	madvise mkstemps stpcpy strnlen strsignal strverscmp \
-	strtol strtoul strtoll strtoull setenv unsetenv \
-	errno snprintf vsnprintf vasprintf malloc realloc calloc \
-	free getopt clock getpagesize ffs fmemopen gcc_UNLOCKED_FUNCS, , ,[
+	strtoll strtoull setenv unsetenv \
+	snprintf vsnprintf vasprintf \
+	getopt getpagesize ffs fmemopen gcc_UNLOCKED_FUNCS, , ,[
 #include "ansidecl.h"
 #include "system.h"])
 
@@ -1739,18 +1671,6 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
 if test $ac_cv_struct_tms = yes; then
   AC_DEFINE(HAVE_STRUCT_TMS, 1,
   [Define if <sys/times.h> defines struct tms.])
-fi
-
-# use gcc_cv_* here because this doesn't match the behavior of AC_CHECK_TYPE.
-# revisit after autoconf 2.50.
-AC_CACHE_CHECK(for clock_t, gcc_cv_type_clock_t, [
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-#include "ansidecl.h"
-#include "system.h"
-]], [[clock_t x;]])],[gcc_cv_type_clock_t=yes],[gcc_cv_type_clock_t=no])])
-if test $gcc_cv_type_clock_t = yes; then
-  AC_DEFINE(HAVE_CLOCK_T, 1,
-  [Define if <time.h> defines clock_t.])
 fi
 
 # Check if F_SETLKW is supported by fcntl.

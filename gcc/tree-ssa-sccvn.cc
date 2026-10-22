@@ -3267,10 +3267,14 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 	  && size2.is_constant (&size2i))
 	{
 	  if (data->partial_defs.is_empty ()
+	      && (maxsizei
+		  <= (HOST_WIDE_INT) vn_walk_cb_data::bufsize * BITS_PER_UNIT)
 	      && known_subrange_p (offseti, maxsizei, offset2, size2))
 	    {
-	      /* We support up to 512-bit values (for V8DFmode).  */
-	      unsigned char buffer[65];
+	      /* We support up to 512-bit values (for V8DFmode).  An
+		 unaligned access can need one more byte from the
+		 encoding, plus one for the shift carry-over.  */
+	      unsigned char buffer[vn_walk_cb_data::bufsize + 2];
 	      int len;
 
 	      tree rhs = gimple_assign_rhs1 (def_stmt);
@@ -3279,7 +3283,9 @@ vn_reference_lookup_3 (ao_ref *ref, tree vuse, void *data_,
 	      len = native_encode_expr (rhs,
 					buffer, sizeof (buffer) - 1,
 					(offseti - offset2i) / BITS_PER_UNIT);
-	      if (len > 0 && len * BITS_PER_UNIT >= maxsizei)
+	      if (len > 0
+		  && (len * BITS_PER_UNIT
+		      >= ((offseti - offset2i) % BITS_PER_UNIT) + maxsizei))
 		{
 		  tree type = vr->type;
 		  unsigned char *buf = buffer;
@@ -7510,16 +7516,17 @@ eliminate_dom_walker::eliminate_stmt (basic_block b, gimple_stmt_iterator *gsi)
 				 TYPE_UNSIGNED (TREE_TYPE (lhs)));
 	      if (TREE_CODE (lhs) == COMPONENT_REF)
 		{
-		  tree foff = component_ref_field_offset (lhs);
+		  tree bpos, foff = component_ref_field_offset (lhs);
 		  tree f = TREE_OPERAND (lhs, 1);
-		  if (!poly_int_tree_p (foff))
+		  if (!poly_int_tree_p (foff)
+		      || !tree_fits_poly_uint64_p
+			   (bpos = bit_from_pos (foff,
+						 DECL_FIELD_BIT_OFFSET (f))))
 		    lookup_lhs = NULL_TREE;
 		  else
 		    lookup_lhs = build3 (BIT_FIELD_REF, ltype,
 					 TREE_OPERAND (lhs, 0),
-					 TYPE_SIZE (TREE_TYPE (lhs)),
-					 bit_from_pos
-					   (foff, DECL_FIELD_BIT_OFFSET (f)));
+					 TYPE_SIZE (TREE_TYPE (lhs)), bpos);
 		}
 	      else
 		lookup_lhs = build2 (MEM_REF, ltype,

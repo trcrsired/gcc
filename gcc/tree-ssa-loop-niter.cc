@@ -2104,6 +2104,7 @@ number_of_iterations_popcount (loop_p loop, edge exit,
 
   tree iv_2 = gimple_cond_lhs (cond_stmt);
   gimple *iv_2_stmt = SSA_NAME_DEF_STMT (iv_2);
+  gimple *test_phi = NULL;
 
   /* If the test comes before the iv modification, then these will actually be
      iv_1 and a phi node.  */
@@ -2115,6 +2116,7 @@ number_of_iterations_popcount (loop_p loop, edge exit,
 	  == SSA_NAME))
     {
       /* iv_2 is actually one of the inputs to the phi.  */
+      test_phi = iv_2_stmt;
       iv_2 = gimple_phi_arg_def (iv_2_stmt, loop_latch_edge (loop)->dest_idx);
       iv_2_stmt = SSA_NAME_DEF_STMT (iv_2);
       modify_before_test = false;
@@ -2138,11 +2140,13 @@ number_of_iterations_popcount (loop_p loop, edge exit,
   else
     return false;
 
-  /* Check the recurrence.  */
+  /* Check the recurrence.  A test before the modification must test the
+     PHI of the recurrence.  */
   gimple *phi = SSA_NAME_DEF_STMT (iv_1);
   if (gimple_code (phi) != GIMPLE_PHI
       || (gimple_bb (phi) != loop_latch_edge (loop)->dest)
-      || (iv_2 != gimple_phi_arg_def (phi, loop_latch_edge (loop)->dest_idx)))
+      || (iv_2 != gimple_phi_arg_def (phi, loop_latch_edge (loop)->dest_idx))
+      || (test_phi && phi != test_phi))
     return false;
 
   /* We found a match.  */
@@ -2187,10 +2191,9 @@ number_of_iterations_popcount (loop_p loop, edge exit,
 /* Return an expression that counts the leading/trailing zeroes of src.
 
    If define_at_zero is true, then the built expression will be defined to
-   return the precision of src when src == 0 (using either a conditional
-   expression or a suitable internal function).
-   Otherwise, we can elide the conditional expression and let src = 0 invoke
-   undefined behaviour.  */
+   return the precision of src when src == 0 (using the second argument of
+   the internal function or a conditional expression).
+   Otherwise, the result for src == 0 is undefined.  */
 
 static tree
 build_cltz_expr (tree src, bool leading, bool define_at_zero)
@@ -2223,24 +2226,11 @@ build_cltz_expr (tree src, bool leading, bool define_at_zero)
   tree call;
   if (use_ifn)
     {
-      int val;
-      int optab_defined_at_zero
-	= (leading
-	   ? CLZ_DEFINED_VALUE_AT_ZERO (SCALAR_INT_TYPE_MODE (utype), val)
-	   : CTZ_DEFINED_VALUE_AT_ZERO (SCALAR_INT_TYPE_MODE (utype), val));
-      tree arg2 = NULL_TREE;
-      if (define_at_zero && optab_defined_at_zero == 2 && val == prec)
-	arg2 = build_int_cst (integer_type_node, val);
+      tree arg2 = (define_at_zero
+		   ? build_int_cst (integer_type_node, prec) : NULL_TREE);
       call = build_call_expr_internal_loc (UNKNOWN_LOCATION, ifn,
 					   integer_type_node, arg2 ? 2 : 1,
 					   src, arg2);
-      if (define_at_zero && arg2 == NULL_TREE)
-	{
-	  tree is_zero = fold_build2 (NE_EXPR, boolean_type_node, src,
-				      build_zero_cst (TREE_TYPE (src)));
-	  call = fold_build3 (COND_EXPR, integer_type_node, is_zero, call,
-			      build_int_cst (integer_type_node, prec));
-	}
     }
   else if (fn == NULL_TREE)
     return NULL_TREE;
@@ -2283,7 +2273,9 @@ build_cltz_expr (tree src, bool leading, bool define_at_zero)
 			    build_int_cst (integer_type_node, i_prec - prec));
       if (define_at_zero)
 	{
-	  tree is_zero = fold_build2 (NE_EXPR, boolean_type_node, src,
+	  /* SRC can be a shift, so do not share it with the call.  */
+	  tree is_zero = fold_build2 (NE_EXPR, boolean_type_node,
+				      unshare_expr (src),
 				      build_zero_cst (TREE_TYPE (src)));
 	  call = fold_build3 (COND_EXPR, integer_type_node, is_zero, call,
 			      build_int_cst (integer_type_node, prec));
@@ -2444,6 +2436,7 @@ number_of_iterations_cltz (loop_p loop, edge exit,
     }
 
   gimple *iv_2_stmt = SSA_NAME_DEF_STMT (iv_2);
+  gimple *test_phi = NULL;
 
   /* If the test comes before the iv modification, then these will actually be
      iv_1 and a phi node.  */
@@ -2455,6 +2448,7 @@ number_of_iterations_cltz (loop_p loop, edge exit,
 	  == SSA_NAME))
     {
       /* iv_2 is actually one of the inputs to the phi.  */
+      test_phi = iv_2_stmt;
       iv_2 = gimple_phi_arg_def (iv_2_stmt, loop_latch_edge (loop)->dest_idx);
       iv_2_stmt = SSA_NAME_DEF_STMT (iv_2);
       modify_before_test = false;
@@ -2471,11 +2465,13 @@ number_of_iterations_cltz (loop_p loop, edge exit,
 
   tree iv_1 = gimple_assign_rhs1 (iv_2_stmt);
 
-  /* Check the recurrence.  */
+  /* Check the recurrence.  A test before the modification must test the
+     PHI of the recurrence.  */
   gimple *phi = SSA_NAME_DEF_STMT (iv_1);
   if (gimple_code (phi) != GIMPLE_PHI
       || (gimple_bb (phi) != loop_latch_edge (loop)->dest)
-      || (iv_2 != gimple_phi_arg_def (phi, loop_latch_edge (loop)->dest_idx)))
+      || (iv_2 != gimple_phi_arg_def (phi, loop_latch_edge (loop)->dest_idx))
+      || (test_phi && phi != test_phi))
     return false;
 
   /* We found a match.  */
@@ -2616,6 +2612,7 @@ number_of_iterations_cltz_complement (loop_p loop, edge exit,
 
   tree iv_2 = gimple_cond_lhs (cond_stmt);
   gimple *iv_2_stmt = SSA_NAME_DEF_STMT (iv_2);
+  gimple *test_phi = NULL;
 
   /* If the test comes before the iv modification, then these will actually be
      iv_1 and a phi node.  */
@@ -2627,6 +2624,7 @@ number_of_iterations_cltz_complement (loop_p loop, edge exit,
 	  == SSA_NAME))
     {
       /* iv_2 is actually one of the inputs to the phi.  */
+      test_phi = iv_2_stmt;
       iv_2 = gimple_phi_arg_def (iv_2_stmt, loop_latch_edge (loop)->dest_idx);
       iv_2_stmt = SSA_NAME_DEF_STMT (iv_2);
       modify_before_test = false;
@@ -2643,11 +2641,13 @@ number_of_iterations_cltz_complement (loop_p loop, edge exit,
 
   tree iv_1 = gimple_assign_rhs1 (iv_2_stmt);
 
-  /* Check the recurrence.  */
+  /* Check the recurrence.  A test before the modification must test the
+     PHI of the recurrence.  */
   gimple *phi = SSA_NAME_DEF_STMT (iv_1);
   if (gimple_code (phi) != GIMPLE_PHI
       || (gimple_bb (phi) != loop_latch_edge (loop)->dest)
-      || (iv_2 != gimple_phi_arg_def (phi, loop_latch_edge (loop)->dest_idx)))
+      || (iv_2 != gimple_phi_arg_def (phi, loop_latch_edge (loop)->dest_idx))
+      || (test_phi && phi != test_phi))
     return false;
 
   /* We found a match.  */
@@ -2667,8 +2667,26 @@ number_of_iterations_cltz_complement (loop_p loop, edge exit,
 
   int src_precision = TYPE_PRECISION (TREE_TYPE (src));
 
-  /* Get the corresponding c[lt]z builtin.  */
-  tree expr = build_cltz_expr (src, !left_shift, true);
+  tree src_zero = fold_build2 (EQ_EXPR, boolean_type_node, src,
+			       build_zero_cst (TREE_TYPE (src)));
+  bool src_nonzero
+    = integer_zerop (simplify_using_initial_conditions (loop, src_zero));
+
+  /* If the IV is modified before the test, the first value tested is SRC
+     shifted by one.  If SRC can be zero, count the zeros of that value
+     instead of subtracting one from the count of SRC.  Then the result is
+     also right for a zero SRC.  */
+  tree count_src = src;
+  if (modify_before_test && !src_nonzero)
+    {
+      tree utype = unsigned_type_for (TREE_TYPE (src));
+      count_src = fold_build2 (left_shift ? LSHIFT_EXPR : RSHIFT_EXPR, utype,
+			       fold_convert (utype, src), integer_one_node);
+    }
+
+  /* Get the corresponding c[lt]z builtin.  It needs a value at zero only
+     if its argument can be zero.  */
+  tree expr = build_cltz_expr (count_src, !left_shift, !src_nonzero);
 
   if (!expr)
     return false;
@@ -2679,21 +2697,18 @@ number_of_iterations_cltz_complement (loop_p loop, edge exit,
 
   max = src_precision;
 
-  tree may_be_zero = boolean_false_node;
-
   if (modify_before_test)
     {
-      expr = fold_build2 (MINUS_EXPR, integer_type_node, expr,
-			  integer_one_node);
+      if (src_nonzero)
+	expr = fold_build2 (MINUS_EXPR, integer_type_node, expr,
+			    integer_one_node);
       max = max - 1;
-      may_be_zero = fold_build2 (EQ_EXPR, boolean_type_node, src,
-				      build_zero_cst (TREE_TYPE (src)));
     }
 
   expr = fold_convert (unsigned_type_node, expr);
 
   niter->assumptions = boolean_true_node;
-  niter->may_be_zero = simplify_using_initial_conditions (loop, may_be_zero);
+  niter->may_be_zero = boolean_false_node;
   niter->niter = simplify_using_initial_conditions (loop, expr);
 
   if (TREE_CODE (niter->niter) == INTEGER_CST)
@@ -3725,6 +3740,7 @@ loop_niter_by_eval (class loop *loop, edge exit)
 		  tree mem = gimple_assign_rhs1 (def);
 		  affine_iv iv;
 		  if (TYPE_MODE (TREE_TYPE (mem)) == TYPE_MODE (char_type_node)
+		      && CHAR_TYPE_SIZE == 8
 		      && simple_iv (loop, loop,
 				    TREE_OPERAND (mem, 0), &iv, false)
 		      && tree_fits_uhwi_p (TREE_OPERAND (mem, 1))
@@ -3740,6 +3756,7 @@ loop_niter_by_eval (class loop *loop, edge exit)
 			{
 			  str = TREE_OPERAND (str, 0);
 			  unsigned i = 0;
+			  uint8_t op1 = TREE_INT_CST_LOW (op[1]);
 			  for (unsigned HOST_WIDE_INT idx
 			       = (tree_to_uhwi (TREE_OPERAND (mem, 1))
 				  + tree_to_uhwi (off));
@@ -3747,10 +3764,9 @@ loop_niter_by_eval (class loop *loop, edge exit)
 			       && i < MAX_ITERATIONS_TO_TRACK;
 			       idx += tree_to_uhwi (iv.step), ++i)
 			    {
-			      int res = compare_tree_int
-				(op[1], TREE_STRING_POINTER (str)[idx]);
-			      if ((cmp == NE_EXPR && res == 0)
-				  || (cmp == EQ_EXPR && res != 0))
+			      uint8_t c = TREE_STRING_POINTER (str)[idx];
+			      if ((cmp == NE_EXPR && op1 == c)
+				  || (cmp == EQ_EXPR && op1 != c))
 				return build_int_cst (unsigned_type_node, i);
 			    }
 			}
@@ -5378,24 +5394,15 @@ nowrap_type_p (tree type)
   return false;
 }
 
-/* Return true if we can prove LOOP is exited before evolution of induction
-   variable {BASE, STEP} overflows with respect to its type bound.  */
+/* Return an upper bound on the number of times the affine IV {BASE, +, STEP}
+   of type TYPE can step while staying within TYPE's range.  */
 
-static bool
-loop_exits_before_overflow (tree base, tree step,
-			    gimple *at_stmt, class loop *loop)
+tree
+get_niter_type_bound (tree type, tree base, tree step)
 {
-  widest_int niter;
-  struct control_iv *civ;
-  class nb_iter_bound *bound;
-  tree e, delta, step_abs, unsigned_base;
-  tree type = TREE_TYPE (step);
-  tree unsigned_type, valid_niter;
-
-  /* Compute the number of iterations before we reach the bound of the
-     type, and verify that the loop is exited before this occurs.  */
-  unsigned_type = unsigned_type_for (type);
-  unsigned_base = fold_convert (unsigned_type, base);
+  tree unsigned_type = unsigned_type_for (type);
+  tree unsigned_base = fold_convert (unsigned_type, base);
+  tree delta, step_abs;
 
   if (tree_int_cst_sign_bit (step))
     {
@@ -5413,7 +5420,26 @@ loop_exits_before_overflow (tree base, tree step,
       step_abs = fold_convert (unsigned_type, step);
     }
 
-  valid_niter = fold_build2 (FLOOR_DIV_EXPR, unsigned_type, delta, step_abs);
+  return fold_build2 (FLOOR_DIV_EXPR, unsigned_type, delta, step_abs);
+}
+
+/* Return true if we can prove LOOP is exited before evolution of induction
+   variable {BASE, STEP} overflows with respect to its type bound.  */
+
+static bool
+loop_exits_before_overflow (tree base, tree step,
+			    gimple *at_stmt, class loop *loop)
+{
+  widest_int niter;
+  struct control_iv *civ;
+  class nb_iter_bound *bound;
+  tree e;
+  tree type = TREE_TYPE (step);
+  tree valid_niter;
+
+  /* Compute the number of iterations before we reach the bound of the
+     type, and verify that the loop is exited before this occurs.  */
+  valid_niter = get_niter_type_bound (type, base, step);
 
   estimate_numbers_of_iterations (loop);
 
@@ -5615,12 +5641,16 @@ scev_var_range_cant_overflow (tree var, tree step, class loop *loop)
    arithmetics in C does not overflow).
 
    If VAR is a ssa variable, this function also returns false if VAR can
-   be proven not overflow with value range info.  */
+   be proven not overflow with value range info.
+
+   If NOWRAP_BOUND is nonzero and we can't prove it differently, get
+   STEP's type bound, build a bound MIN (NOWRAP_BOUND, STEP_TYPE_BOUND)
+   and store it in NOWRAP_BOUND.  */
 
 bool
 scev_probably_wraps_p (tree var, tree base, tree step,
 		       gimple *at_stmt, class loop *loop,
-		       bool use_overflow_semantics)
+		       bool use_overflow_semantics, tree *nowrap_bound)
 {
   /* FIXME: We really need something like
      http://gcc.gnu.org/ml/gcc-patches/2005-06/msg02025.html.
@@ -5667,6 +5697,14 @@ scev_probably_wraps_p (tree var, tree base, tree step,
      above loop exits before overflow).  */
   if (var && nonwrapping_chrec_p (analyze_scalar_evolution (loop, var)))
     return false;
+
+  /* If we can use a bound to guarantee no wrapping, save it.  */
+  if (nowrap_bound)
+    {
+      tree b = get_niter_type_bound (TREE_TYPE (step), base, step);
+      scev_combine_nowrap_bounds (nowrap_bound, b);
+      return false;
+    }
 
   /* At this point we still don't have a proof that the iv does not
      overflow: give up.  */

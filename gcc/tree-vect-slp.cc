@@ -1329,6 +1329,7 @@ vect_build_slp_tree_3 (vec_info *vinfo, vec<stmt_vec_info> stmts,
 	  tree vec = TREE_OPERAND (gimple_assign_rhs1 (stmt), 0);
 	  if (!is_a <bb_vec_info> (vinfo)
 	      || TREE_CODE (vec) != SSA_NAME
+	      || SSA_NAME_OCCURS_IN_ABNORMAL_PHI (vec)
 	      /* When the element types are not compatible we pun the
 		 source to the target vectype which requires equal size.  */
 	      || ((!VECTOR_TYPE_P (TREE_TYPE (vec))
@@ -10863,6 +10864,15 @@ vect_slp_function (function *fun)
 			     "splitting region at dont-vectorize loop %d "
 			     "entry at bb%d\n",
 			     bb->loop_father->num, bb->index);
+	  split = true;
+	}
+      else if (!bbs.is_empty ()
+	       && bb_has_abnormal_pred (bb))
+	{
+	  if (dump_enabled_p ())
+	    dump_printf_loc (MSG_MISSED_OPTIMIZATION, vect_location,
+			     "splitting region at incoming abnormal edge "
+			     "at bb%d\n", bb->index);
 	  split = true;
 	}
 

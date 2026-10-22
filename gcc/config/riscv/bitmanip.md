@@ -115,7 +115,7 @@
 	(plus:DI
 	  (and:DI (ashift:DI (match_operand:DI 1 "register_operand" "r")
 			     (match_operand:QI 2 "imm123_operand" "Ds3"))
-		 (match_operand 3 "immediate_operand" "n"))
+		 (match_operand 3 "const_int_operand" "n"))
 	  (match_operand:DI 4 "register_operand" "r")))]
   "TARGET_64BIT && TARGET_ZBA
    && (INTVAL (operands[3]) >> INTVAL (operands[2])) == 0xffffffff"
@@ -192,6 +192,7 @@
 		 (match_operand:DI 4 "register_operand" "r")))
    (clobber (match_scratch:DI 5 "=&r"))]
   "TARGET_64BIT && TARGET_ZBA
+   && popcount_hwi (UINTVAL (operands[3])) < 32
    && riscv_shamt_matches_mask_p (UINTVAL (operands[2]), UINTVAL (operands[3]))
    && IN_RANGE (clz_hwi (UINTVAL (operands[3])), 29, 31)"
   "#"
@@ -232,8 +233,8 @@
 (define_insn "riscv_slli_uw"
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(and:DI (ashift:DI (match_operand:DI 1 "register_operand" "r")
-			   (match_operand:QI 2 "immediate_operand" "I"))
-		(match_operand 3 "immediate_operand" "n")))]
+			   (match_operand:QI 2 "const_int_operand" "I"))
+		(match_operand 3 "const_int_operand" "n")))]
   "TARGET_64BIT && TARGET_ZBA
    && (INTVAL (operands[3]) >> INTVAL (operands[2])) == 0xffffffff"
   "slli.uw\t%0,%1,%2"
@@ -496,8 +497,8 @@
 	(bitmanip_rotate:SI
 	  (match_operand:SI 1 "register_operand" "r")
 	  (match_operator 3 "subreg_lowpart_operator"
-	    [(and:X (match_operand:SI 2 "register_operand"  "r")
-		    (const_int 31))])))]
+	    [(and:DI (match_operand:DI 2 "register_operand"  "r")
+		     (const_int 31))])))]
   "TARGET_64BIT && (TARGET_ZBB || TARGET_ZBKB)"
   "<bitmanip_insn>w\t%0,%1,%2"
   [(set_attr "type" "bitmanip")
@@ -509,8 +510,8 @@
 	  (bitmanip_rotate:SI
 	    (match_operand:SI 1 "register_operand" "r")
 	    (match_operator 3 "subreg_lowpart_operator"
-	      [(and:X (match_operand:GPR 2 "register_operand"  "r")
-		      (const_int 31))]))))]
+	      [(and:DI (match_operand:DI 2 "register_operand"  "r")
+		       (const_int 31))]))))]
   "TARGET_64BIT && (TARGET_ZBB || TARGET_ZBKB)"
   "<bitmanip_insn>w\t%0,%1,%2"
   [(set_attr "type" "bitmanip")
@@ -647,36 +648,6 @@
   "TARGET_ZBB"
   "<bitmanip_minmax_cmp_insn>\t%0,%1,%z2"
   [(set_attr "type" "<bitmanip_minmax_cmp_insn>")])
-
-;; Optimize the common case of a SImode min/max against a constant
-;; that is safe both for sign- and zero-extension.
-(define_split
-  [(set (match_operand:DI 0 "register_operand")
-	(sign_extend:DI
-	  (subreg:SI
-	    (bitmanip_minmax:DI (zero_extend:DI
-				  (match_operand:SI 1 "register_operand"))
-				(match_operand:DI 2 "immediate_operand")) 0)))
-   (clobber (match_operand:DI 3 "register_operand"))
-   (clobber (match_operand:DI 4 "register_operand"))]
-  "TARGET_64BIT && TARGET_ZBB && sext_hwi (INTVAL (operands[2]), 32) >= 0"
-  [(set (match_dup 0) (<uminmax_optab>:DI (match_dup 4) (match_dup 3)))]
-  "
-{
-  /* Load the constant into a register.  */
-  emit_move_insn (operands[3], operands[2]);
-
-  /* If operands[1] is a sign extended SUBREG, then we can use it
-     directly.  Otherwise extend it into another temporary.  */
-  if (SUBREG_P (operands[1])
-      && SUBREG_PROMOTED_VAR_P (operands[1])
-      && SUBREG_PROMOTED_SIGNED_P (operands[1]))
-    operands[4] = SUBREG_REG (operands[1]);
-  else
-    emit_move_insn (operands[4], gen_rtx_SIGN_EXTEND (DImode, operands[1]));
-
-  /* The minmax is actually emitted from the split pattern.  */
-}")
 
 ;; ZBS extension.
 
@@ -1037,7 +1008,7 @@
     (and:DI (not:DI (subreg:DI
 		      (ashift:SI (const_int 1)
 				 (match_operand:QI 1 "register_operand")) 0))
-            (match_operand:DI 2 "arith_operand")))
+            (match_operand:DI 2 "const_arith_operand")))
    (clobber (match_operand:DI 3 "register_operand"))]
   "TARGET_64BIT && TARGET_ZBS
    && clz_hwi (INTVAL (operands[2])) >= 33"
@@ -1146,7 +1117,7 @@
   [(set (match_operand:X 0 "register_operand" "=r")
 	(zero_extract:X (match_operand:X 1 "register_operand" "r")
 			(const_int 1)
-			(match_operand 2 "immediate_operand" "n")))]
+			(match_operand 2 "const_int_operand" "n")))]
   "TARGET_ZBS && UINTVAL (operands[2]) < GET_MODE_BITSIZE (<MODE>mode)"
   "bexti\t%0,%1,%2"
   [(set_attr "type" "bitmanip")])
@@ -1177,7 +1148,7 @@
                                           (const_int 1)
                                           (match_operand 2))
 			(const_int 0))))
-   (clobber (match_operand:X 3 "register_operand"))]
+   (clobber (match_operand:GPR 3 "register_operand"))]
   "TARGET_ZBS"
   [(set (match_dup 3) (zero_extract:GPR (match_dup 1) (const_int 1) (match_dup 2)))
    (set (match_dup 0) (plus:GPR (match_dup 3) (const_int -1)))])
@@ -1502,18 +1473,6 @@
   "bext\t%0,%1,%2"
   [(set_attr "type" "bitmanip")])
 
-;; Same as above, but without the extraneous zero_extend.
-(define_insn "*bextdi_position_ze_masked"
-  [(set (match_operand:X 0 "register_operand" "=r")
-	(zero_extract:X
-	  (match_operand:X 1 "register_operand" "r")
-	  (const_int 1)
-	  (and:X (match_operand:SI 2 "register_operand" "r")
-		 (match_operand:SI 3 "bitpos_mask_operand" "n"))))]
-  "TARGET_64BIT && TARGET_ZBS"
-  "bext\t%0,%1,%2"
-  [(set_attr "type" "bitmanip")])
-
 ;; This has shown up in testing.  In particular we end up with an
 ;; immediate input.  We can load that into a register and target
 ;; one of the above bext patterns.
@@ -1523,7 +1482,7 @@
 			   (match_operand:QI 2 "register_operand"))
 	       (const_int 1)))
    (clobber (match_operand:X 3 "register_operand"))]
-  ""
+  "TARGET_ZBS"
   [(set (match_dup 3) (match_dup 1))
    (set (match_dup 0) (zero_extract:X (match_dup 3)
 				      (const_int 1)
@@ -1666,7 +1625,13 @@
   "(TARGET_ZBS
     && (UINTVAL (operands[2]) & UINTVAL (operands[3])) == 0
     && popcount_hwi (~(UINTVAL (operands[2]) | UINTVAL (operands[3]))) == 1
-    && num_sign_bit_copies (operands[1], DImode) >= 33)"
+    && num_sign_bit_copies (operands[1], DImode) >= 33
+    /* Be careful with the SI sign bit.  We're relying on not changing the
+       sign bit or the extension in this transformation.  */
+    && ((UINTVAL (operands[2]) & HOST_WIDE_INT_C (0xffffffff80000000))
+	== HOST_WIDE_INT_C (0xffffffff80000000))
+    && ((UINTVAL (operands[3]) & HOST_WIDE_INT_C (0xffffffff80000000))
+	== 0))"
   [(set (match_dup 0) (and:DI (match_dup 1) (match_dup 2)))
    (set (match_dup 0) (ior:DI (match_dup 0) (match_dup 3)))]
   { operands[2] = GEN_INT (UINTVAL (operands[2]) | UINTVAL (operands[3])); })

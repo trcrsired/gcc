@@ -1190,7 +1190,7 @@ oecount_cmp (const void *p1, const void *p2)
 }
 
 /* Return TRUE iff STMT represents a builtin call that raises OP
-   to some exponent.  */
+   to some constant integer exponent, as required by decrement_power.  */
 
 static bool
 stmt_is_power_of_op (gimple *stmt, tree op)
@@ -1201,8 +1201,22 @@ stmt_is_power_of_op (gimple *stmt, tree op)
   switch (gimple_call_combined_fn (stmt))
     {
     CASE_CFN_POW:
+      {
+	tree arg1 = gimple_call_arg (stmt, 1);
+	if (TREE_CODE (arg1) != REAL_CST)
+	  return false;
+	REAL_VALUE_TYPE c = TREE_REAL_CST (arg1);
+	REAL_VALUE_TYPE cint;
+	real_from_integer (&cint, VOIDmode, real_to_integer (&c), SIGNED);
+	if (!real_identical (&c, &cint))
+	  return false;
+	return operand_equal_p (gimple_call_arg (stmt, 0), op, 0);
+      }
+
     CASE_CFN_POWI:
-      return (operand_equal_p (gimple_call_arg (stmt, 0), op, 0));
+      if (!tree_fits_shwi_p (gimple_call_arg (stmt, 1)))
+	return false;
+      return operand_equal_p (gimple_call_arg (stmt, 0), op, 0);
 
     default:
       return false;
@@ -5182,8 +5196,28 @@ ccmp_comparison_p (tree op, basic_block bb)
 
   /* A conditional compare sets the flags from one scalar comparison.  */
   machine_mode mode = TYPE_MODE (TREE_TYPE (gimple_assign_rhs1 (def)));
-  return ((SCALAR_INT_MODE_P (mode) || SCALAR_FLOAT_MODE_P (mode))
-	  && known_le (GET_MODE_SIZE (mode), UNITS_PER_WORD));
+  return SCALAR_INT_MODE_P (mode) || SCALAR_FLOAT_MODE_P (mode);
+}
+
+/* Return how strongly OP should start a conditional compare sequence.
+   FOLDABLE is true if OP can be folded into the flags.  */
+
+static ccmp_first_kind
+ccmp_first_preference (tree op, bool foldable)
+{
+  if (!foldable)
+    return CCMP_FIRST_NONE;
+
+  gimple *def = SSA_NAME_DEF_STMT (op);
+  gcc_checking_assert (is_gimple_assign (def));
+
+  tree op0 = gimple_assign_rhs1 (def);
+  tree op1 = gimple_assign_rhs2 (def);
+  ccmp_first_kind kind = targetm.ccmp_first_preference
+    (TYPE_MODE (TREE_TYPE (op0)), gimple_assign_rhs_code (def), op0, op1);
+  if (kind == CCMP_FIRST_UNSUPPORTED || !gimple_could_trap_p (def))
+    return kind;
+  return CCMP_FIRST_REQUIRED;
 }
 
 /* Return true if all operands in OPS form one conditional compare sequence
@@ -5200,6 +5234,7 @@ prepare_ccmp_chain (vec<operand_entry *> &ops, tree_code code, basic_block bb)
 
   bool seen_foldable = false;
   int head = -1;
+  ccmp_first_kind head_kind = CCMP_FIRST_NONE;
 
   for (unsigned int i = 0; i < ops.length (); ++i)
     {
@@ -5208,12 +5243,17 @@ prepare_ccmp_chain (vec<operand_entry *> &ops, tree_code code, basic_block bb)
 	return false;
 
       bool foldable = has_single_use (oe->op);
-      if (foldable
-	  && gimple_could_trap_p (SSA_NAME_DEF_STMT (oe->op)))
+
+      ccmp_first_kind kind
+	= ccmp_first_preference (oe->op, foldable);
+      if (kind == CCMP_FIRST_UNSUPPORTED)
+	return false;
+      if (kind == CCMP_FIRST_REQUIRED && head_kind == CCMP_FIRST_REQUIRED)
+	return false;
+      if (kind > head_kind)
 	{
-	  if (head >= 0)
-	    return false;
 	  head = i;
+	  head_kind = kind;
 	}
 
       /* Comparison leaves can have uses outside this chain.  */

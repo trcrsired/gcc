@@ -2360,21 +2360,11 @@ ARM target supports the @code{-mfloat-abi=hard} option.
 @anchor{arm_mve}
 ARM target supports generating MVE instructions.
 
-@item arm_v8_1_lob_ok
-@anchor{arm_v8_1_lob_ok}
+@item arm_v8_1m_lob_hw
+@anchor{arm_v8_1m_lob_hw}
 ARM Target supports executing the Armv8.1-M Mainline Low Overhead Loop
 instructions @code{DLS} and @code{LE}.
 Some multilibs may be incompatible with these options.
-
-@item arm_thumb2_no_arm_v8_1_lob
-ARM target where Thumb-2 is used without options but does not support
-executing the Armv8.1-M Mainline Low Overhead Loop instructions
-@code{DLS} and @code{LE}.
-
-@item arm_thumb2_ok_no_arm_v8_1_lob
-ARM target generates Thumb-2 code for @code{-mthumb} but does not
-support executing the Armv8.1-M Mainline Low Overhead Loop
-instructions @code{DLS} and @code{LE}.
 
 @item mbranch_protection_ok
 ARM target supporting @code{-mbranch-protection=standard}.
@@ -2774,6 +2764,11 @@ Target supports a clz optab on long.
 @item clzll
 Target supports a clz optab on long long.
 
+@item clzsi
+Target has a @code{clzsi2} pattern, which can be an expander, so a
+@code{.CLZ} internal function call on a 32-bit unsigned integer can be
+expanded.
+
 @item ctz
 Target supports a ctz optab on int.
 
@@ -2782,6 +2777,11 @@ Target supports a ctz optab on long.
 
 @item ctzll
 Target supports a ctz optab on long long.
+
+@item ctzsi
+Target has a @code{ctzsi2} pattern, which can be an expander, so a
+@code{.CTZ} internal function call on a 32-bit unsigned integer can be
+expanded.
 
 @item cmpccxadd
 Target supports the execution of @code{cmpccxadd} instructions.

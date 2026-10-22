@@ -743,7 +743,7 @@ extern rtx herbceptions_channel_value (tree, tree, tree, bool);
 extern void clobber_return_register (void);
 extern void expand_function_end (void);
 extern rtx get_arg_pointer_save_area (void);
-extern void maybe_copy_prologue_epilogue_insn (rtx, rtx);
+extern void maybe_copy_prologue_epilogue_insn (rtx_insn *, rtx_insn *);
 extern bool prologue_contains (const rtx_insn *);
 extern bool epilogue_contains (const rtx_insn *);
 extern bool prologue_epilogue_contains (const rtx_insn *);

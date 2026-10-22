@@ -1590,7 +1590,7 @@ single_set_2 (const rtx_insn *insn, const_rtx pat)
    false.  */
 
 bool
-multiple_sets (const_rtx insn)
+multiple_sets (const rtx_insn *insn)
 {
   bool found;
   int i;
@@ -2585,7 +2585,8 @@ find_reg_equal_equiv_note (const_rtx insn)
 	   in the comment in set_unique_reg_note.
 
 	   This should be changed into an assert.  */
-	if (GET_CODE (PATTERN (insn)) == PARALLEL && multiple_sets (insn))
+	if (GET_CODE (PATTERN (insn)) == PARALLEL
+	    && multiple_sets (as_a<const rtx_insn *> (insn)))
 	  return 0;
 	return link;
       }
@@ -3415,7 +3416,8 @@ replace_rtx (rtx x, rtx from, rtx to, bool all_regs)
    the change in LABEL_NUSES if UPDATE_LABEL_NUSES.  */
 
 void
-replace_label (rtx *loc, rtx old_label, rtx new_label, bool update_label_nuses)
+replace_label (rtx *loc, rtx_insn *old_label, rtx_insn *new_label,
+	       bool update_label_nuses)
 {
   /* Handle jump tables specially, since ADDR_{DIFF_,}VECs can be long.  */
   rtx x = *loc;
@@ -4504,7 +4506,7 @@ keep_with_call_p (const rtx_insn *insn)
    not apply to the fallthru case of a conditional jump.  */
 
 bool
-label_is_jump_target_p (const_rtx label, const rtx_insn *jump_insn)
+label_is_jump_target_p (const rtx_insn *label, const rtx_insn *jump_insn)
 {
   rtx tmp = JUMP_LABEL (jump_insn);
   rtx_jump_table_data *table;
@@ -4798,7 +4800,7 @@ nonzero_bits1 (const_rtx x, scalar_int_mode mode, const_rtx known_x,
   enum rtx_code code = GET_CODE (x);
   machine_mode inner_mode;
   unsigned int inner_width;
-  scalar_int_mode xmode;
+  scalar_int_mode xmode, op_imode;
 
   unsigned int mode_width = GET_MODE_PRECISION (mode);
 
@@ -5228,25 +5230,26 @@ nonzero_bits1 (const_rtx x, scalar_int_mode mode, const_rtx known_x,
 
     case CLZ:
       /* If CLZ has a known value at zero, then the nonzero bits are
-	 that value, plus the number of bits in the mode minus one.
-	 If we have a different operand mode, don't try to get nonzero
-	 bits as currently nonzero is not a poly_int.  */
-      if (op_mode == mode
-	  && CLZ_DEFINED_VALUE_AT_ZERO (mode, nonzero))
+	 that value, plus the number of bits in the operand minus one.
+	 The operand mode may differ from MODE, but if it is not a scalar
+	 integer mode, don't try to get nonzero bits as currently nonzero
+	 is not a poly_int.  */
+      if (is_a <scalar_int_mode> (GET_MODE (XEXP (x, 0)), &op_imode)
+	  && CLZ_DEFINED_VALUE_AT_ZERO (op_imode, nonzero))
 	nonzero
-	  |= (HOST_WIDE_INT_1U << (floor_log2 (mode_width))) - 1;
+	  |= (HOST_WIDE_INT_1U << (floor_log2 (op_mode_width))) - 1;
       else
 	nonzero = -1;
       break;
 
     case CTZ:
       /* If CTZ has a known value at zero, then the nonzero bits are
-	 that value, plus the number of bits in the mode minus one.
-	 See above for op_mode != mode.  */
-      if (op_mode == mode
-	  && CLZ_DEFINED_VALUE_AT_ZERO (mode, nonzero))
+	 that value, plus the number of bits in the operand minus one.
+	 See above for the operand mode.  */
+      if (is_a <scalar_int_mode> (GET_MODE (XEXP (x, 0)), &op_imode)
+	  && CTZ_DEFINED_VALUE_AT_ZERO (op_imode, nonzero))
 	nonzero
-	  |= (HOST_WIDE_INT_1U << (floor_log2 (mode_width))) - 1;
+	  |= (HOST_WIDE_INT_1U << (floor_log2 (op_mode_width))) - 1;
       else
 	nonzero = -1;
       break;

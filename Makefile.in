@@ -698,6 +698,9 @@ STAGEautofeedback_TFLAGS = $(STAGE3_TFLAGS)
 # may result in additional warnings.
 STAGEautofeedback_CONFIGURE_FLAGS = $(filter-out --enable-werror-always,$(STAGE_CONFIGURE_FLAGS))
 
+GMP_CHECKING_FLAGS = -fno-checking -fchecking=1
+GMP_FILTER_CHECKING_FLAGS = $(filter-out $(GMP_CHECKING_FLAGS),$(1))
+
 do-compare = @do_compare@
 do-compare3 = $(do-compare)
 
@@ -13407,10 +13410,10 @@ configure-stage1-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGE1_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE1_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
-	CFLAGS="$(STAGE1_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE1_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGE1_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(LIBCFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage 1 in $(HOST_SUBDIR)/gmp; \
@@ -13440,11 +13443,11 @@ configure-stage2-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGE2_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE2_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGE2_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE2_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGE2_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGE2_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage 2 in $(HOST_SUBDIR)/gmp; \
@@ -13474,11 +13477,11 @@ configure-stage3-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGE3_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE3_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGE3_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE3_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGE3_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGE3_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage 3 in $(HOST_SUBDIR)/gmp; \
@@ -13508,11 +13511,11 @@ configure-stage4-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGE4_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE4_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGE4_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE4_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGE4_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGE4_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage 4 in $(HOST_SUBDIR)/gmp; \
@@ -13542,11 +13545,11 @@ configure-stageprofile-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEprofile_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEprofile_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEprofile_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEprofile_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEprofile_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEprofile_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage profile in $(HOST_SUBDIR)/gmp; \
@@ -13576,11 +13579,11 @@ configure-stagetrain-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEtrain_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEtrain_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEtrain_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEtrain_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEtrain_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEtrain_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage train in $(HOST_SUBDIR)/gmp; \
@@ -13610,11 +13613,11 @@ configure-stagefeedback-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEfeedback_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEfeedback_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEfeedback_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEfeedback_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEfeedback_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEfeedback_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage feedback in $(HOST_SUBDIR)/gmp; \
@@ -13644,11 +13647,11 @@ configure-stageautoprofile-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEautoprofile_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEautoprofile_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEautoprofile_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEautoprofile_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEautoprofile_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEautoprofile_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage autoprofile in $(HOST_SUBDIR)/gmp; \
@@ -13678,11 +13681,11 @@ configure-stageautofeedback-gmp:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/gmp
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEautofeedback_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEautofeedback_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/gmp/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEautofeedback_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEautofeedback_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEautofeedback_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEautofeedback_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage autofeedback in $(HOST_SUBDIR)/gmp; \
@@ -15681,10 +15684,10 @@ configure-stage1-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGE1_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE1_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
-	CFLAGS="$(STAGE1_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE1_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGE1_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(LIBCFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage 1 in $(HOST_SUBDIR)/mpc; \
@@ -15714,11 +15717,11 @@ configure-stage2-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGE2_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE2_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGE2_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE2_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGE2_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGE2_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage 2 in $(HOST_SUBDIR)/mpc; \
@@ -15748,11 +15751,11 @@ configure-stage3-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGE3_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE3_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGE3_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE3_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGE3_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGE3_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage 3 in $(HOST_SUBDIR)/mpc; \
@@ -15782,11 +15785,11 @@ configure-stage4-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGE4_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE4_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGE4_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGE4_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGE4_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGE4_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage 4 in $(HOST_SUBDIR)/mpc; \
@@ -15816,11 +15819,11 @@ configure-stageprofile-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEprofile_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEprofile_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEprofile_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEprofile_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEprofile_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEprofile_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage profile in $(HOST_SUBDIR)/mpc; \
@@ -15850,11 +15853,11 @@ configure-stagetrain-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEtrain_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEtrain_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEtrain_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEtrain_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEtrain_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEtrain_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage train in $(HOST_SUBDIR)/mpc; \
@@ -15884,11 +15887,11 @@ configure-stagefeedback-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEfeedback_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEfeedback_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEfeedback_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEfeedback_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEfeedback_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEfeedback_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage feedback in $(HOST_SUBDIR)/mpc; \
@@ -15918,11 +15921,11 @@ configure-stageautoprofile-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEautoprofile_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEautoprofile_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEautoprofile_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEautoprofile_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEautoprofile_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEautoprofile_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage autoprofile in $(HOST_SUBDIR)/mpc; \
@@ -15952,11 +15955,11 @@ configure-stageautofeedback-mpc:
 	@$(SHELL) $(srcdir)/mkinstalldirs $(HOST_SUBDIR)/mpc
 	@r=`${PWD_COMMAND}`; export r; \
 	s=`cd $(srcdir); ${PWD_COMMAND}`; export s; \
-	TFLAGS="$(STAGEautofeedback_TFLAGS)"; \
+	TFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEautofeedback_TFLAGS))"; \
 	test ! -f $(HOST_SUBDIR)/mpc/Makefile || exit 0; \
 	$(HOST_EXPORTS) \
 	$(POSTSTAGE1_HOST_EXPORTS) \
-	CFLAGS="$(STAGEautofeedback_CFLAGS)"; export CFLAGS; \
+	CFLAGS="$(call GMP_FILTER_CHECKING_FLAGS,$(STAGEautofeedback_CFLAGS))"; export CFLAGS; \
 	CXXFLAGS="$(STAGEautofeedback_CXXFLAGS)"; export CXXFLAGS; \
 	LIBCFLAGS="$(STAGEautofeedback_CFLAGS)"; export LIBCFLAGS;  \
 	echo Configuring stage autofeedback in $(HOST_SUBDIR)/mpc; \
@@ -69935,46 +69938,16 @@ configure-stagetrain-gcc: maybe-configure-stagetrain-gettext
 configure-stagefeedback-gcc: maybe-configure-stagefeedback-gettext
 configure-stageautoprofile-gcc: maybe-configure-stageautoprofile-gettext
 configure-stageautofeedback-gcc: maybe-configure-stageautofeedback-gettext
-configure-gcc: maybe-all-gmp
-configure-stage1-gcc: maybe-all-stage1-gmp
-configure-stage2-gcc: maybe-all-stage2-gmp
-configure-stage3-gcc: maybe-all-stage3-gmp
-configure-stage4-gcc: maybe-all-stage4-gmp
-configure-stageprofile-gcc: maybe-all-stageprofile-gmp
-configure-stagetrain-gcc: maybe-all-stagetrain-gmp
-configure-stagefeedback-gcc: maybe-all-stagefeedback-gmp
-configure-stageautoprofile-gcc: maybe-all-stageautoprofile-gmp
-configure-stageautofeedback-gcc: maybe-all-stageautofeedback-gmp
-configure-gcc: maybe-all-mpfr
-configure-stage1-gcc: maybe-all-stage1-mpfr
-configure-stage2-gcc: maybe-all-stage2-mpfr
-configure-stage3-gcc: maybe-all-stage3-mpfr
-configure-stage4-gcc: maybe-all-stage4-mpfr
-configure-stageprofile-gcc: maybe-all-stageprofile-mpfr
-configure-stagetrain-gcc: maybe-all-stagetrain-mpfr
-configure-stagefeedback-gcc: maybe-all-stagefeedback-mpfr
-configure-stageautoprofile-gcc: maybe-all-stageautoprofile-mpfr
-configure-stageautofeedback-gcc: maybe-all-stageautofeedback-mpfr
-configure-gcc: maybe-all-mpc
-configure-stage1-gcc: maybe-all-stage1-mpc
-configure-stage2-gcc: maybe-all-stage2-mpc
-configure-stage3-gcc: maybe-all-stage3-mpc
-configure-stage4-gcc: maybe-all-stage4-mpc
-configure-stageprofile-gcc: maybe-all-stageprofile-mpc
-configure-stagetrain-gcc: maybe-all-stagetrain-mpc
-configure-stagefeedback-gcc: maybe-all-stagefeedback-mpc
-configure-stageautoprofile-gcc: maybe-all-stageautoprofile-mpc
-configure-stageautofeedback-gcc: maybe-all-stageautofeedback-mpc
-configure-gcc: maybe-all-isl
-configure-stage1-gcc: maybe-all-stage1-isl
-configure-stage2-gcc: maybe-all-stage2-isl
-configure-stage3-gcc: maybe-all-stage3-isl
-configure-stage4-gcc: maybe-all-stage4-isl
-configure-stageprofile-gcc: maybe-all-stageprofile-isl
-configure-stagetrain-gcc: maybe-all-stagetrain-isl
-configure-stagefeedback-gcc: maybe-all-stagefeedback-isl
-configure-stageautoprofile-gcc: maybe-all-stageautoprofile-isl
-configure-stageautofeedback-gcc: maybe-all-stageautofeedback-isl
+configure-gcc: maybe-configure-gmp
+configure-stage1-gcc: maybe-configure-stage1-gmp
+configure-stage2-gcc: maybe-configure-stage2-gmp
+configure-stage3-gcc: maybe-configure-stage3-gmp
+configure-stage4-gcc: maybe-configure-stage4-gmp
+configure-stageprofile-gcc: maybe-configure-stageprofile-gmp
+configure-stagetrain-gcc: maybe-configure-stagetrain-gmp
+configure-stagefeedback-gcc: maybe-configure-stagefeedback-gmp
+configure-stageautoprofile-gcc: maybe-configure-stageautoprofile-gmp
+configure-stageautofeedback-gcc: maybe-configure-stageautofeedback-gmp
 configure-gcc: maybe-all-lto-plugin
 configure-stage1-gcc: maybe-all-stage1-lto-plugin
 configure-stage2-gcc: maybe-all-stage2-lto-plugin
@@ -70065,6 +70038,16 @@ all-stagetrain-gcc: maybe-all-stagetrain-gettext
 all-stagefeedback-gcc: maybe-all-stagefeedback-gettext
 all-stageautoprofile-gcc: maybe-all-stageautoprofile-gettext
 all-stageautofeedback-gcc: maybe-all-stageautofeedback-gettext
+all-gcc: maybe-all-gmp
+all-stage1-gcc: maybe-all-stage1-gmp
+all-stage2-gcc: maybe-all-stage2-gmp
+all-stage3-gcc: maybe-all-stage3-gmp
+all-stage4-gcc: maybe-all-stage4-gmp
+all-stageprofile-gcc: maybe-all-stageprofile-gmp
+all-stagetrain-gcc: maybe-all-stagetrain-gmp
+all-stagefeedback-gcc: maybe-all-stagefeedback-gmp
+all-stageautoprofile-gcc: maybe-all-stageautoprofile-gmp
+all-stageautofeedback-gcc: maybe-all-stageautofeedback-gmp
 all-gcc: maybe-all-mpfr
 all-stage1-gcc: maybe-all-stage1-mpfr
 all-stage2-gcc: maybe-all-stage2-mpfr

@@ -1,3 +1,34 @@
+2026-10-21  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	PR bootstrap/112422
+	* Makefile.def (configure-gcc): Depend on configure-gmp rather
+	than all-gmp, all-mpfr, all-mpc and all-isl.  Add a comment.
+	(all-gcc): Depend on all-gmp.
+	* Makefile.in: Regenerate.
+
+2026-10-20  Achim Gratz  <Achim.Gratz@Stromeko.DE>
+	    Zhongteng Gui  <dragon-archer@outlook.com>
+
+	* configure.ac (jit): Don't disable jit for Cygwin without
+	-enable-host-shared, like MinGW.
+	* configure: Regenerate.
+
+2026-10-19  Tamar Christina  <tamar.christina@arm.com>
+
+	PR bootstrap/127376
+	* Makefile.in: Renegerate.
+	* Makefile.tpl: Strip checking flags for mpfr and gmp.
+
+2026-10-19  David Faust  <david.faust@oss.qualcomm.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add myself as a bpf port maintainer.
+
+2026-10-18  Igor Shevlyakov  <igor.shevlyakov@gmail.com>
+
+	* MAINTAINERS: Regenerate.
+	* MAINTAINERS.yml: Add record for myself.
+
 2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
 
 	PR bootstrap/103459

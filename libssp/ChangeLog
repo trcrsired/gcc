@@ -1,3 +1,20 @@
+2026-10-20  Siddhesh Poyarekar  <siddhesh@gotplt.org>
+
+	PR libgcc/109270
+	* ssp/ssp.h.in [_FORTIFY_SOURCE > 2]: Set __SSP_FORTIFY_LEVEL to
+	3 if compiler supports __builtin_dynamic_object_size.
+	[__SSP_FORTIFY_LEVEL > 2]: Use __builtin_dynamic_object_size.
+
+2026-10-17  Sam James  <sam@gentoo.org>
+
+	PR bootstrap/112422
+	* config.h.in: Regenerate.
+	* configure: Regenerate.
+	* configure.ac: Don't search for memmove, strncat, strncpy.
+	Unconditionally search for mempcpy.
+	* strncpy-chk.c: Drop HAVE_STRNCPY guard.
+	* memmove-chk.c: Drop HAVE_MEMMOVE guard.
+
 2026-10-16  Pietro Monteiro  <pietro@sociotechnical.xyz>
 
 	* Makefile.in: Regenerate.

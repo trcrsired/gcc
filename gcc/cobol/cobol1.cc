@@ -733,7 +733,7 @@ cobol_langhook_handle_option (size_t scode,
           return true;
 
         case OPT_Werrno:
-          cobol_warning(ParNumstrW, cobol_errno, warning_as_error);
+          cobol_warning(ParErrno, cobol_errno, warning_as_error);
           return true;
 
         case OPT_Wiconv_error:
@@ -1051,9 +1051,8 @@ cobol_set_decl_assembler_name (tree decl)
       }
 
     id = get_identifier(mangled_name);
-    free(mangled_name);
-
     SET_DECL_ASSEMBLER_NAME (decl, id);
+    free(mangled_name);
     }
 
 /* Get a value for the SARIF v2.1.0 "artifact.sourceLanguage" property,
