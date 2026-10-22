@@ -112,7 +112,6 @@ sources = \
 	pmem_type_info.cc \
 	pointer_type_info.cc \
 	pure.cc \
-	query_information.cc \
 	si_class_type_info.cc \
 	tinfo.cc \
 	tinfo2.cc \
@@ -148,14 +147,10 @@ atomicity.o: atomicity.cc
 	$(CXXCOMPILE) -fwrapv -c $<
 
 # The exception_ptr error domain is written against the C++23 herbception
-# headers, so only these two translation units opt into gnu++23.
+# headers, so this translation unit opts into gnu++23.
 itanium_exception_ptr.lo: itanium_exception_ptr.cc
 	$(LTCXXCOMPILE) -std=gnu++23 -c $<
 itanium_exception_ptr.o: itanium_exception_ptr.cc
-	$(CXXCOMPILE) -std=gnu++23 -c $<
-query_information.lo: query_information.cc
-	$(LTCXXCOMPILE) -std=gnu++23 -c $<
-query_information.o: query_information.cc
 	$(CXXCOMPILE) -std=gnu++23 -c $<
 
 if OS_IS_DARWIN

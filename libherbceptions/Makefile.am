@@ -36,17 +36,19 @@ herbceptions_sources = \
 	src/cmath_errc.cpp \
 	src/http_errc.cpp \
 	src/tls_alert.cpp \
+	src/query_information.cpp \
 	src/win32.cpp \
 	src/nt.cpp \
 	src/com.cpp \
 	src/wine.cpp \
 	src/msvc_exception_ptr.cpp
 
-# src/itanium_exception_ptr.cpp and src/query_information.cpp are
-# deliberately not built: the Itanium exception_ptr error domain and the
-# legacy-box buffer ABI it depends on are supplied by the C++ runtime
-# (libsupc++ / libc++abi).  The files are kept in the tree for reference and
-# for freestanding builds of libherbceptions outside of GCC.
+# src/query_information.cpp implements the legacy-box buffer ABI and is
+# hosted-only: the file compiles to nothing when __STDC_HOSTED__ is 0.
+# src/itanium_exception_ptr.cpp is deliberately not built: the Itanium
+# exception_ptr error domain is supplied by the C++ runtime (libsupc++ /
+# libc++abi).  The file is kept in the tree for reference and for
+# freestanding builds of libherbceptions outside of GCC.
 if USING_WIN32
 herbceptions_la_SOURCES = $(herbceptions_sources)
 herbceptions_la_LIBADD = -lntdll
