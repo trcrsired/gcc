@@ -163,6 +163,14 @@ endif
 # from ntdll on MinGW rather than the C runtime.
 mingw_ntdll = $(if $(findstring mingw,$(host_os)),-lntdll)
 
+# The domain's entry points are __declspec(dllexport), and any dllexport
+# symbol in a DLL turns off the PE linker's automatic export, leaving just
+# those symbols exported.  Ask for all symbols explicitly; the version
+# script still filters them as before.
+mingw_export_all_flag = -Wl,--export-all-symbols
+mingw_export_all = \
+	$(if $(findstring mingw,$(host_os)),$(mingw_export_all_flag))
+
 libstdc___la_LIBADD = \
 	$(GLIBCXX_LIBS) \
 	$(top_builddir)/libsupc++/libsupc++convenience.la \
@@ -188,7 +196,8 @@ libstdc___darwin_rpath += -Wl,-rpath,@loader_path
 endif
 
 libstdc___la_LDFLAGS = \
-	-version-info $(libtool_VERSION) ${version_arg} -lm $(libstdc___darwin_rpath)
+	-version-info $(libtool_VERSION) ${version_arg} -lm $(libstdc___darwin_rpath) \
+	$(mingw_export_all)
 
 libstdc___la_LINK = $(CXXLINK) $(libstdc___la_LDFLAGS) $(lt_host_flags)
 
