@@ -24,11 +24,14 @@ include $(top_srcdir)/fragment.am
 
 # The Itanium exception_ptr error domain lives in libsupc++ and consumes the
 # herbception headers; those are header-only here, so building libstdc++ does
-# not require --enable-libherbceptions.
+# not require --enable-libherbceptions.  _HERBCEPTIONS_LIBSTDCXX keeps the
+# domain's entry points undecorated on MinGW, where the DLL exports through
+# the PE linker's automatic export set.
 AM_CPPFLAGS += \
 	-I$(top_srcdir)/../libherbceptions/include \
 	-I$(top_srcdir)/../libherbceptions/src \
-	-D_HERBCEPTIONS_BUILDING_RUNTIME=1
+	-D_HERBCEPTIONS_BUILDING_RUNTIME=1 \
+	-D_HERBCEPTIONS_LIBSTDCXX=1
 
 # Need this library to both be part of libstdc++.a, and installed
 # separately too.
