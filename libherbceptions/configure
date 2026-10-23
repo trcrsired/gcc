@@ -640,6 +640,8 @@ WARN_FLAGS
 EXTRA_CXXFLAGS
 EXTRA_ASFLAGS
 get_gcc_base_ver
+USING_MINGW_FALSE
+USING_MINGW_TRUE
 USING_WIN32_FALSE
 USING_WIN32_TRUE
 ENABLE_DARWIN_AT_RPATH_FALSE
@@ -16042,7 +16044,7 @@ fi
 # (libsupc++ / libc++abi), so libherbceptions never builds its own copy
 # of src/itanium_exception_ptr.cpp.
 
-# The library only uses ntdll on Windows.
+# The library only uses ntdll on Windows (including Cygwin).
 case "${host}" in
   *-*-mingw* | *-*-cygwin*)
     herbceptions_win32=yes ;;
@@ -16055,6 +16057,24 @@ esac
 else
   USING_WIN32_TRUE='#'
   USING_WIN32_FALSE=
+fi
+
+# Only the MinGW DLL takes the MSVC build's name so that one DLL serves
+# both ABIs.  Cygwin keeps libtool's libherbceptions name: its errno
+# domain is Cygwin's, not the MSVC C runtime's, so MSVC's DLL cannot
+# stand in for it.
+case "${host}" in
+  *-*-mingw*)
+    herbceptions_mingw=yes ;;
+  *)
+    herbceptions_mingw=no ;;
+esac
+ if test x$herbceptions_mingw = xyes; then
+  USING_MINGW_TRUE=
+  USING_MINGW_FALSE='#'
+else
+  USING_MINGW_TRUE='#'
+  USING_MINGW_FALSE=
 fi
 
 
@@ -16423,6 +16443,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${USING_WIN32_TRUE}" && test -z "${USING_WIN32_FALSE}"; then
   as_fn_error $? "conditional \"USING_WIN32\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${USING_MINGW_TRUE}" && test -z "${USING_MINGW_FALSE}"; then
+  as_fn_error $? "conditional \"USING_MINGW\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 

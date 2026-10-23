@@ -107,7 +107,7 @@ fi
 # (libsupc++ / libc++abi), so libherbceptions never builds its own copy
 # of src/itanium_exception_ptr.cpp.
 
-# The library only uses ntdll on Windows.
+# The library only uses ntdll on Windows (including Cygwin).
 case "${host}" in
   *-*-mingw* | *-*-cygwin*)
     herbceptions_win32=yes ;;
@@ -115,6 +115,18 @@ case "${host}" in
     herbceptions_win32=no ;;
 esac
 AM_CONDITIONAL(USING_WIN32, test x$herbceptions_win32 = xyes)
+
+# Only the MinGW DLL takes the MSVC build's name so that one DLL serves
+# both ABIs.  Cygwin keeps libtool's libherbceptions name: its errno
+# domain is Cygwin's, not the MSVC C runtime's, so MSVC's DLL cannot
+# stand in for it.
+case "${host}" in
+  *-*-mingw*)
+    herbceptions_mingw=yes ;;
+  *)
+    herbceptions_mingw=no ;;
+esac
+AM_CONDITIONAL(USING_MINGW, test x$herbceptions_mingw = xyes)
 
 # Determine what GCC version number to use in filesystem paths.
 GCC_BASE_VER
