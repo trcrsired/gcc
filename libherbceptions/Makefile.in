@@ -398,8 +398,8 @@ AM_CXXFLAGS = \
 # translation unit needs unwind tables despite the flags above.
 msvc_exception_ptr.lo msvc_exception_ptr.o: CXXFLAGS += -funwind-tables
 
-@USING_WIN32_TRUE@toolexeclib_LTLIBRARIES = herbceptions.la
-@USING_WIN32_FALSE@toolexeclib_LTLIBRARIES = libherbceptions.la
+@USING_MINGW_TRUE@toolexeclib_LTLIBRARIES = herbceptions.la
+@USING_MINGW_FALSE@toolexeclib_LTLIBRARIES = libherbceptions.la
 herbceptions_sources = \
 	src/posix.cpp \
 	src/parse.cpp \
@@ -420,14 +420,15 @@ herbceptions_sources = \
 # exception_ptr error domain is supplied by the C++ runtime (libsupc++ /
 # libc++abi).  The file is kept in the tree for reference and for
 # freestanding builds of libherbceptions outside of GCC.
-@USING_WIN32_TRUE@herbceptions_la_SOURCES = $(herbceptions_sources)
-@USING_WIN32_TRUE@herbceptions_la_LIBADD = -lntdll
+@USING_MINGW_TRUE@herbceptions_la_SOURCES = $(herbceptions_sources)
+@USING_MINGW_TRUE@herbceptions_la_LIBADD = -lntdll
 # -module drops libtool's "lib" prefix and -avoid-version drops the "-0"
 # suffix, so the output is herbceptions.dll: the same file name the MSVC
 # build produces, letting one DLL serve both ABIs.
-@USING_WIN32_TRUE@herbceptions_la_LDFLAGS = $(lt_host_flags) -module -avoid-version
-@USING_WIN32_FALSE@libherbceptions_la_SOURCES = $(herbceptions_sources)
-@USING_WIN32_FALSE@libherbceptions_la_LDFLAGS = $(lt_host_flags)
+@USING_MINGW_TRUE@herbceptions_la_LDFLAGS = $(lt_host_flags) -module -avoid-version
+@USING_MINGW_FALSE@libherbceptions_la_SOURCES = $(herbceptions_sources)
+@USING_MINGW_FALSE@@USING_WIN32_TRUE@libherbceptions_la_LIBADD = -lntdll
+@USING_MINGW_FALSE@libherbceptions_la_LDFLAGS = $(lt_host_flags)
 herbceptionsinclude_HEADERS = include/herbceptions/error
 herbceptions_detailsincludedir = $(herbceptionsincludedir)/__details
 herbceptions_detailsinclude_HEADERS = \

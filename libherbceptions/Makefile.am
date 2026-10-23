@@ -24,7 +24,7 @@ AM_CXXFLAGS = \
 # translation unit needs unwind tables despite the flags above.
 msvc_exception_ptr.lo msvc_exception_ptr.o: CXXFLAGS += -funwind-tables
 
-if USING_WIN32
+if USING_MINGW
 toolexeclib_LTLIBRARIES = herbceptions.la
 else
 toolexeclib_LTLIBRARIES = libherbceptions.la
@@ -49,7 +49,7 @@ herbceptions_sources = \
 # exception_ptr error domain is supplied by the C++ runtime (libsupc++ /
 # libc++abi).  The file is kept in the tree for reference and for
 # freestanding builds of libherbceptions outside of GCC.
-if USING_WIN32
+if USING_MINGW
 herbceptions_la_SOURCES = $(herbceptions_sources)
 herbceptions_la_LIBADD = -lntdll
 # -module drops libtool's "lib" prefix and -avoid-version drops the "-0"
@@ -58,6 +58,10 @@ herbceptions_la_LIBADD = -lntdll
 herbceptions_la_LDFLAGS = $(lt_host_flags) -module -avoid-version
 else
 libherbceptions_la_SOURCES = $(herbceptions_sources)
+if USING_WIN32
+# Cygwin still uses ntdll for the NT heap and the win32 domains.
+libherbceptions_la_LIBADD = -lntdll
+endif
 libherbceptions_la_LDFLAGS = $(lt_host_flags)
 endif
 
