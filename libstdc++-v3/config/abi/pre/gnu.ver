@@ -3002,6 +3002,14 @@ CXXABI_1.3.17 {
     _ZTIPKDF16_;
 #endif
 
+    # Herbceptions exception_ptr domain entry points (libsupc++). They are
+    # part of the support library's C ABI, and the PE linker exports only the
+    # symbols this list matches, so they must be named here to keep both the
+    # direct and __imp_ spellings in the import library.
+    __cxa_error_code_itanium_exception_ptr;
+    __cxa_error_code_itanium_exception_ptr_cast;
+    __cxa_error_domain_itanium_exception_ptr;
+
 #ifdef __riscv
 } CXXABI_1.3.16;
 #else
