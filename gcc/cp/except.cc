@@ -986,6 +986,11 @@ check_handlers_1 (tree master, tree_stmt_iterator i)
   for (; !tsi_end_p (i); tsi_next (&i))
     {
       tree handler = tsi_stmt (i);
+      /* `catch throws' handlers are not type-matched against the legacy
+	 EH dispatch; they form their own ordered chain, so duplicates
+	 are meaningful and cannot shadow one another.  */
+      if (TREE_CODE (handler) == HERBCEPTION_HANDLER)
+	continue;
       if (TREE_TYPE (handler)
 	  && handler_match_for_exception_type (type, TREE_TYPE (handler)))
 	{
@@ -1012,21 +1017,31 @@ check_handlers (tree handlers)
     return;
 
   i = tsi_start (handlers);
-  if (!tsi_end_p (i))
-    while (1)
-      {
-	tree handler = tsi_stmt (i);
-	tsi_next (&i);
+  for (; !tsi_end_p (i); tsi_next (&i))
+    {
+      tree handler = tsi_stmt (i);
 
-	/* No more handlers; nothing to shadow.  */
-	if (tsi_end_p (i))
-	  break;
-	if (TREE_TYPE (handler) == NULL_TREE)
-	  permerror (EXPR_LOCATION (handler), "%<...%>"
-		     " handler must be the last handler for its try block");
-	else
-	  check_handlers_1 (handler, i);
-      }
+      /* Skip the herbception handlers: only legacy handlers are
+	 type-matched, and only among themselves.  */
+      if (TREE_CODE (handler) == HERBCEPTION_HANDLER)
+	continue;
+
+      /* Find the next legacy handler, if any.  */
+      tree_stmt_iterator j = i;
+      tsi_next (&j);
+      while (!tsi_end_p (j)
+	     && TREE_CODE (tsi_stmt (j)) == HERBCEPTION_HANDLER)
+	tsi_next (&j);
+
+      /* No more handlers; nothing to shadow.  */
+      if (tsi_end_p (j))
+	break;
+      if (TREE_TYPE (handler) == NULL_TREE)
+	permerror (EXPR_LOCATION (handler), "%<...%>"
+		   " handler must be the last handler for its try block");
+      else
+	check_handlers_1 (handler, j);
+    }
 }
 
 /* walk_tree helper for finish_noexcept_expr.  Returns non-null if the
