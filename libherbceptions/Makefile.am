@@ -51,11 +51,13 @@ herbceptions_sources = \
 # freestanding builds of libherbceptions outside of GCC.
 if USING_MINGW
 herbceptions_la_SOURCES = $(herbceptions_sources)
-# ntdll is passed through -Wl rather than LIBADD: libtool's MinGW
-# dependency check ("file_magic ^x86 archive import|^x86 DLL") only knows
-# the x86 import-library layouts, so on an AArch64 host it rejects
-# libntdll.a, drops the dependency and quietly builds a static-only
+# ntdll is passed through -Wl rather than LIBADD because libtool
+# scripts generated from a pre-pe-aarch64-little ltmain.sh reject
+# libntdll.a, drop the dependency and quietly build a static-only
 # module -- leaving no herbceptions.dll.a for -lherbceptions to find.
+# -Wl arguments reach the linker without going through that check, so
+# build trees that were configured before ltmain.sh was fixed still
+# produce the DLL.
 herbceptions_la_LIBADD = -Wl,-lntdll
 # -module drops libtool's "lib" prefix and -avoid-version drops the "-0"
 # suffix, so the output is herbceptions.dll: the same file name the MSVC

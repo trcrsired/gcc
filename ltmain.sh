@@ -2797,7 +2797,7 @@ func_win32_libid ()
     ;;
   *ar\ archive*) # could be an import, or static
     if $OBJDUMP -f "$1" | $SED -e '10q' 2>/dev/null |
-       $EGREP 'file format (pe-i386(.*architecture: i386)?|pe-arm-wince|pe-x86-64)' >/dev/null; then
+       $EGREP 'file format (pe-i386(.*architecture: i386)?|pe-arm-wince|pe-x86-64|pe-aarch64-little)' >/dev/null; then
       win32_nmres=`$NM -f posix -A "$1" |
 	$SED -n -e '
 	    1,100{
