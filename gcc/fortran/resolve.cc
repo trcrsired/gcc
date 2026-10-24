@@ -8377,8 +8377,7 @@ gfc_resolve_expr (gfc_expr *e)
       else
 	t = resolve_variable (e);
 
-      if (e->ts.type == BT_CHARACTER && e->ts.u.cl == NULL && e->ref
-	  && e->ref->type != REF_SUBSTRING)
+      if (e->ts.type == BT_CHARACTER && e->ts.u.cl == NULL && e->ref)
 	gfc_resolve_substring_charlen (e);
 
       break;
@@ -10786,6 +10785,13 @@ resolve_assoc_var (gfc_symbol* sym, bool resolve_target)
 		 &target->where);
       return;
     }
+
+  /* The elements of a pointer function result may be spaced by more than
+     the element size.  */
+  if (target->expr_type == EXPR_FUNCTION
+      && target->rank > 0
+      && gfc_expr_attr (target).pointer)
+    sym->attr.subref_array_pointer = 1;
 
   if (sym->assoc->inferred_type || IS_INFERRED_TYPE (target))
     {

@@ -1375,10 +1375,11 @@
      (E.g.  CRC64's quotient may need 65 bits,
      we can't keep it in 64 bit variable.)
      then use clmul instruction to implement the CRC.
-     We can also use clmulr for CRC-32 on RV32, requiring ZBC.  */
+     If we have the ZBC extension (ie, clmulr) 1 bit can be left
+     implicit, allowing CRC64 using a 64 bit variable.  */
   if (((TARGET_ZBKC || TARGET_ZBC || TARGET_ZVBC)
 	&& <ANYI:MODE>mode < word_mode)
-      || (!TARGET_64BIT && TARGET_ZBC && <ANYI:MODE>mode == word_mode))
+      || (TARGET_ZBC && <ANYI:MODE>mode == word_mode))
     expand_reversed_crc_using_clmul (<ANYI:MODE>mode, <ANYI1:MODE>mode,
 				     operands);
   else
@@ -1527,6 +1528,8 @@
    (clobber (match_operand:DI 3 "register_operand"))]
   "(TARGET_64BIT
     && TARGET_ZBB
+    && (nonzero_bits (operands[2], DImode)
+	& HOST_WIDE_INT_UC (0xffffffff00000000)) == 0
     && (REG_P (operands[2]) && SUBREG_P (operands[1])
 	 ? REGNO (operands[2]) == REGNO (SUBREG_REG (operands[1]))
 	 : REG_P (operands[1]) && SUBREG_P (operands[2])
