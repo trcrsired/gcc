@@ -57,6 +57,12 @@ struct hb_ctx
      handler body being walked (for `throw throws' rethrows).  */
   tree rethrow_var;
 
+  /* True while walking a try body whose handlers include no
+     `catch throws' clause.  Such a try cannot consume a channel
+     failure, so the main() trap-at-the-boundary concession does not
+     apply inside it (mirrors clang's NoCatchTryDepth).  */
+  bool no_main_trap;
+
   /* Hoisted call machinery to be inserted before the current
      statement.  */
   tree pre;
@@ -465,7 +471,7 @@ hb_emit_route (tree list, hb_ctx *ctx, tree e, location_t loc,
     }
   if (!ctx->hspec)
     {
-      if (call_p && DECL_MAIN_P (ctx->fndecl))
+      if (call_p && !ctx->no_main_trap && DECL_MAIN_P (ctx->fndecl))
 	{
 	  append_to_statement_list
 	    (build_call_expr_loc (loc,
@@ -1230,13 +1236,24 @@ hb_fn_boundary (hb_ctx *ctx, tree body, location_t loc, bool fabricate)
    Builds
 
      {
-       e (the caught var decl);
+       e1; e2; ... (the caught var decls);
        <lowered stmts, or TRY_CATCH_EXPR wrapping them for legacy
         catches>
        goto end;
-     disp: <handler bodies>
+     disp1: <handler 1 body, chained to handler 2>
+       goto end;
+     disp2: <handler 2 body, chained to handler 3>
+       ...
      end:
-     }                                                    */
+     }
+
+   The try body routes failures to the first `catch throws' handler.
+   While handler k's body runs it is chained forward to handler k+1,
+   matching clang: a failing `throws' call or `throw throws' inside the
+   body binds handler k+1's variable and jumps to its dispatch, and a
+   legacy C++ exception escaping the body is converted to std::error and
+   routed the same way.  The last handler's failures leave for the
+   enclosing route.  */
 
 static tree
 hb_lower_try_block (hb_ctx *ctx, tree try_block)
@@ -1247,8 +1264,6 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
 
   /* Partition `catch throws' from legacy handlers.  TRY_HANDLERS is
      a STATEMENT_LIST of handler nodes, or a single handler.  */
-  tree hb_handler = NULL_TREE;
-  tree legacy = NULL_TREE;
   auto_vec<tree> hv;
   if (handlers && TREE_CODE (handlers) == STATEMENT_LIST)
     for (tree_stmt_iterator i = tsi_start (handlers); !tsi_end_p (i);
@@ -1256,49 +1271,111 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
       hv.safe_push (tsi_stmt (i));
   else if (handlers)
     hv.safe_push (handlers);
-  for (tree h : hv)
-    {
-      if (TREE_CODE (h) == HERBCEPTION_HANDLER)
-	{
-	  if (!hb_handler)
-	    hb_handler = h;
-	}
-      else
-	{
-	  /* Rebuild the HANDLER — build_stmt leaves void_type_node in
-	     TREE_TYPE, which HANDLER_TYPE reads as the caught type:
-	     a `catch (int)' would degenerate into `catch (void)'.
-	     Preserve the type.  */
-	  tree nh = build_stmt (EXPR_LOCATION (h), HANDLER,
-				HANDLER_PARMS (h), HANDLER_BODY (h));
-	  TREE_TYPE (nh) = HANDLER_TYPE (h);
-	  append_to_statement_list (nh, &legacy);
-	}
-    }
 
-  if (!hb_handler)
+  /* For each clause record its index in HBS (-1 for a legacy clause)
+     and the first `catch throws' clause after it in declaration order
+     (-1 if none).  A failure raised while a legacy handler body runs
+     chains to that clause, matching clang.  */
+  unsigned nclauses = hv.length ();
+  auto_vec<int> hbs_of;
+  auto_vec<int> next_hb;
+  auto_vec<tree> hbs;
+  hbs_of.safe_grow (nclauses);
+  next_hb.safe_grow (nclauses);
+  for (unsigned i = 0; i < nclauses; i++)
+    if (TREE_CODE (hv[i]) == HERBCEPTION_HANDLER)
+      {
+	hbs_of[i] = hbs.length ();
+	hbs.safe_push (hv[i]);
+      }
+    else
+      hbs_of[i] = -1;
+  {
+    int nxt = -1;
+    for (unsigned i = nclauses; i-- > 0; )
+      {
+	if (hbs_of[i] >= 0)
+	  nxt = hbs_of[i];
+	next_hb[i] = nxt;
+      }
+  }
+
+  /* Rebuild a legacy HANDLER with BODY.  build_stmt leaves
+     void_type_node in TREE_TYPE, which HANDLER_TYPE reads as the
+     caught type: a `catch (int)' would degenerate into
+     `catch (void)'.  Preserve the type.  */
+  auto rebuild_handler = [] (tree h, tree body) -> tree
     {
-      /* No `catch throws' handler: calls inside either propagate
-	 (spec'd fn) or are unhandled; legacy handlers still wrap the
-	 statements.  */
+      tree nh = build_stmt (EXPR_LOCATION (h), HANDLER,
+			    HANDLER_PARMS (h), body);
+      TREE_TYPE (nh) = HANDLER_TYPE (h);
+      return nh;
+    };
+
+  if (hbs.is_empty ())
+    {
+      /* No `catch throws' handler: calls in the try body or a handler
+	 body either propagate (spec'd fn) or are unhandled.  Nothing
+	 in this try can consume the error, so main()'s trap
+	 concession does not apply to the try body; the handler bodies
+	 themselves run outside it (clang traps there).  */
+      bool save_nmt = ctx->no_main_trap;
+      ctx->no_main_trap = true;
       hb_lower_stmt (&stmts, ctx);
+      ctx->no_main_trap = save_nmt;
+
+      tree legacy = NULL_TREE;
+      for (unsigned i = 0; i < nclauses; i++)
+	if (hbs_of[i] < 0)
+	  {
+	    tree h = hv[i];
+	    tree body = HANDLER_BODY (h);
+	    hb_lower_stmt (&body, ctx);
+	    append_to_statement_list (rebuild_handler (h, body), &legacy);
+	  }
       if (legacy)
 	return build_stmt (loc, TRY_CATCH_EXPR, stmts, legacy);
       return stmts;
     }
 
-  tree handler_var = HERBCEPTION_HANDLER_PARMS (hb_handler);
-  tree disp = create_artificial_label (loc);
+  unsigned nhandlers = hbs.length ();
+  auto_vec<tree> disp (nhandlers);
+  auto_vec<tree> hvars (nhandlers);
+  for (unsigned k = 0; k < nhandlers; k++)
+    {
+      disp.quick_push (create_artificial_label (loc));
+      hvars.quick_push (HERBCEPTION_HANDLER_PARMS (hbs[k]));
+    }
   tree end = create_artificial_label (loc);
 
-  /* Walk the try statements with the dispatch context set.  */
+  /* Walk the try statements with the dispatch context set to the
+     first handler.  */
   tree save_disp = ctx->disp_label;
   tree save_hvar = ctx->handler_var;
-  ctx->disp_label = disp;
-  ctx->handler_var = handler_var;
+  ctx->disp_label = disp[0];
+  ctx->handler_var = hvars[0];
   hb_lower_stmt (&stmts, ctx);
   ctx->disp_label = save_disp;
   ctx->handler_var = save_hvar;
+
+  /* Lower the legacy handler bodies.  Such a body has no `catch
+     throws' clause of its own, so a failure inside it chains to the
+     next such clause after it in declaration order, or leaves for
+     the enclosing route.  */
+  tree legacy = NULL_TREE;
+  for (unsigned i = 0; i < nclauses; i++)
+    if (hbs_of[i] < 0)
+      {
+	tree h = hv[i];
+	tree body = HANDLER_BODY (h);
+	int nxt = next_hb[i];
+	ctx->disp_label = nxt >= 0 ? disp[nxt] : save_disp;
+	ctx->handler_var = nxt >= 0 ? hvars[nxt] : save_hvar;
+	hb_lower_stmt (&body, ctx);
+	ctx->disp_label = save_disp;
+	ctx->handler_var = save_hvar;
+	append_to_statement_list (rebuild_handler (h, body), &legacy);
+      }
 
   /* `catch throws' also catches legacy C++ exceptions — append a
      catch-all (after any typed legacy catches) that fabricates the
@@ -1308,35 +1385,36 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
   if (flag_exceptions)
     {
       tree fab = alloc_stmt_list ();
-      if (handler_var)
+      if (hvars[0])
 	{
 	  tree pairv = hb_emit_fab_pair (&fab, loc);
-	  tree v = hb_to_error (TREE_TYPE (handler_var), pairv, loc);
-	  append_to_statement_list (hb_assign (loc, handler_var, v),
-				    &fab);
+	  tree v = hb_to_error (TREE_TYPE (hvars[0]), pairv, loc);
+	  append_to_statement_list (hb_assign (loc, hvars[0], v), &fab);
 	}
       else
 	append_to_statement_list
 	  (build_stmt (loc, EXPR_STMT, hb_begin_catch_expr (loc)),
 	   &fab);
       append_to_statement_list
-	(build_stmt (loc, GOTO_EXPR, disp), &fab);
+	(build_stmt (loc, GOTO_EXPR, disp[0]), &fab);
       if (!legacy)
 	legacy = alloc_stmt_list ();
       append_to_statement_list (hb_legacy_catch_all (loc, fab,
-						     handler_var == NULL_TREE),
+						     hvars[0] == NULL_TREE),
 				&legacy);
     }
 
   tree list = alloc_stmt_list ();
-  if (handler_var)
-    {
-      DECL_CONTEXT (handler_var) = ctx->fndecl;
-      DECL_CHAIN (handler_var) = NULL_TREE;
-      DECL_SEEN_IN_BIND_EXPR_P (handler_var) = 1;
-      append_to_statement_list (build_stmt (loc, DECL_EXPR, handler_var),
-				&list);
-    }
+  tree vars = NULL_TREE;
+  for (unsigned k = 0; k < nhandlers; k++)
+    if (tree hvar = hvars[k])
+      {
+	DECL_CONTEXT (hvar) = ctx->fndecl;
+	DECL_CHAIN (hvar) = NULL_TREE;
+	DECL_SEEN_IN_BIND_EXPR_P (hvar) = 1;
+	append_to_statement_list (build_stmt (loc, DECL_EXPR, hvar), &list);
+	vars = chainon (vars, hvar);
+      }
   if (legacy)
     append_to_statement_list
       (build_stmt (loc, TRY_CATCH_EXPR, stmts, legacy), &list);
@@ -1344,22 +1422,52 @@ hb_lower_try_block (hb_ctx *ctx, tree try_block)
     append_to_statement_list_force (stmts, &list);
   append_to_statement_list (build1 (GOTO_EXPR, void_type_node, end),
 			    &list);
-  append_to_statement_list (build_stmt (loc, LABEL_EXPR, disp), &list);
 
-  /* Emit the `catch throws' handler body; the payload is already
-     bound at the dispatching call site.  */
-  {
-    tree save_rt = ctx->rethrow_var;
-    ctx->rethrow_var = handler_var;
-    tree body = HERBCEPTION_HANDLER_BODY (hb_handler);
-    hb_lower_stmt (&body, ctx);
-    append_to_statement_list_force (body, &list);
-    ctx->rethrow_var = save_rt;
-  }
+  /* Emit the `catch throws' handler bodies; the payloads are already
+     bound at the dispatching call sites.  Each body sees the next
+     handler as its enclosing route, so failures and escaping legacy
+     exceptions chain forward.  */
+  for (unsigned k = 0; k < nhandlers; k++)
+    {
+      append_to_statement_list (build_stmt (loc, LABEL_EXPR, disp[k]),
+				&list);
+
+      tree next_disp = k + 1 < nhandlers ? disp[k + 1] : save_disp;
+      tree next_var = k + 1 < nhandlers ? hvars[k + 1] : save_hvar;
+
+      tree save_rt = ctx->rethrow_var;
+      ctx->rethrow_var = hvars[k];
+      ctx->disp_label = next_disp;
+      ctx->handler_var = next_var;
+      tree body = HERBCEPTION_HANDLER_BODY (hbs[k]);
+      hb_lower_stmt (&body, ctx);
+      ctx->rethrow_var = save_rt;
+      ctx->disp_label = save_disp;
+      ctx->handler_var = save_hvar;
+
+      /* A legacy exception thrown by this body is offered to the next
+	 `catch throws' handler before it may leave the try statement,
+	 provided that handler can represent it (std::error).  */
+      if (k + 1 < nhandlers && flag_exceptions && next_var
+	  && cxx_std_error_type_p (TREE_TYPE (next_var)))
+	{
+	  tree cab = alloc_stmt_list ();
+	  tree pairv = hb_emit_fab_pair (&cab, loc);
+	  tree v = hb_to_error (TREE_TYPE (next_var), pairv, loc);
+	  append_to_statement_list (hb_assign (loc, next_var, v), &cab);
+	  append_to_statement_list
+	    (build1 (GOTO_EXPR, void_type_node, next_disp), &cab);
+	  body = build_stmt (loc, TRY_CATCH_EXPR, body,
+			     hb_legacy_catch_all (loc, cab, false));
+	}
+
+      append_to_statement_list_force (body, &list);
+      append_to_statement_list (build1 (GOTO_EXPR, void_type_node, end),
+				&list);
+    }
 
   append_to_statement_list (build_stmt (loc, LABEL_EXPR, end), &list);
 
-  tree vars = handler_var ? handler_var : NULL_TREE;
   return build3 (BIND_EXPR, void_type_node, vars, list, NULL_TREE);
 }
 
