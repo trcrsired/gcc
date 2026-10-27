@@ -567,6 +567,16 @@ DEF_INTERNAL_FN (HERBCEPTION_FAILED, ECF_LEAF | ECF_NOTHROW, NULL)
    Created by the herbceptions pass on paths whose flag is implied by
    the branch leading to the return.  */
 DEF_INTERNAL_FN (HERBCEPTION_SET_FAILED, ECF_LEAF | ECF_NOTHROW, NULL)
+/* Records one scalar piece of a spec'd function's return payload
+   (value or error) at a byte offset in the channel object.  GIMPLE
+   uses the call to keep the payload live; RTL expansion places it in
+   the pseudo holding the function's return-register group, and
+   expand_function_end moves that group to the real return registers.
+   The call must not be DCE'd, hence no ECF_CONST/ECF_PURE, but it
+   reads and writes no memory (its argument is already a value), hence
+   ECF_NOVOPS.  */
+DEF_INTERNAL_FN (HERBCEPTION_RETURN_PAYLOAD,
+		 ECF_LEAF | ECF_NOTHROW | ECF_NOVOPS, NULL)
 DEF_INTERNAL_FN (PHI, 0, NULL)
 
 /* A function to represent an artificial initialization to an uninitialized

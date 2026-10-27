@@ -324,6 +324,15 @@ struct GTY(()) function {
      target's flag register).  Consumed by expand_HERBCEPTION_FAILED.  */
   rtx herbceptions_captured_failed;
 
+  /* Herbceptions: the RTL object carrying the return payload from the
+     return edge to the epilogue, once the middle end has made it an
+     explicit value.  It is either a PARALLEL clone of the return
+     register group (pseudos), a plain pseudo for a scalar channel, or
+     a stack temporary if a payload piece could not be placed in a
+     single register.  NULL when the old memory-slot path is used.  */
+  rtx herbceptions_channel_rtx;
+  bool herbceptions_channel_in_memory;
+
   /* Used types hash table.  */
   hash_set<tree> *GTY (()) used_types_hash;
 

@@ -3616,6 +3616,187 @@ expand_HERBCEPTION_SET_FAILED (internal_fn, gcall *stmt)
 #endif
 }
 
+/* Return the RTL object that carries the return payload from this
+   point to the epilogue, creating it on first use.  It mirrors the
+   function's return-register group as a group of pseudos whenever the
+   target returns the channel in registers.  */
+
+static rtx
+herbceptions_get_channel_rtx (rtx valreg, tree slot_type)
+{
+  if (cfun->herbceptions_channel_rtx != NULL_RTX)
+    return cfun->herbceptions_channel_rtx;
+
+  poly_int64 size = int_size_in_bytes (slot_type);
+
+  if (GET_CODE (valreg) == PARALLEL)
+    cfun->herbceptions_channel_rtx = gen_group_rtx (valreg);
+  else if (REG_P (valreg)
+	   && GET_MODE (valreg) != BLKmode
+	   && known_eq (GET_MODE_SIZE (GET_MODE (valreg)), size))
+    {
+      if (known_gt (size, UNITS_PER_WORD)
+	  && SCALAR_INT_MODE_P (GET_MODE (valreg))
+	  && !BYTES_BIG_ENDIAN)
+	{
+	  /* Some targets (x86) describe a multi-word integer aggregate
+	     returned in consecutive registers as one register of a wide
+	     integer mode.  Split it into word-sized pieces so that a
+	     payload member maps onto a whole group element; the epilogue
+	     reassembles them with emit_group_store.  */
+	  unsigned int n = int_size_in_bytes (slot_type) / UNITS_PER_WORD;
+	  rtx *tmps = XALLOCAVEC (rtx, n);
+	  for (unsigned int i = 0; i < n; i++)
+	    tmps[i]
+	      = gen_rtx_EXPR_LIST (VOIDmode, gen_reg_rtx (word_mode),
+				   GEN_INT (i * UNITS_PER_WORD));
+	  cfun->herbceptions_channel_rtx
+	    = gen_rtx_PARALLEL (BLKmode, gen_rtvec_v (n, tmps));
+	}
+      else if (known_gt (size, UNITS_PER_WORD))
+	{
+	  /* A wide integer register holding a multi-word object only maps
+	     object bytes onto register bits at the least significant end
+	     on little-endian targets; fall back to a memory image.  */
+	  cfun->herbceptions_channel_rtx
+	    = assign_stack_temp_for_type (TYPE_MODE (slot_type), size,
+					  slot_type);
+	  cfun->herbceptions_channel_in_memory = true;
+	}
+      else
+	cfun->herbceptions_channel_rtx = gen_reg_rtx (GET_MODE (valreg));
+    }
+  else
+    {
+      cfun->herbceptions_channel_rtx
+	= assign_stack_temp_for_type (TYPE_MODE (slot_type), size, slot_type);
+      cfun->herbceptions_channel_in_memory = true;
+    }
+
+  return cfun->herbceptions_channel_rtx;
+}
+
+/* Store a scalar payload of TYPE at byte offset OFF into the channel
+   object CHAN.  A register-group channel keeps the piece in a pseudo;
+   if no single group element can hold it (or the channel is already in
+   memory) the group is flushed to a stack temporary and the rest of the
+   return edge uses memory.  */
+
+static void
+herbceptions_place_payload_piece (rtx chan, bool in_memory, tree slot_type,
+				  tree type, HOST_WIDE_INT off, rtx src)
+{
+  HOST_WIDE_INT size = int_size_in_bytes (type);
+  machine_mode pmode = TYPE_MODE (type);
+
+  gcc_assert (size > 0);
+
+  if (!REG_P (src) && !MEM_P (src))
+    src = force_reg (pmode, src);
+  else if (MEM_P (src) && GET_MODE (src) != pmode)
+    src = adjust_address (src, pmode, 0);
+
+  if (!in_memory && GET_CODE (chan) == PARALLEL)
+    {
+      for (int i = 0; i < XVECLEN (chan, 0); i++)
+	{
+	  rtx elt = XVECEXP (chan, 0, i);
+	  rtx reg = XEXP (elt, 0);
+	  poly_int64 elt_off;
+
+	  if (reg == NULL_RTX)
+	    continue;
+
+	  elt_off = rtx_to_poly_int64 (XEXP (elt, 1));
+	  machine_mode em = GET_MODE (reg);
+
+	  if (!known_eq (elt_off, off)
+	      || !known_ge (GET_MODE_SIZE (em), size))
+	    continue;
+
+	  if (known_eq (GET_MODE_SIZE (em), size) && GET_MODE (src) == em)
+	    emit_move_insn (reg, src);
+	  else if (SCALAR_INT_MODE_P (em)
+		   && SCALAR_INT_MODE_P (GET_MODE (src)))
+	    /* A narrower payload occupies the low-order bytes of the
+	       group element; the caller only observes its own member's
+	       bytes, so any extension is harmless.  */
+	    convert_move (reg, src, TYPE_UNSIGNED (type));
+	  else
+	    emit_move_insn (reg, gen_lowpart (em, src));
+	  return;
+	}
+    }
+  else if (!in_memory)
+    {
+      /* A one-register channel.  */
+      machine_mode cm = GET_MODE (chan);
+      if (off == 0
+	  && known_ge (GET_MODE_SIZE (cm), size)
+	  && SCALAR_INT_MODE_P (cm)
+	  && SCALAR_INT_MODE_P (GET_MODE (src)))
+	{
+	  convert_move (chan, src, TYPE_UNSIGNED (type));
+	  return;
+	}
+      if (off == 0
+	  && known_eq (GET_MODE_SIZE (cm), size)
+	  && GET_MODE (src) == cm)
+	{
+	  emit_move_insn (chan, src);
+	  return;
+	}
+    }
+
+  /* Fall back to a memory image of the channel, preserving any pieces
+     already placed in the register group.  */
+  if (!in_memory)
+    {
+      poly_int64 total = int_size_in_bytes (slot_type);
+      rtx mem = assign_stack_temp_for_type (TYPE_MODE (slot_type),
+					    total, slot_type);
+      if (GET_CODE (chan) == PARALLEL)
+	emit_group_store (mem, chan, slot_type, total);
+      else
+	{
+	  machine_mode cm = GET_MODE (chan);
+	  gcc_assert (known_eq (GET_MODE_SIZE (cm), total));
+	  emit_move_insn (adjust_address (mem, cm, 0), chan);
+	}
+      cfun->herbceptions_channel_rtx = mem;
+      cfun->herbceptions_channel_in_memory = true;
+      chan = mem;
+    }
+
+  emit_move_insn (adjust_address (chan, pmode, off), src);
+}
+
+/* .HERBCEPTION_RETURN_PAYLOAD (VALUE, OFFSET);
+   Record one scalar piece of the value being returned through the
+   herbceptions channel.  The epilogue moves the accumulated channel
+   image into the return registers.  */
+
+static void
+expand_HERBCEPTION_RETURN_PAYLOAD (internal_fn, gcall *stmt)
+{
+  if (cfun->herbceptions_error_slot == NULL_TREE)
+    return;
+
+  tree slot_type = TREE_TYPE (cfun->herbceptions_error_slot);
+  tree value = gimple_call_arg (stmt, 0);
+  HOST_WIDE_INT off = tree_to_shwi (gimple_call_arg (stmt, 1));
+  rtx src = expand_normal (value);
+
+  rtx valreg = herbceptions_channel_value (slot_type, current_function_decl,
+					   TREE_TYPE (current_function_decl),
+					   true);
+  rtx chan = herbceptions_get_channel_rtx (valreg, slot_type);
+
+  herbceptions_place_payload_piece (chan,
+				    cfun->herbceptions_channel_in_memory,
+				    slot_type, TREE_TYPE (value), off, src);
+}
+
 /* Expand the IFN_DEFERRED_INIT function:
    LHS = DEFERRED_INIT (SIZE of the DECL, INIT_TYPE, NAME of the DECL);
 

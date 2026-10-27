@@ -5597,47 +5597,77 @@ expand_function_end (void)
 					       true);
       REG_FUNCTION_VALUE_P (valreg) = 1;
       crtl->return_rtx = valreg;
-      /* The union local is an ordinary automatic variable and can be
-	 optimized away when its value is dead (e.g. a `void throws'
-	 function that cannot fail); there is then nothing to return.
-	 DECL_RTL would otherwise call make_decl_rtl on an unexpanded
-	 automatic.  */
-      rtx src = DECL_RTL_IF_SET (slot);
-      if (src != NULL_RTX)
+      /* When the middle end turned the channel into an explicit value,
+	 the payload is waiting in a pseudo group and the slot is dead.
+	 Move that group into the return registers here, after all
+	 cleanups.  */
+      if (cfun->herbceptions_channel_rtx != NULL_RTX
+	  && !cfun->herbceptions_channel_in_memory)
 	{
+	  rtx chan = cfun->herbceptions_channel_rtx;
 	  if (GET_CODE (valreg) == PARALLEL)
-	    emit_group_load (valreg, src, TREE_TYPE (slot),
-			     int_size_in_bytes (TREE_TYPE (slot)));
+	    {
+	      gcc_assert (GET_CODE (chan) == PARALLEL);
+	      emit_group_move (valreg, chan);
+	    }
+	  else if (GET_CODE (chan) == PARALLEL)
+	    /* The channel is a group of word-sized pieces and the target
+	       returns it in one wide integer register (x86's TImode).  */
+	    emit_group_store (valreg, chan, TREE_TYPE (slot),
+			      int_size_in_bytes (TREE_TYPE (slot)));
 	  else
 	    {
-	      /* The channel local is addressable -- its error payload has
-		 to be -- so it lives in memory and keeps BLKmode even
-		 though the channel itself comes back in registers.
-		 Targets whose function_value builds a register group for
-		 such a type (x86) return a PARALLEL and take the branch
-		 above; the others hand back a plain BLKmode register,
-		 which hard_function_value has already given the smallest
-		 integer mode covering the channel.  Give the memory the
-		 same mode so that the move can be expanded.  */
-	      machine_mode vmode = GET_MODE (valreg);
-	      if (MEM_P (src)
-		  && GET_MODE (src) == BLKmode
-		  && vmode != BLKmode
-		  && known_eq (GET_MODE_SIZE (vmode),
-			       int_size_in_bytes (TREE_TYPE (slot))))
-		src = adjust_address (src, vmode, 0);
-	      /* The local can also be wider than the channel: a scalar
-		 channel (say `return_failure{int}') is promoted to
-		 word_mode even as an SSA name, so truncate it into the
-		 return register.  Same as the ordinary promoted return
-		 value below.  */
-	      if (GET_MODE (valreg) != GET_MODE (src)
-		  && SCALAR_INT_MODE_P (GET_MODE (valreg))
-		  && SCALAR_INT_MODE_P (GET_MODE (src)))
-		convert_move (valreg, src,
-			      TYPE_UNSIGNED (TREE_TYPE (slot)));
+	      gcc_assert (GET_MODE (chan) == GET_MODE (valreg));
+	      emit_move_insn (valreg, chan);
+	    }
+	}
+      else
+	{
+	  /* The union local is an ordinary automatic variable and can be
+	     optimized away when its value is dead (e.g. a `void throws'
+	     function that cannot fail); there is then nothing to return.
+	     DECL_RTL would otherwise call make_decl_rtl on an unexpanded
+	     automatic.  */
+	  rtx src = (cfun->herbceptions_channel_rtx != NULL_RTX
+		     ? cfun->herbceptions_channel_rtx
+		     : DECL_RTL_IF_SET (slot));
+	  if (src != NULL_RTX)
+	    {
+	      if (GET_CODE (valreg) == PARALLEL)
+		emit_group_load (valreg, src, TREE_TYPE (slot),
+				 int_size_in_bytes (TREE_TYPE (slot)));
 	      else
-		emit_move_insn (valreg, src);
+		{
+		  /* The channel local is addressable -- its error payload
+		     has to be -- so it lives in memory and keeps BLKmode
+		     even though the channel itself comes back in registers.
+		     Targets whose function_value builds a register group
+		     for such a type (x86) return a PARALLEL and take the
+		     branch above; the others hand back a plain BLKmode
+		     register, which hard_function_value has already given
+		     the smallest integer mode covering the channel.  Give
+		     the memory the same mode so that the move can be
+		     expanded.  */
+		  machine_mode vmode = GET_MODE (valreg);
+		  if (MEM_P (src)
+		      && GET_MODE (src) == BLKmode
+		      && vmode != BLKmode
+		      && known_eq (GET_MODE_SIZE (vmode),
+				   int_size_in_bytes (TREE_TYPE (slot))))
+		    src = adjust_address (src, vmode, 0);
+		  /* The local can also be wider than the channel: a scalar
+		     channel (say `return_failure{int}') is promoted to
+		     word_mode even as an SSA name, so truncate it into the
+		     return register.  Same as the ordinary promoted return
+		     value below.  */
+		  if (GET_MODE (valreg) != GET_MODE (src)
+		      && SCALAR_INT_MODE_P (GET_MODE (valreg))
+		      && SCALAR_INT_MODE_P (GET_MODE (src)))
+		    convert_move (valreg, src,
+				  TYPE_UNSIGNED (TREE_TYPE (slot)));
+		  else
+		    emit_move_insn (valreg, src);
+		}
 	    }
 	}
     }
