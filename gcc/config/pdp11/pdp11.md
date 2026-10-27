@@ -27,6 +27,8 @@
     UNSPECV_SETD
     UNSPECV_SETI
     UNSPECV_CPYMEM
+    UNSPECV_HERBCEPTIONS_FAILED
+    UNSPECV_HERBCEPTIONS_SETF
   ])
 
 (define_constants
@@ -200,6 +202,95 @@
   [(unspec_volatile [(const_int 0)] UNSPECV_SETI)]
   ""
   "seti")
+
+;; Herbceptions error-channel discriminant.  The PDP-11 keeps the
+;; condition codes in the low bits of the PSW and has no separate flags
+;; pseudo-register that can be named by an instruction, but the carry bit
+;; is the one the arithmetic instructions maintain.  Carry is the return
+;; channel: the callee leaves C set on failure, clear on success, right
+;; before `rts pc`, and the caller reads it immediately after the `jsr`.
+;;
+;; A caller's argument-popping `add` rewrites C, so the capture has to
+;; happen in the instruction slot directly after the call -- that is what
+;; TARGET_HERBCEPTIONS_CAPTURE_FAILED is for.  Reading C needs a
+;; zero that does not itself touch it: `clr' clears C, while `mov'
+;; leaves it alone.  `adc' then adds the carry to that zero, leaving 0 or
+;; 1 in the register.  (ADC's own carry-out is necessarily clear, so the
+;; value is complete in one register.)
+
+(define_insn "herbceptions_failed"
+  [(set (match_operand:QI 0 "register_operand" "=r")
+	(unspec_volatile:QI [(reg:CC CC_REGNUM)]
+			    UNSPECV_HERBCEPTIONS_FAILED))]
+  ""
+  "movb\t%#0,%0\;adcb\t%0"
+  [(set_attr "length" "6")])
+
+;; The failure flag is an ordinary stack slot during the body: calls and
+;; scope-exit cleanups clobber the condition codes freely.  Set C from it
+;; on the shared return edge, after every cleanup, where the frame is
+;; still addressable.  NEG sets C iff its operand is nonzero, which is
+;; exactly "flag set means failure".  The byte slot is dead after this.
+;;
+;; This must be the last flag-writing instruction before the epilogue.
+;; The epilogue is flag-preserving because pdp11_frame_pointer_required
+;; keeps a frame pointer alive in herbceptions functions, so the frame
+;; teardown is a `mov fp,sp' rather than an `add' (see pdp11.cc).
+
+(define_expand "herbceptions_load_failed"
+  [(match_operand 0 "general_operand")]
+  ""
+{
+  rtx op = operands[0];
+
+  if (GET_MODE (op) != QImode)
+    op = gen_lowpart (QImode, op);
+  if (!register_operand (op, QImode) && !memory_operand (op, QImode))
+    op = force_reg (QImode, op);
+  emit_insn (gen_herbceptions_load_failed_1 (op));
+  DONE;
+})
+
+(define_insn "herbceptions_load_failed_1"
+  [(set (reg:CC CC_REGNUM)
+	(unspec_volatile:CC
+	  [(match_operand:QI 0 "nonimmediate_operand" "+g")]
+	  UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "negb\t%0"
+  [(set_attr "length" "4")])
+
+;; A return edge whose discriminant the branch already implies needs no
+;; slot read at all: set C directly from the constant.  This is the
+;; constant counterpart of herbceptions_load_failed and is emitted by
+;; the herbceptions flag-folding pass.
+
+(define_expand "herbceptions_set_failed"
+  [(match_operand 0 "const_int_operand")]
+  ""
+{
+  if (INTVAL (operands[0]) != 0)
+    emit_insn (gen_herbceptions_set_failed_1 ());
+  else
+    emit_insn (gen_herbceptions_set_failed_0 ());
+  DONE;
+})
+
+(define_insn "herbceptions_set_failed_1"
+  [(set (reg:CC CC_REGNUM)
+	(unspec_volatile:CC [(const_int 1)]
+			    UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "sec"
+  [(set_attr "length" "2")])
+
+(define_insn "herbceptions_set_failed_0"
+  [(set (reg:CC CC_REGNUM)
+	(unspec_volatile:CC [(const_int 0)]
+			    UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "clc"
+  [(set_attr "length" "2")])
 
 ;; arithmetic - values here immediately when next insn issued
 ;; or does it mean the number of cycles after this insn was issued?
@@ -1974,9 +2065,16 @@
 
 ;;- jump to subroutine
 
+;; A call clobbers the condition codes: the callee is arbitrary code and
+;; `jsr' itself does not preserve them.  Saying so keeps the herbceptions
+;; capture after the call (see herbceptions_failed above) from being
+;; moved in front of it, and keeps stale flags from looking live across
+;; a call.
+
 (define_insn "call"
   [(call (match_operand:HI 0 "general_operand" "rR,Q")
-	 (match_operand:HI 1 "general_operand" "g,g"))]
+	 (match_operand:HI 1 "general_operand" "g,g"))
+   (clobber (reg:CC CC_REGNUM))]
   ;;- Don't use operand 1 for most machines.
   ""
   "jsr\tpc,%0"
@@ -1986,7 +2084,8 @@
 (define_insn "call_value"
   [(set (match_operand 0 "" "")
 	(call (match_operand:HI 1 "general_operand" "rR,Q")
-	      (match_operand:HI 2 "general_operand" "g,g")))]
+	      (match_operand:HI 2 "general_operand" "g,g")))
+   (clobber (reg:CC CC_REGNUM))]
   ;;- Don't use operand 2 for most machines.
   ""
   "jsr\tpc,%1"

@@ -167,6 +167,8 @@ static void pdp11_function_arg_advance (cumulative_args_t,
 					const function_arg_info &);
 static void pdp11_conditional_register_usage (void);
 static bool pdp11_legitimate_constant_p (machine_mode, rtx);
+static bool pdp11_frame_pointer_required (void);
+static rtx pdp11_herbceptions_capture_failed (tree);
 
 static bool pdp11_scalar_mode_supported_p (scalar_mode);
 
@@ -206,6 +208,12 @@ static bool pdp11_scalar_mode_supported_p (scalar_mode);
 
 #undef TARGET_RETURN_IN_MEMORY
 #define TARGET_RETURN_IN_MEMORY pdp11_return_in_memory
+
+#undef TARGET_FRAME_POINTER_REQUIRED
+#define TARGET_FRAME_POINTER_REQUIRED pdp11_frame_pointer_required
+
+#undef TARGET_HERBCEPTIONS_CAPTURE_FAILED
+#define TARGET_HERBCEPTIONS_CAPTURE_FAILED pdp11_herbceptions_capture_failed
 
 #undef TARGET_FUNCTION_VALUE
 #define TARGET_FUNCTION_VALUE pdp11_function_value
@@ -445,6 +453,19 @@ pdp11_expand_epilogue (void)
       }
 
   emit_jump_insn (gen_rtspc ());
+}
+
+/* Implement TARGET_FRAME_POINTER_REQUIRED.  A herbceptions function
+   carries its discriminant in the carry bit at return time, and the
+   ordinary frame teardown would clobber it: `add #fsize,sp' rewrites C.
+   Forcing a frame pointer makes the epilogue deallocate with `mov fp,sp'
+   instead, and the register restores are pops, i.e. moves, so C -- and
+   with it the failure flag -- survives to `rts pc'.  */
+
+static bool
+pdp11_frame_pointer_required (void)
+{
+  return cfun->herbceptions_failed_slot != NULL_TREE;
 }
 
 /* Return the best assembler insn template
@@ -1237,7 +1258,8 @@ pdp11_insn_cost (rtx_insn *insn, bool speed)
     }
   /* Otherwise, pick up the second operand of the arithmetic
      operation, if it has two operands.  */
-  else if (op != SUBREG && op != UNSPEC && GET_RTX_LENGTH (op) > 1)
+  else if (op != SUBREG && op != UNSPEC && op != UNSPEC_VOLATILE
+	   && GET_RTX_LENGTH (op) > 1)
     {
       src2 = XEXP (src, 1);
       base_cost += pdp11_addr_cost (src2, mode, ADDR_SPACE_GENERIC, speed);
@@ -2413,6 +2435,20 @@ poly_int64
 pdp11_push_rounding (poly_int64 bytes)
 {
   return (bytes + 1) & ~1;
+}
+
+/* Implement TARGET_HERBCEPTIONS_CAPTURE_FAILED.  A herbceptions callee
+   leaves its discriminant in the carry bit, which the caller's
+   argument-popping `add' would immediately destroy.  Materialize it into
+   a fresh register while the flags are still the callee's.  */
+
+static rtx
+pdp11_herbceptions_capture_failed (tree)
+{
+  rtx tmp = gen_reg_rtx (QImode);
+
+  emit_insn (gen_herbceptions_failed (tmp));
+  return tmp;
 }
 
 struct gcc_target targetm = TARGET_INITIALIZER;

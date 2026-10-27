@@ -3616,6 +3616,33 @@ expand_HERBCEPTION_SET_FAILED (internal_fn, gcall *stmt)
 #endif
 }
 
+/* True when the return channel SLOT_TYPE must be carried as a group of
+   word-sized pseudo registers.  A record member is copied in as an
+   aggregate, which the payload pass splits into word-sized pieces at
+   increasing byte offsets; only a register group can hold those.  A
+   channel whose members are all scalars is instead carried in one
+   integer register of the channel's mode: the payload then always
+   starts at offset zero, so a target whose channel fits a single
+   "unsigned int" (PDP-11's four-byte R0:R1 pair) needs no split and no
+   memory round-trip.  */
+
+static bool
+herbceptions_channel_needs_split_p (tree slot_type)
+{
+  if (TREE_CODE (slot_type) == RECORD_TYPE)
+    return true;
+
+  if (TREE_CODE (slot_type) != UNION_TYPE)
+    return false;
+
+  for (tree f = TYPE_FIELDS (slot_type); f; f = DECL_CHAIN (f))
+    if (TREE_CODE (f) == FIELD_DECL
+	&& !is_gimple_reg_type (TREE_TYPE (f)))
+      return true;
+
+  return false;
+}
+
 /* Return the RTL object that carries the return payload from this
    point to the epilogue, creating it on first use.  It mirrors the
    function's return-register group as a group of pseudos whenever the
@@ -3639,19 +3666,26 @@ herbceptions_get_channel_rtx (rtx valreg, tree slot_type)
 	  && SCALAR_INT_MODE_P (GET_MODE (valreg))
 	  && !BYTES_BIG_ENDIAN)
 	{
-	  /* Some targets (x86) describe a multi-word integer aggregate
-	     returned in consecutive registers as one register of a wide
-	     integer mode.  Split it into word-sized pieces so that a
-	     payload member maps onto a whole group element; the epilogue
-	     reassembles them with emit_group_store.  */
-	  unsigned int n = int_size_in_bytes (slot_type) / UNITS_PER_WORD;
-	  rtx *tmps = XALLOCAVEC (rtx, n);
-	  for (unsigned int i = 0; i < n; i++)
-	    tmps[i]
-	      = gen_rtx_EXPR_LIST (VOIDmode, gen_reg_rtx (word_mode),
-				   GEN_INT (i * UNITS_PER_WORD));
-	  cfun->herbceptions_channel_rtx
-	    = gen_rtx_PARALLEL (BLKmode, gen_rtvec_v (n, tmps));
+	  if (herbceptions_channel_needs_split_p (slot_type))
+	    {
+	      /* Some targets (x86) describe a multi-word integer aggregate
+		 returned in consecutive registers as one register of a wide
+		 integer mode.  Split it into word-sized pieces so that a
+		 payload member maps onto a whole group element; the epilogue
+		 reassembles them with emit_group_store.  */
+	      unsigned int n = int_size_in_bytes (slot_type) / UNITS_PER_WORD;
+	      rtx *tmps = XALLOCAVEC (rtx, n);
+	      for (unsigned int i = 0; i < n; i++)
+		tmps[i]
+		  = gen_rtx_EXPR_LIST (VOIDmode, gen_reg_rtx (word_mode),
+				       GEN_INT (i * UNITS_PER_WORD));
+	      cfun->herbceptions_channel_rtx
+		= gen_rtx_PARALLEL (BLKmode, gen_rtvec_v (n, tmps));
+	    }
+	  else
+	    /* A channel made only of scalars is one integer value,
+	       e.g. PDP-11's four-byte "unsigned int" in R0:R1.  */
+	    cfun->herbceptions_channel_rtx = gen_reg_rtx (GET_MODE (valreg));
 	}
       else if (known_gt (size, UNITS_PER_WORD))
 	{

@@ -120,10 +120,12 @@ hb_stmt_uses_slot (gimple *stmt, tree slot)
 }
 
 /* Decide whether STMT is a scalar store into the channel local at a
-   word-aligned byte offset.  Aggregates are handled by
-   hb_convertible_aggregate_store_p below; the automatic-variable
-   initializer of the whole local needs no conversion and is left for
-   DCE to remove once the local is dead.  */
+   word-aligned byte offset.  The stored value must fit the channel; a
+   scalar wider than a word is still carried whole when the channel is a
+   single integer value (e.g. PDP-11's four-byte channel).  Aggregates
+   are handled by hb_convertible_aggregate_store_p below; the
+   automatic-variable initializer of the whole local needs no conversion
+   and is left for DCE to remove once the local is dead.  */
 
 static bool
 hb_convertible_store_p (gimple *stmt, tree slot, HOST_WIDE_INT *off)
@@ -142,7 +144,8 @@ hb_convertible_store_p (gimple *stmt, tree slot, HOST_WIDE_INT *off)
     return false;
 
   HOST_WIDE_INT size = int_size_in_bytes (rhs_type);
-  if (size <= 0 || size > UNITS_PER_WORD)
+  HOST_WIDE_INT csize = int_size_in_bytes (TREE_TYPE (slot));
+  if (size <= 0 || csize <= 0 || size > csize)
     return false;
 
   if (*off % UNITS_PER_WORD != 0)
