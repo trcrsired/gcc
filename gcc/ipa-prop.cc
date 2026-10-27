@@ -2492,7 +2492,8 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
   ipa_node_params *info = ipa_node_params_sum->get (cs->caller);
   ipa_edge_args *args = ipa_edge_args_sum->get_create (cs);
   gcall *call = cs->call_stmt;
-  int n, arg_num = gimple_call_num_args (call);
+  callback_info *ci = callback_info_sum->get (cs);
+  int n, arg_num = callback_call_num_args_summary (call, ci);
   bool useful_context = false;
 
   if (arg_num == 0 || args->jump_functions)
@@ -2508,7 +2509,17 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
   for (n = 0; n < arg_num; n++)
     {
       struct ipa_jump_func *jfunc = ipa_get_ith_jump_func (args, n);
-      tree arg = gimple_call_arg (call, n);
+      tree arg;
+      if (cs->callback)
+	{
+	  gcc_assert (cs->callee->assume_function);
+	  int remapped_idx = ci->arg_mapping[n];
+	  if (remapped_idx == ARG_MAPPING_UNKNOWN_IDX)
+	    continue;
+	  arg = gimple_call_arg (call, remapped_idx);
+	}
+      else
+	arg = gimple_call_arg (call, n);
       tree param_type = ipa_get_callee_param_type (cs, n);
       if (flag_devirtualize && POINTER_TYPE_P (TREE_TYPE (arg)))
 	{
@@ -3202,6 +3213,19 @@ static void
 ipa_analyze_call_uses (struct ipa_func_body_info *fbi, gcall *call)
 {
   tree target = gimple_call_fn (call);
+
+  /* Internal .ASSUME call.  Create a callback edge to its body, calculate its
+     jump functions and return.  This is done here as the main creation route in
+     ipa_compute_jump_functions_for_edge doesn't analyze call statements.  */
+  if (callback_ifn_assume_call_p (call))
+    {
+      tree callee_decl = TREE_OPERAND (gimple_call_arg (call, 0), 0);
+      cgraph_node *target = cgraph_node::get_create (callee_decl);
+      cgraph_edge *cbei
+	= cgraph_edge::make_callback_internal (fbi->node, target, call);
+      ipa_compute_jump_functions_for_edge (fbi, cbei);
+      return;
+    }
 
   if (!target
       || (TREE_CODE (target) != SSA_NAME
@@ -6423,7 +6447,8 @@ ipcp_modif_dom_walker::before_dom_children (basic_block bb)
 	continue;
 
       if (!ipa_load_from_parm_agg (m_fbi, m_descriptors, stmt, rhs, &index,
-				   &bit_offset, &size, &by_ref))
+				   &bit_offset, &size, &by_ref)
+	  || (bit_offset % BITS_PER_UNIT) != 0)
 	continue;
       unsigned unit_offset = bit_offset / BITS_PER_UNIT;
       ipa_argagg_value_list avl (m_ts);
@@ -6492,7 +6517,11 @@ ipcp_get_aggregate_const (struct function *func, tree parm, bool by_ref,
   cgraph_node *node = cgraph_node::get (func->decl);
   ipcp_transformation *ts = ipcp_get_transformation_summary (node);
 
-  if (!ts || !ts->m_agg_values)
+  if (!ts
+      || !ts->m_agg_values
+      || bit_offset < 0
+      || (bit_offset % BITS_PER_UNIT) != 0
+      || (HOST_WIDE_INT) (bit_offset / BITS_PER_UNIT) > UINT_MAX)
     return NULL_TREE;
 
   int index = ts->get_param_index (func->decl, parm);

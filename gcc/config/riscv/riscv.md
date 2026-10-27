@@ -3161,6 +3161,8 @@
   "(!SMALL_OPERAND (INTVAL (operands[3]))
     && SMALL_OPERAND (INTVAL (operands[3]) >> INTVAL (operands[2]))
     && (!TARGET_ZBS || popcount_hwi (INTVAL (operands[3])) > 1)
+    && !(TARGET_ZBKB && <CODE> == AND
+         && INTVAL (operands[2]) == 8 && INTVAL (operands[3]) == 0xff00)
     && (INTVAL (operands[3]) & ((1ULL << INTVAL (operands[2])) - 1)) == 0)"
   "#"
   "&& 1"
@@ -3382,10 +3384,10 @@
 
 ;; Conditional branches
 
-(define_insn_and_split "*branch<ANYI:mode>_shiftedarith_equals_zero"
+(define_insn_and_split "*branch<mode>_shiftedarith_equals_zero"
   [(set (pc)
 	(if_then_else (match_operator 1 "equality_operator"
-		       [(and:ANYI (match_operand:ANYI 2 "register_operand" "r")
+		       [(and:X (match_operand:X 2 "register_operand" "r")
 				  (match_operand 3 "shifted_const_arith_operand" "i"))
 			(const_int 0)])
 	 (label_ref (match_operand 0 "" ""))
@@ -3394,7 +3396,7 @@
   "!SMALL_OPERAND (INTVAL (operands[3]))"
   "#"
   "&& reload_completed"
-  [(set (match_dup 4) (lshiftrt:X (subreg:X (match_dup 2) 0) (match_dup 6)))
+  [(set (match_dup 4) (lshiftrt:X (match_dup 2) (match_dup 6)))
    (set (match_dup 4) (match_dup 8))
    (set (pc) (if_then_else (match_op_dup 1 [(match_dup 4) (const_int 0)])
 			   (label_ref (match_dup 0)) (pc)))]
@@ -3417,10 +3419,10 @@
 }
 [(set_attr "type" "branch")])
 
-(define_insn_and_split "*branch<ANYI:mode>_shiftedarith_<optab>_shifted"
+(define_insn_and_split "*branch<mode>_shiftedarith_<optab>_shifted"
   [(set (pc)
 	(if_then_else (any_eq
-		    (and:ANYI (match_operand:ANYI 1 "register_operand" "r")
+		    (and:X (match_operand:X 1 "register_operand" "r")
 			  (match_operand 2 "shifted_const_arith_operand" "i"))
 		    (match_operand 3 "shifted_const_arith_operand" "i"))
 	 (label_ref (match_operand 0 "" ""))
@@ -3459,11 +3461,11 @@
 }
 [(set_attr "type" "branch")])
 
-(define_insn_and_split "*branch<ANYI:mode>_shiftedmask_equals_zero"
+(define_insn_and_split "*branch<mode>_shiftedmask_equals_zero"
   [(set (pc)
 	(if_then_else (match_operator 1 "equality_operator"
-		       [(and:ANYI (match_operand:ANYI 2 "register_operand" "r")
-				  (match_operand 3 "consecutive_bits_operand" "i"))
+		       [(and:X (match_operand:X 2 "register_operand" "r")
+			       (match_operand 3 "consecutive_bits_operand" "i"))
 			(const_int 0)])
 	 (label_ref (match_operand 0 "" ""))
 	 (pc)))
@@ -3473,7 +3475,7 @@
     && !SMALL_OPERAND (INTVAL (operands[3]))"
   "#"
   "&& reload_completed"
-  [(set (match_dup 4) (ashift:X (subreg:X (match_dup 2) 0) (match_dup 6)))
+  [(set (match_dup 4) (ashift:X (match_dup 2) (match_dup 6)))
    (set (match_dup 4) (lshiftrt:X (match_dup 4) (match_dup 7)))
    (set (pc) (if_then_else (match_op_dup 1 [(match_dup 4) (const_int 0)])
 			   (label_ref (match_dup 0)) (pc)))]
@@ -3810,7 +3812,7 @@
   "f<quiet_pattern>q.<fmt>\t%0,%1,%2"
   [(set_attr "type" "fcmp")
    (set_attr "mode" "<UNITMODE>")
-   (set (attr "length") (const_int 16))])
+   (set (attr "length") (const_int 4))])
 
 ;; fclass instruction output bitmap
 ;;   0 negative infinity
@@ -3898,15 +3900,6 @@
 		    (match_operand:X 2 "reg_or_0_operand" " rJ")))]
   ""
   "sgt<u>\t%0,%1,%z2"
-  [(set_attr "type" "slt")
-   (set_attr "mode" "<X:MODE>")])
-
-(define_insn "*sge<u>_<X:mode><GPR:mode>"
-  [(set (match_operand:GPR           0 "register_operand" "=r")
-	(any_ge:GPR (match_operand:X 1 "register_operand" " r")
-		    (const_int 1)))]
-  ""
-  "slti<u>\t%0,zero,%1"
   [(set_attr "type" "slt")
    (set_attr "mode" "<X:MODE>")])
 
@@ -4384,7 +4377,7 @@
     return "lpad\t0";
   }
   [(set_attr "type" "call")
-   (set_attr "length" "8,12,12")])
+   (set_attr "length" "10,14,14")])
 
 (define_expand "call_value"
   [(parallel [(set (match_operand 0 "")
@@ -4445,7 +4438,7 @@
     return "lpad\t0";
   }
   [(set_attr "type" "call")
-   (set_attr "length" "8,12,12")])
+   (set_attr "length" "10,14,14")])
 
 ;; Call subroutine returning any type.
 
@@ -4507,7 +4500,7 @@
   }
   [(set_attr "type" "call")
    (set (attr "length") (if_then_else (match_test "is_zicfilp_p ()")
-				      (const_string "12")
+				      (const_string "14")
 				      (const_string "8")))])
 
 (define_insn "gpr_restore"
@@ -4803,7 +4796,7 @@
     return "xor\t%0, %3, %0\;li\t%3, 0";
   }
   [(set_attr "type" "multi")
-   (set_attr "length" "12")])
+   (set_attr "length" "16")])
 
 (define_insn "riscv_clean_<mode>"
   [(unspec_volatile:X [(match_operand:X 0 "register_operand" "r")]

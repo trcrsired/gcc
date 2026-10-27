@@ -302,18 +302,7 @@ create_assumption_fn (location_t loc)
   DECL_EXTERNAL (decl) = 0;
   DECL_CONTEXT (decl) = NULL_TREE;
   DECL_INITIAL (decl) = make_node (BLOCK);
-  tree attributes = DECL_ATTRIBUTES (current_function_decl);
-  if (lookup_attribute ("noipa", attributes) == NULL)
-    {
-      attributes = tree_cons (get_identifier ("noipa"), NULL, attributes);
-      if (lookup_attribute ("noinline", attributes) == NULL)
-	attributes = tree_cons (get_identifier ("noinline"), NULL, attributes);
-      if (lookup_attribute ("noclone", attributes) == NULL)
-	attributes = tree_cons (get_identifier ("noclone"), NULL, attributes);
-      if (lookup_attribute ("no_icf", attributes) == NULL)
-	attributes = tree_cons (get_identifier ("no_icf"), NULL, attributes);
-    }
-  DECL_ATTRIBUTES (decl) = attributes;
+  DECL_ATTRIBUTES (decl) = DECL_ATTRIBUTES (current_function_decl);
   BLOCK_SUPERCONTEXT (DECL_INITIAL (decl)) = decl;
   DECL_FUNCTION_SPECIFIC_OPTIMIZATION (decl)
     = DECL_FUNCTION_SPECIFIC_OPTIMIZATION (current_function_decl);
@@ -676,7 +665,8 @@ lower_assumption (gimple_stmt_iterator *gsi, struct lower_data *data)
   /* The body function no longer has var. args, unset stdarg.  */
   DECL_STRUCT_FUNCTION (lad.id.dst_fn)->stdarg = 0;
 
-  cgraph_node::add_new_function (lad.id.dst_fn, false);
+  cgraph_node *dst_node = cgraph_node::add_new_function (lad.id.dst_fn, false);
+  dst_node->assume_function = 1;
 
   for (unsigned i = 0; i < sz; ++i)
     {
