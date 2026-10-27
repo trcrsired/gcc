@@ -333,6 +333,16 @@ struct GTY(()) function {
   rtx herbceptions_channel_rtx;
   bool herbceptions_channel_in_memory;
 
+  /* Herbceptions: true when the payload pieces may be written straight
+     into the return registers, because no call or other clobber can run
+     between a payload store and the return.  Set by the
+     herbceptions_return pass, consumed by return channel expansion.  */
+  bool herbceptions_direct_channel;
+
+  /* Herbceptions: true when the channel really was created in the
+     return registers themselves, so the epilogue must not move it.  */
+  bool herbceptions_channel_direct;
+
   /* Used types hash table.  */
   hash_set<tree> *GTY (()) used_types_hash;
 

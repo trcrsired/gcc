@@ -3655,9 +3655,21 @@ herbceptions_get_channel_rtx (rtx valreg, tree slot_type)
     return cfun->herbceptions_channel_rtx;
 
   poly_int64 size = int_size_in_bytes (slot_type);
+  bool direct = cfun->herbceptions_direct_channel;
 
   if (GET_CODE (valreg) == PARALLEL)
-    cfun->herbceptions_channel_rtx = gen_group_rtx (valreg);
+    {
+      if (direct)
+	{
+	  /* Write the pieces straight into the return registers; the
+	     pass proved that nothing runs between the write and the
+	     return that could clobber them.  */
+	  cfun->herbceptions_channel_rtx = valreg;
+	  cfun->herbceptions_channel_direct = true;
+	}
+      else
+	cfun->herbceptions_channel_rtx = gen_group_rtx (valreg);
+    }
   else if (REG_P (valreg)
 	   && GET_MODE (valreg) != BLKmode
 	   && known_eq (GET_MODE_SIZE (GET_MODE (valreg)), size))
@@ -3677,15 +3689,24 @@ herbceptions_get_channel_rtx (rtx valreg, tree slot_type)
 	      rtx *tmps = XALLOCAVEC (rtx, n);
 	      for (unsigned int i = 0; i < n; i++)
 		tmps[i]
-		  = gen_rtx_EXPR_LIST (VOIDmode, gen_reg_rtx (word_mode),
+		  = gen_rtx_EXPR_LIST (VOIDmode,
+				       (direct
+					? gen_rtx_REG (word_mode,
+						       REGNO (valreg) + i)
+					: gen_reg_rtx (word_mode)),
 				       GEN_INT (i * UNITS_PER_WORD));
 	      cfun->herbceptions_channel_rtx
 		= gen_rtx_PARALLEL (BLKmode, gen_rtvec_v (n, tmps));
+	      cfun->herbceptions_channel_direct = direct;
 	    }
 	  else
 	    /* A channel made only of scalars is one integer value,
 	       e.g. PDP-11's four-byte "unsigned int" in R0:R1.  */
-	    cfun->herbceptions_channel_rtx = gen_reg_rtx (GET_MODE (valreg));
+	    {
+	      cfun->herbceptions_channel_rtx
+		= direct ? valreg : gen_reg_rtx (GET_MODE (valreg));
+	      cfun->herbceptions_channel_direct = direct;
+	    }
 	}
       else if (known_gt (size, UNITS_PER_WORD))
 	{
@@ -3698,7 +3719,11 @@ herbceptions_get_channel_rtx (rtx valreg, tree slot_type)
 	  cfun->herbceptions_channel_in_memory = true;
 	}
       else
-	cfun->herbceptions_channel_rtx = gen_reg_rtx (GET_MODE (valreg));
+	{
+	  cfun->herbceptions_channel_rtx
+	    = direct ? valreg : gen_reg_rtx (GET_MODE (valreg));
+	  cfun->herbceptions_channel_direct = direct;
+	}
     }
   else
     {
@@ -3799,6 +3824,7 @@ herbceptions_place_payload_piece (rtx chan, bool in_memory, tree slot_type,
 	}
       cfun->herbceptions_channel_rtx = mem;
       cfun->herbceptions_channel_in_memory = true;
+      cfun->herbceptions_channel_direct = false;
       chan = mem;
     }
 

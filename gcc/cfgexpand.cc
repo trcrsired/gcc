@@ -4095,8 +4095,12 @@ expand_null_return (void)
 {
   /* If this function was declared to return a value, but we
      didn't, clobber the return registers so that they are not
-     propagated live to the rest of the function.  */
-  clobber_return_register ();
+     propagated live to the rest of the function.  A direct
+     herbceptions channel is already in those registers by now, and
+     must stay there until the use before the return.  */
+  if (!(cfun->herbceptions_direct_channel
+	&& cfun->herbceptions_error_slot != NULL_TREE))
+    clobber_return_register ();
 
   expand_null_return_1 ();
 }
