@@ -1539,6 +1539,40 @@
   [(set_attr "type" "branch")
    (set_attr "sls_length" "retbr")])
 
+;; A return edge whose discriminant the branch already implies needs no
+;; slot read at all: set NZCV.C directly from the constant.  C is clear
+;; for success and set for failure, and `cmp' against zero sets C to
+;; "no borrow", so the two constants swap.
+
+(define_expand "herbceptions_set_failed"
+  [(match_operand 0 "const_int_operand")]
+  ""
+{
+  if (INTVAL (operands[0]) != 0)
+    emit_insn (gen_herbceptions_set_failed_1 ());
+  else
+    emit_insn (gen_herbceptions_set_failed_0 ());
+  DONE;
+})
+
+(define_insn "herbceptions_set_failed_1"
+  [(set (reg:CC_C CC_REGNUM)
+	(unspec_volatile:CC_C
+	  [(const_int 1)]
+	  UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "cmp\twzr, #0"
+  [(set_attr "type" "branch")])
+
+(define_insn "herbceptions_set_failed_0"
+  [(set (reg:CC_C CC_REGNUM)
+	(unspec_volatile:CC_C
+	  [(const_int 0)]
+	  UNSPECV_HERBCEPTIONS_SETF))]
+  ""
+  "cmp\twzr, #1"
+  [(set_attr "type" "branch")])
+
 (define_insn "herbceptions_return"
   [(parallel [(simple_return)
 	      (use (reg:CC_C CC_REGNUM))])]

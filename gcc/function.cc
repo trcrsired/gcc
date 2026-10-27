@@ -5646,19 +5646,37 @@ expand_function_end (void)
      clobber call-clobbered registers.  Load it into the
      architecture's flag register here, on the shared return edge
      after all cleanups have run; the epilogue fuses that register
-     into the carry flag at ret.  */
+     into the carry flag at ret.  The herbceptions pass instead sets
+     the flag in GIMPLE, just before each return, whenever it could do
+     so on every path; the load is then dead.  */
   if (cfun->herbceptions_failed_slot != NULL_TREE)
     {
+      /* The GIMPLE flag is set before the return label, so anything
+	 emitted between the label and here that can clobber the flag
+	 register (an sjlj exit call, the stack-protector check, the
+	 eh_return sequence) invalidates it.  */
+      bool folded = cfun->herbceptions_flag_folded;
+      if (folded
+	  && ((targetm_common.except_unwind_info (&global_options) == UI_SJLJ
+	       && flag_exceptions)
+	      || (crtl->stack_protect_guard
+		  && targetm.stack_protect_runtime_enabled_p ()
+		  && naked_return_label == NULL_RTX)
+	      || crtl->calls_eh_return))
+	folded = false;
+      if (!folded)
+	{
 #ifdef HAVE_herbceptions_load_failed
-      if (HAVE_herbceptions_load_failed
-	  && DECL_RTL_SET_P (cfun->herbceptions_failed_slot))
-	emit_insn (gen_herbceptions_load_failed
-		   (DECL_RTL (cfun->herbceptions_failed_slot)));
+	  if (HAVE_herbceptions_load_failed
+	      && DECL_RTL_SET_P (cfun->herbceptions_failed_slot))
+	    emit_insn (gen_herbceptions_load_failed
+		       (DECL_RTL (cfun->herbceptions_failed_slot)));
 #else
-      /* See expand_HERBCEPTION_FAILED: a target that carries the
-	 discriminant must define `herbceptions_load_failed'.  */
-      sorry ("herbceptions are not supported on this target");
+	  /* See expand_HERBCEPTION_FAILED: a target that carries the
+	     discriminant must define `herbceptions_load_failed'.  */
+	  sorry ("herbceptions are not supported on this target");
 #endif
+	}
     }
   /* If scalar return value was computed in a pseudo-reg, or was a named
      return value that got dumped to the stack, copy that to the hard

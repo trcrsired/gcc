@@ -455,6 +455,7 @@ along with GCC; see the file COPYING3.  If not see
   NEXT_PASS (pass_warn_access, /*early=*/false, /*check_dangling=*/false);
   NEXT_PASS (pass_cleanup_cfg_post_optimizing);
   NEXT_PASS (pass_warn_function_noreturn);
+  NEXT_PASS (pass_herbceptions_flag_return);
 
   NEXT_PASS (pass_expand);
 

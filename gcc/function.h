@@ -312,6 +312,12 @@ struct GTY(()) function {
   tree herbceptions_error_slot;
   tree herbceptions_failed_slot;
 
+  /* Herbceptions: true when the herbceptions pass has set the failure
+     discriminant directly in the target flag register on every path to
+     the exit block, so expand_function_end must not reload it from the
+     slot.  */
+  bool herbceptions_flag_folded;
+
   /* Herbceptions: a pseudo holding the failure discriminant captured
      right after the most recent call to a herbceptions function, before
      the caller's argument-popping adjustment (which may clobber the

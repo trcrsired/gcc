@@ -3595,6 +3595,27 @@ expand_HERBCEPTION_FAILED (internal_fn, gcall *stmt)
 #endif
 }
 
+/* SET_FAILED (CST);
+   Set the failure discriminant carried by the target flag register to
+   the constant CST (1 for failure, 0 for success).  The herbceptions
+   pass emits this on a return edge whose discriminant the branch
+   already implies, so that expand_function_end does not have to reload
+   the slot.  */
+
+static void
+expand_HERBCEPTION_SET_FAILED (internal_fn, gcall *stmt)
+{
+  tree cst = gimple_call_arg (stmt, 0);
+  gcc_assert (TREE_CODE (cst) == INTEGER_CST);
+#ifdef HAVE_herbceptions_set_failed
+  emit_insn (gen_herbceptions_set_failed
+	     (GEN_INT (tree_to_shwi (cst) != 0)));
+#else
+  /* The pass that creates this call is disabled without the pattern.  */
+  gcc_unreachable ();
+#endif
+}
+
 /* Expand the IFN_DEFERRED_INIT function:
    LHS = DEFERRED_INIT (SIZE of the DECL, INIT_TYPE, NAME of the DECL);
 
