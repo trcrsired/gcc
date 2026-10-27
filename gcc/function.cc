@@ -5185,6 +5185,12 @@ expand_function_start (tree subr)
 {
   currently_expanding_function_start = true;
 
+  /* The epilogue itself calls out to unregister the function context
+     when SJLJ unwinding is in use, which would clobber a channel
+     written straight into the return registers before the epilogue.  */
+  if (targetm_common.except_unwind_info (&global_options) == UI_SJLJ)
+    cfun->herbceptions_direct_channel = false;
+
   /* Make sure volatile mem refs aren't considered
      valid operands of arithmetic insns.  */
   init_recog_no_volatile ();
@@ -5510,6 +5516,55 @@ herbceptions_channel_value (tree slot_type, tree decl, tree decl_type,
   return valreg;
 }
 
+/* Move the word-sized pieces of the return channel group CHAN into the
+   pieces of the wide integer return register VALREG.  The group was
+   built from pieces laid out at increasing byte offsets from the least
+   significant end (see herbceptions_get_channel_rtx in internal-fn.cc),
+   which on a little-endian target are exactly the consecutive registers
+   that make up VALREG.  A move per piece lets the register allocator
+   coalesce each one with its return register, instead of packing the
+   group into one wide value with shifts; an undefined piece then costs
+   nothing instead of being assembled from whatever register it happened
+   to occupy.  */
+
+static void
+herbceptions_store_channel_group (rtx valreg, rtx chan, tree slot_type)
+{
+  gcc_assert (REG_P (valreg)
+	      && SCALAR_INT_MODE_P (GET_MODE (valreg))
+	      && !BYTES_BIG_ENDIAN
+	      && GET_CODE (chan) == PARALLEL);
+
+  HOST_WIDE_INT size = int_size_in_bytes (slot_type);
+  unsigned int n = size / UNITS_PER_WORD;
+  gcc_assert (n > 0);
+  gcc_assert (known_eq (GET_MODE_SIZE (GET_MODE (valreg)),
+			UNITS_PER_WORD * n));
+
+  for (unsigned int i = 0; i < n; i++)
+    {
+      rtx piece = NULL_RTX;
+      for (int j = 0; j < XVECLEN (chan, 0); j++)
+	{
+	  rtx elt = XVECEXP (chan, 0, j);
+	  if (known_eq (rtx_to_poly_int64 (XEXP (elt, 1)),
+			poly_int64 (i * UNITS_PER_WORD)))
+	    {
+	      piece = XEXP (elt, 0);
+	      break;
+	    }
+	}
+      if (piece == NULL_RTX)
+	continue;
+
+      rtx dst = gen_rtx_REG (word_mode, REGNO (valreg) + i);
+      if (GET_MODE (piece) == word_mode)
+	emit_move_insn (dst, piece);
+      else
+	convert_move (dst, piece, true);
+    }
+}
+
 /* Generate RTL for the end of the current function.  */
 
 void
@@ -5600,8 +5655,12 @@ expand_function_end (void)
       /* When the middle end turned the channel into an explicit value,
 	 the payload is waiting in a pseudo group and the slot is dead.
 	 Move that group into the return registers here, after all
-	 cleanups.  */
-      if (cfun->herbceptions_channel_rtx != NULL_RTX
+	 cleanups.  A direct channel already sits in the return
+	 registers, because nothing runs between its last write and the
+	 return.  */
+      if (cfun->herbceptions_channel_direct)
+	;
+      else if (cfun->herbceptions_channel_rtx != NULL_RTX
 	  && !cfun->herbceptions_channel_in_memory)
 	{
 	  rtx chan = cfun->herbceptions_channel_rtx;
@@ -5613,8 +5672,17 @@ expand_function_end (void)
 	  else if (GET_CODE (chan) == PARALLEL)
 	    /* The channel is a group of word-sized pieces and the target
 	       returns it in one wide integer register (x86's TImode).  */
-	    emit_group_store (valreg, chan, TREE_TYPE (slot),
-			      int_size_in_bytes (TREE_TYPE (slot)));
+	    {
+	      if (SCALAR_INT_MODE_P (GET_MODE (valreg))
+		  && !BYTES_BIG_ENDIAN
+		  && known_eq (GET_MODE_SIZE (GET_MODE (valreg)),
+			       int_size_in_bytes (TREE_TYPE (slot))))
+		herbceptions_store_channel_group (valreg, chan,
+						  TREE_TYPE (slot));
+	      else
+		emit_group_store (valreg, chan, TREE_TYPE (slot),
+				  int_size_in_bytes (TREE_TYPE (slot)));
+	    }
 	  else
 	    {
 	      gcc_assert (GET_MODE (chan) == GET_MODE (valreg));
@@ -5834,8 +5902,12 @@ expand_function_end (void)
 
   /* Emit the actual code to clobber return register.  Don't emit
      it if clobber_after is a barrier, then the previous basic block
-     certainly doesn't fall thru into the exit block.  */
-  if (!BARRIER_P (clobber_after))
+     certainly doesn't fall thru into the exit block.
+
+     A direct herbceptions channel was written to the return registers
+     from the body, before this point; clobbering them here would kill
+     the payload before the use at the end.  */
+  if (!BARRIER_P (clobber_after) && !cfun->herbceptions_channel_direct)
     {
       start_sequence ();
       clobber_return_register ();
