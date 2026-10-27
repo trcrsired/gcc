@@ -6,6 +6,11 @@
 // would observe the caller's restored value (the restores themselves are
 // mov/pop/lea and preserve CF, so the flag survives to the ret).  Mirrors
 // llvm/test/CodeGen/X86/throws-csr-disc.ll.
+//
+// The discriminant is produced by a call rather than by a constant, so
+// the return-flag folding pass must leave it alone: a constant would be
+// rewritten to `stc'/`clc' and the `negb' reload this test looks at would
+// disappear.
 
 struct E { int e; };
 
@@ -15,10 +20,9 @@ __attribute__ ((noinline)) long
 f (long a, long b, long c, long d, long e, long g, long h, long i, long j)
   return_failure{E}
 {
-  auto r = catch return_failure (callee (a));
-  long s = a + b + c + d + e + g + h + i + j + r.value;
+  long s = a + b + c + d + e + g + h + i + j;
   asm volatile ("" : "+r" (s));
-  return_failure E{(int) s};
+  return try (callee (s));
 }
 
 // The flag write ...

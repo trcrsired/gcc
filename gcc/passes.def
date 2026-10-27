@@ -198,6 +198,9 @@ along with GCC; see the file COPYING3.  If not see
      output to the assembler file.  */
   INSERT_PASSES_AFTER (all_passes)
   NEXT_PASS (pass_fixup_cfg);
+  /* Turn the RTL-only herbceptions return channel into explicit
+     payload carriers now that all inlining is finished.  */
+  NEXT_PASS (pass_herbceptions_return);
   NEXT_PASS (pass_lower_eh_dispatch);
   NEXT_PASS (pass_oacc_loop_designation);
   NEXT_PASS (pass_omp_oacc_neuter_broadcast);
@@ -455,6 +458,7 @@ along with GCC; see the file COPYING3.  If not see
   NEXT_PASS (pass_warn_access, /*early=*/false, /*check_dangling=*/false);
   NEXT_PASS (pass_cleanup_cfg_post_optimizing);
   NEXT_PASS (pass_warn_function_noreturn);
+  NEXT_PASS (pass_herbceptions_flag_return);
 
   NEXT_PASS (pass_expand);
 

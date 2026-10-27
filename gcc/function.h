@@ -312,11 +312,26 @@ struct GTY(()) function {
   tree herbceptions_error_slot;
   tree herbceptions_failed_slot;
 
+  /* Herbceptions: true when the herbceptions pass has set the failure
+     discriminant directly in the target flag register on every path to
+     the exit block, so expand_function_end must not reload it from the
+     slot.  */
+  bool herbceptions_flag_folded;
+
   /* Herbceptions: a pseudo holding the failure discriminant captured
      right after the most recent call to a herbceptions function, before
      the caller's argument-popping adjustment (which may clobber the
      target's flag register).  Consumed by expand_HERBCEPTION_FAILED.  */
   rtx herbceptions_captured_failed;
+
+  /* Herbceptions: the RTL object carrying the return payload from the
+     return edge to the epilogue, once the middle end has made it an
+     explicit value.  It is either a PARALLEL clone of the return
+     register group (pseudos), a plain pseudo for a scalar channel, or
+     a stack temporary if a payload piece could not be placed in a
+     single register.  NULL when the old memory-slot path is used.  */
+  rtx herbceptions_channel_rtx;
+  bool herbceptions_channel_in_memory;
 
   /* Used types hash table.  */
   hash_set<tree> *GTY (()) used_types_hash;

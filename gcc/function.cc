@@ -5597,47 +5597,77 @@ expand_function_end (void)
 					       true);
       REG_FUNCTION_VALUE_P (valreg) = 1;
       crtl->return_rtx = valreg;
-      /* The union local is an ordinary automatic variable and can be
-	 optimized away when its value is dead (e.g. a `void throws'
-	 function that cannot fail); there is then nothing to return.
-	 DECL_RTL would otherwise call make_decl_rtl on an unexpanded
-	 automatic.  */
-      rtx src = DECL_RTL_IF_SET (slot);
-      if (src != NULL_RTX)
+      /* When the middle end turned the channel into an explicit value,
+	 the payload is waiting in a pseudo group and the slot is dead.
+	 Move that group into the return registers here, after all
+	 cleanups.  */
+      if (cfun->herbceptions_channel_rtx != NULL_RTX
+	  && !cfun->herbceptions_channel_in_memory)
 	{
+	  rtx chan = cfun->herbceptions_channel_rtx;
 	  if (GET_CODE (valreg) == PARALLEL)
-	    emit_group_load (valreg, src, TREE_TYPE (slot),
-			     int_size_in_bytes (TREE_TYPE (slot)));
+	    {
+	      gcc_assert (GET_CODE (chan) == PARALLEL);
+	      emit_group_move (valreg, chan);
+	    }
+	  else if (GET_CODE (chan) == PARALLEL)
+	    /* The channel is a group of word-sized pieces and the target
+	       returns it in one wide integer register (x86's TImode).  */
+	    emit_group_store (valreg, chan, TREE_TYPE (slot),
+			      int_size_in_bytes (TREE_TYPE (slot)));
 	  else
 	    {
-	      /* The channel local is addressable -- its error payload has
-		 to be -- so it lives in memory and keeps BLKmode even
-		 though the channel itself comes back in registers.
-		 Targets whose function_value builds a register group for
-		 such a type (x86) return a PARALLEL and take the branch
-		 above; the others hand back a plain BLKmode register,
-		 which hard_function_value has already given the smallest
-		 integer mode covering the channel.  Give the memory the
-		 same mode so that the move can be expanded.  */
-	      machine_mode vmode = GET_MODE (valreg);
-	      if (MEM_P (src)
-		  && GET_MODE (src) == BLKmode
-		  && vmode != BLKmode
-		  && known_eq (GET_MODE_SIZE (vmode),
-			       int_size_in_bytes (TREE_TYPE (slot))))
-		src = adjust_address (src, vmode, 0);
-	      /* The local can also be wider than the channel: a scalar
-		 channel (say `return_failure{int}') is promoted to
-		 word_mode even as an SSA name, so truncate it into the
-		 return register.  Same as the ordinary promoted return
-		 value below.  */
-	      if (GET_MODE (valreg) != GET_MODE (src)
-		  && SCALAR_INT_MODE_P (GET_MODE (valreg))
-		  && SCALAR_INT_MODE_P (GET_MODE (src)))
-		convert_move (valreg, src,
-			      TYPE_UNSIGNED (TREE_TYPE (slot)));
+	      gcc_assert (GET_MODE (chan) == GET_MODE (valreg));
+	      emit_move_insn (valreg, chan);
+	    }
+	}
+      else
+	{
+	  /* The union local is an ordinary automatic variable and can be
+	     optimized away when its value is dead (e.g. a `void throws'
+	     function that cannot fail); there is then nothing to return.
+	     DECL_RTL would otherwise call make_decl_rtl on an unexpanded
+	     automatic.  */
+	  rtx src = (cfun->herbceptions_channel_rtx != NULL_RTX
+		     ? cfun->herbceptions_channel_rtx
+		     : DECL_RTL_IF_SET (slot));
+	  if (src != NULL_RTX)
+	    {
+	      if (GET_CODE (valreg) == PARALLEL)
+		emit_group_load (valreg, src, TREE_TYPE (slot),
+				 int_size_in_bytes (TREE_TYPE (slot)));
 	      else
-		emit_move_insn (valreg, src);
+		{
+		  /* The channel local is addressable -- its error payload
+		     has to be -- so it lives in memory and keeps BLKmode
+		     even though the channel itself comes back in registers.
+		     Targets whose function_value builds a register group
+		     for such a type (x86) return a PARALLEL and take the
+		     branch above; the others hand back a plain BLKmode
+		     register, which hard_function_value has already given
+		     the smallest integer mode covering the channel.  Give
+		     the memory the same mode so that the move can be
+		     expanded.  */
+		  machine_mode vmode = GET_MODE (valreg);
+		  if (MEM_P (src)
+		      && GET_MODE (src) == BLKmode
+		      && vmode != BLKmode
+		      && known_eq (GET_MODE_SIZE (vmode),
+				   int_size_in_bytes (TREE_TYPE (slot))))
+		    src = adjust_address (src, vmode, 0);
+		  /* The local can also be wider than the channel: a scalar
+		     channel (say `return_failure{int}') is promoted to
+		     word_mode even as an SSA name, so truncate it into the
+		     return register.  Same as the ordinary promoted return
+		     value below.  */
+		  if (GET_MODE (valreg) != GET_MODE (src)
+		      && SCALAR_INT_MODE_P (GET_MODE (valreg))
+		      && SCALAR_INT_MODE_P (GET_MODE (src)))
+		    convert_move (valreg, src,
+				  TYPE_UNSIGNED (TREE_TYPE (slot)));
+		  else
+		    emit_move_insn (valreg, src);
+		}
 	    }
 	}
     }
@@ -5646,19 +5676,37 @@ expand_function_end (void)
      clobber call-clobbered registers.  Load it into the
      architecture's flag register here, on the shared return edge
      after all cleanups have run; the epilogue fuses that register
-     into the carry flag at ret.  */
+     into the carry flag at ret.  The herbceptions pass instead sets
+     the flag in GIMPLE, just before each return, whenever it could do
+     so on every path; the load is then dead.  */
   if (cfun->herbceptions_failed_slot != NULL_TREE)
     {
+      /* The GIMPLE flag is set before the return label, so anything
+	 emitted between the label and here that can clobber the flag
+	 register (an sjlj exit call, the stack-protector check, the
+	 eh_return sequence) invalidates it.  */
+      bool folded = cfun->herbceptions_flag_folded;
+      if (folded
+	  && ((targetm_common.except_unwind_info (&global_options) == UI_SJLJ
+	       && flag_exceptions)
+	      || (crtl->stack_protect_guard
+		  && targetm.stack_protect_runtime_enabled_p ()
+		  && naked_return_label == NULL_RTX)
+	      || crtl->calls_eh_return))
+	folded = false;
+      if (!folded)
+	{
 #ifdef HAVE_herbceptions_load_failed
-      if (HAVE_herbceptions_load_failed
-	  && DECL_RTL_SET_P (cfun->herbceptions_failed_slot))
-	emit_insn (gen_herbceptions_load_failed
-		   (DECL_RTL (cfun->herbceptions_failed_slot)));
+	  if (HAVE_herbceptions_load_failed
+	      && DECL_RTL_SET_P (cfun->herbceptions_failed_slot))
+	    emit_insn (gen_herbceptions_load_failed
+		       (DECL_RTL (cfun->herbceptions_failed_slot)));
 #else
-      /* See expand_HERBCEPTION_FAILED: a target that carries the
-	 discriminant must define `herbceptions_load_failed'.  */
-      sorry ("herbceptions are not supported on this target");
+	  /* See expand_HERBCEPTION_FAILED: a target that carries the
+	     discriminant must define `herbceptions_load_failed'.  */
+	  sorry ("herbceptions are not supported on this target");
 #endif
+	}
     }
   /* If scalar return value was computed in a pseudo-reg, or was a named
      return value that got dumped to the stack, copy that to the hard

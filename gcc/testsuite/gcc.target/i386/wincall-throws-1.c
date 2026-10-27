@@ -26,7 +26,14 @@ caller (int x) return_failure{struct Err}
   return try (c (x)) + 1;
 }
 
-/* The callee materialises the failure flag with a CF-setting negate.  */
+/* The callee has a constant discriminant on each return edge, so the
+   return-flag folding pass writes CF directly to 0 or 1 there instead of
+   materialising the value and re-loading it with `negb'.  */
+/* { dg-final { scan-assembler "clc" } } */
+/* { dg-final { scan-assembler "stc" } } */
+
+/* The caller's discriminant comes from the call, so it cannot be folded
+   and still needs the CF-setting negate.  */
 /* { dg-final { scan-assembler "negb" } } */
 
 /* The caller reads CF immediately after the call, before anything that
