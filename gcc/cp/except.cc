@@ -1251,7 +1251,7 @@ herbceptions_spec_p (const_tree spec)
 {
   if (!spec || !TREE_PURPOSE (spec))
     return false;
-  const_tree p = TREE_PURPOSE (spec);
+  tree p = TREE_PURPOSE (spec);
   if (TREE_CODE (p) == HERBCEPTION_SPEC)
     return true;
   return (TREE_CODE (p) == DEFERRED_NOEXCEPT
@@ -1486,7 +1486,7 @@ build_return_failure_spec (tree type, tsubst_flags_t complain)
 	  if (complain & tf_error)
 	    error_at (input_location,
 		      "the %<return_failure{E}%> error type %qT may not be "
-		      "larger than 2 * sizeof (uintptr_t); the error "
+		      "larger than %<2 * sizeof (uintptr_t)%>; the error "
 		      "travels in the same registers as the failure "
 		      "discriminant",
 		      type);
@@ -1685,8 +1685,8 @@ build_herbceptions_catch (location_t loc, tree expr)
       || HERBCEPTION_SPEC_KIND (hspec) != hsk_return_failure)
     {
       error_at (loc, "%<catch return_failure%> requires a call to a "
-		"function declared %<return_failure{E}%>; a %<throws%> "
-		"function's implicit %<std::error%> channel needs a "
+		"function declared %<return_failure{E}%>; the implicit "
+		"%<std::error%> channel of a %<throws%> function needs a "
 		"%<try { } catch throws (std::error)%> block handler");
       return error_mark_node;
     }
