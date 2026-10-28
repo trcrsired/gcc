@@ -200,14 +200,29 @@ hb_convertible_aggregate_store_p (gimple *stmt, tree slot, HOST_WIDE_INT *off)
 }
 
 /* Return true if STMT is the deferred initializer of the whole channel
-   local, which the conversion makes redundant.  */
+   local, which the conversion makes redundant.  Before SSA it is one
+   call whose LHS is the slot; after SSA gimplification has split it into
+   a call defining a temporary and an assignment of that temporary to the
+   slot, and both statements have to be recognized.  */
 
 static bool
 hb_slot_deferred_init_p (gimple *stmt, tree slot)
 {
-  return (is_gimple_call (stmt)
-	  && gimple_call_internal_p (stmt, IFN_DEFERRED_INIT)
-	  && gimple_call_lhs (stmt) == slot);
+  if (is_gimple_call (stmt)
+      && gimple_call_internal_p (stmt, IFN_DEFERRED_INIT)
+      && gimple_call_lhs (stmt) == slot)
+    return true;
+
+  if (!is_gimple_assign (stmt) || !gimple_assign_single_p (stmt)
+      || gimple_assign_lhs (stmt) != slot)
+    return false;
+
+  tree rhs = gimple_assign_rhs1 (stmt);
+  if (TREE_CODE (rhs) != SSA_NAME)
+    return false;
+  gimple *def = SSA_NAME_DEF_STMT (rhs);
+  return (is_gimple_call (def)
+	  && gimple_call_internal_p (def, IFN_DEFERRED_INIT));
 }
 
 /* Return the number of word-sized pieces of SLOT_TYPE's channel when the
@@ -473,6 +488,17 @@ herbceptions_return_channel (function *fun)
 
 	if (hb_slot_deferred_init_p (stmt, slot))
 	  {
+	    /* The SSA form of the initializer is `tmp = DEFERRED_INIT;'
+	       followed by `slot = tmp;'.  Drop the store; the dead
+	       DEFERRED_INIT call is left for DCE (removing it here would
+	       break the virtual-operand chain).  An unsplit initializer
+	       call is already dead and is likewise left alone.  */
+	    if (is_gimple_assign (stmt))
+	      {
+		gsi_remove (&gsi, true);
+		changed = true;
+		continue;
+	      }
 	    gsi_next (&gsi);
 	    continue;
 	  }
@@ -518,6 +544,7 @@ herbceptions_return_channel (function *fun)
 
 	    gsi_remove (&gsi, true);
 	    changed = true;
+	    continue;
 	  }
 
 	gsi_next (&gsi);
