@@ -816,6 +816,8 @@
       rtx t3 = gen_reg_rtx (<MODE>mode);
       rtx t4 = gen_reg_rtx (<MODE>mode);
 
+      operands[1] = make_safe_from (operands[1], operands[0]);
+      operands[2] = make_safe_from (operands[2], operands[0]);
       emit_insn (gen_add3_insn (operands[0], operands[1], operands[2]));
       rtx cmp1 = gen_rtx_LT (<MODE>mode, operands[2], const0_rtx);
       emit_insn (gen_cstore<mode>4 (t3, cmp1, operands[2], const0_rtx));
@@ -850,6 +852,7 @@
     }
   else
     {
+      operands[1] = make_safe_from (operands[1], operands[0]);
       emit_insn (gen_add3_insn (operands[0], operands[1], operands[2]));
       riscv_expand_conditional_branch (operands[3], LTU, operands[0],
 				       operands[1]);
@@ -998,6 +1001,8 @@
       rtx t3 = gen_reg_rtx (<MODE>mode);
       rtx t4 = gen_reg_rtx (<MODE>mode);
 
+      operands[1] = make_safe_from (operands[1], operands[0]);
+      operands[2] = make_safe_from (operands[2], operands[0]);
       emit_insn (gen_sub3_insn (operands[0], operands[1], operands[2]));
 
       rtx cmp1 = gen_rtx_LT (<MODE>mode, operands[2], const0_rtx);
@@ -1035,6 +1040,7 @@
     }
   else
     {
+      operands[1] = make_safe_from (operands[1], operands[0]);
       emit_insn (gen_sub3_insn (operands[0], operands[1], operands[2]));
       riscv_expand_conditional_branch (operands[3], LTU, operands[1],
 				       operands[0]);
@@ -1456,6 +1462,8 @@
   "TARGET_DIV && riscv_use_divmod_expander ()"
   {
       rtx tmp = gen_reg_rtx (<MODE>mode);
+      operands[1] = make_safe_from (operands[1], operands[0]);
+      operands[2] = make_safe_from (operands[2], operands[0]);
       emit_insn (gen_<u>div<GPR:mode>3 (operands[0], operands[1], operands[2]));
       emit_insn (gen_mul<GPR:mode>3 (tmp, operands[0], operands[2]));
       emit_insn (gen_sub<GPR:mode>3 (operands[3], operands[1], tmp));
@@ -5042,7 +5050,7 @@
 		   (match_operand:SI 4 "register_operand" "r"))))
    (clobber (match_scratch:DI 5 "=&r"))]
   "TARGET_64BIT
-   && (INTVAL (operands[3]) | ((1 << INTVAL (operands[2])) - 1)) == 0xffffffff"
+   && (INTVAL (operands[3]) | ((HOST_WIDE_INT_1U << INTVAL (operands[2])) - 1)) == 0xffffffff"
   "#"
   "&& reload_completed"
   [(set (match_dup 5) (ashift:DI (match_dup 1) (match_dup 2)))
