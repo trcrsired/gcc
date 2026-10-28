@@ -399,9 +399,19 @@ Parser<ManagedTokenSource>::parse_item (bool called_from_statement)
       // if any of these (should be all possible VisItem prefixes), parse a
       // VisItem
       {
+	auto errors_before = error_table.size ();
 	auto vis_item = parse_vis_item (std::move (outer_attrs));
 	if (!vis_item)
-	  return Parse::Error::Item::make_malformed ();
+	  {
+	    // e.g. `pub` followed by something that isn't an item
+	    if (error_table.size () == errors_before)
+	      {
+		const_TokenPtr t = lexer.peek_token ();
+		add_error (Error (t->get_locus (), "expected item, found %qs",
+				  t->get_token_description ()));
+	      }
+	    return Parse::Error::Item::make_malformed ();
+	  }
 	return RType{std::move (vis_item)};
       }
     case SUPER:
@@ -7233,6 +7243,14 @@ Parser<ManagedTokenSource>::parse_stmt_or_expr ()
 	  parse_let_stmt (std::move (outer_attrs)));
 	return ExprOrStmt (std::move (stmt));
       }
+    case CONST:
+      if (lexer.peek_token (1)->get_id () == LEFT_CURLY)
+	{
+	  // const block: parse as expression
+	  expr = parse_expr (std::move (outer_attrs), restrictions);
+	  break;
+	}
+      gcc_fallthrough ();
     case PUB:
     case MOD:
     case EXTERN_KW:
@@ -7241,7 +7259,6 @@ Parser<ManagedTokenSource>::parse_stmt_or_expr ()
     case TYPE:
     case STRUCT_KW:
     case ENUM_KW:
-    case CONST:
     case STATIC_KW:
     case AUTO:
     case TRAIT:

@@ -17,7 +17,10 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "rust-intrinsic-handlers.h"
+#include "optional.h"
+#include "rust-backend.h"
 #include "rust-compile-context.h"
+#include "rust-compile-item.h"
 #include "rust-compile-type.h"
 #include "rust-compile-fnparam.h"
 #include "rust-builtins.h"
@@ -31,6 +34,8 @@
 #include "rust-gcc.h"
 #include "fold-const.h"
 #include "rust-constexpr.h"
+#include "rust-hir-item.h"
+#include "tree.h"
 
 // declaration taken from "stringpool.h"
 // the get_identifier macro causes compilation issues
@@ -38,7 +43,55 @@ extern tree get_identifier (const char *);
 
 namespace Rust {
 namespace Compile {
-namespace handlers {
+
+static tree
+lang_item_call (IntrinsicCtx &ctx, LangItem::Kind lang_item,
+		const std::vector<tree> &args)
+{
+  auto defid = ctx.get_mappings ().lookup_lang_item (lang_item);
+  rust_assert (defid);
+
+  auto lang_item_def = ctx.get_mappings ().lookup_defid (*defid);
+  rust_assert (lang_item_def);
+
+  // Let's make sure we're not calling a lang item that's a type...
+  rust_assert (lang_item_def.value ()->get_item_kind ()
+	       == HIR::Item::ItemKind::Function);
+
+  // Compile the lang item function
+  auto fn = CompileItem::compile (*lang_item_def, &ctx.ctx);
+
+  return Backend::call_expression (fn, args, nullptr, ctx.loc);
+}
+
+tree
+Intrinsic::compile (Context *ctx, TyTy::FnType *fntype, location_t loc)
+{
+  auto ictx = IntrinsicCtx (ctx, fntype, loc);
+
+  // Check for a cached version of the intrinsic
+  if (auto cached = ictx.check_for_cached_intrinsic ())
+    return *cached;
+
+  // Otherwise compile the fntype
+  ictx.compile_intrinsic_function ();
+
+  // Compile its given parameters and type parameters properly
+  ictx.compile_fn_params ();
+
+  // And enter its block
+  ictx.enter_intrinsic_block ();
+
+  // Do the inner, intrinsic specific compilation logic
+  closure (ictx);
+
+  // ...and exit its block
+  ictx.finalize_intrinsic_block ();
+
+  // Once everything has been done and the intrinsic's low level compilation
+  // logic is done, we return the compiled TREE object for the function
+  return ictx.fn;
+}
 
 static tree
 make_unsigned_long_tree (unsigned long value)
@@ -62,14 +115,11 @@ is_basic_integer_type (TyTy::BaseType *type)
     }
 }
 
-/**
- * Maybe override the Hir Lookups for the substituions in this context
- */
-static void
-maybe_override_ctx (TyTy::FnType *fntype)
+void
+IntrinsicCtx::maybe_override_ctx ()
 {
-  if (fntype->has_substitutions_defined ())
-    fntype->override_context ();
+  if (fntype.has_substitutions_defined ())
+    fntype.override_context ();
 }
 
 static bool
@@ -88,101 +138,96 @@ check_for_basic_integer_type (const std::string &intrinsic_str,
   return is_basic_integer;
 }
 
-/**
- * Items can be forward compiled which means we may not need to invoke this
- * code. We might also have already compiled this generic function as well.
- */
-static bool
-check_for_cached_intrinsic (Context *ctx, TyTy::FnType *fntype, tree *lookup)
+tl::optional<tree>
+IntrinsicCtx::check_for_cached_intrinsic ()
 {
-  const Resolver::CanonicalPath &canonical_path = fntype->get_ident ().path;
-  std::string asm_name = ctx->mangle_item (fntype, canonical_path);
-  if (ctx->lookup_function_decl (fntype->get_ty_ref (), lookup,
-				 fntype->get_id (), fntype, asm_name))
-    {
-      return true;
-    }
+  const Resolver::CanonicalPath &canonical_path = fntype.get_ident ().path;
+  std::string asm_name = ctx.mangle_item (&fntype, canonical_path);
 
-  return false;
+  tree lookup = NULL_TREE;
+
+  if (ctx.lookup_function_decl (fntype.get_ty_ref (), &lookup, fntype.get_id (),
+				&fntype, asm_name))
+    return lookup;
+
+  return tl::nullopt;
 }
 
-static tree
-compile_intrinsic_function (Context *ctx, TyTy::FnType *fntype)
+void
+IntrinsicCtx::compile_intrinsic_function ()
 {
-  maybe_override_ctx (fntype);
+  maybe_override_ctx ();
 
-  const Resolver::CanonicalPath &canonical_path = fntype->get_ident ().path;
+  const Resolver::CanonicalPath &canonical_path = fntype.get_ident ().path;
 
-  tree compiled_fn_type = TyTyResolveCompile::compile (ctx, fntype);
+  tree compiled_fn_type = TyTyResolveCompile::compile (&ctx, &fntype);
   std::string ir_symbol_name
-    = canonical_path.get () + fntype->subst_as_string ();
-  std::string asm_name = ctx->mangle_item (fntype, canonical_path);
+    = canonical_path.get () + fntype.subst_as_string ();
+  std::string asm_name = ctx.mangle_item (&fntype, canonical_path);
 
   unsigned int flags = 0;
-  tree fndecl = Backend::function (compiled_fn_type, ir_symbol_name, asm_name,
-				   flags, fntype->get_ident ().locus);
 
-  TREE_PUBLIC (fndecl) = 0;
-  TREE_READONLY (fndecl) = 1;
-  DECL_ARTIFICIAL (fndecl) = 1;
-  DECL_EXTERNAL (fndecl) = 0;
-  DECL_DECLARED_INLINE_P (fndecl) = 1;
+  // store the function directly in this context's fn member
+  fn = Backend::function (compiled_fn_type, ir_symbol_name, asm_name, flags,
+			  fntype.get_ident ().locus);
 
-  return fndecl;
+  TREE_PUBLIC (fn) = 0;
+  TREE_READONLY (fn) = 1;
+  DECL_ARTIFICIAL (fn) = 1;
+  DECL_EXTERNAL (fn) = 0;
+  DECL_DECLARED_INLINE_P (fn) = 1;
 }
 
-/**
- * Compile and setup a function's parameters
- */
-static void
-compile_fn_params (Context *ctx, TyTy::FnType *fntype, tree fndecl,
-		   std::vector<Bvariable *> *compiled_param_variables,
-		   std::vector<tree_node *> *compiled_param_types = nullptr)
+void
+IntrinsicCtx::compile_fn_params ()
 {
-  for (auto &parm : fntype->get_params ())
+  for (auto &parm : fntype.get_params ())
     {
       auto &referenced_param = parm.get_pattern ();
-      auto param_tyty = parm.get_type ();
-      auto compiled_param_type = TyTyResolveCompile::compile (ctx, param_tyty);
-
       location_t param_locus = referenced_param.get_locus ();
+
+      auto param_tyty = parm.get_type ();
+
+      auto compiled_param_type = TyTyResolveCompile::compile (&ctx, param_tyty);
       Bvariable *compiled_param_var
-	= CompileFnParam::compile (ctx, fndecl, referenced_param,
+	= CompileFnParam::compile (&ctx, fn, referenced_param,
 				   compiled_param_type, param_locus);
 
-      compiled_param_variables->push_back (compiled_param_var);
-      if (compiled_param_types)
-	compiled_param_types->push_back (compiled_param_type);
+      param_vars.push_back (compiled_param_var);
+      param_types.push_back (compiled_param_type);
     }
+
+  auto ok = Backend::function_set_parameters (fn, param_vars);
+
+  rust_assert (ok);
 }
 
-static void
-enter_intrinsic_block (Context *ctx, tree fndecl,
-		       const std::vector<Bvariable *> &vars = {})
+void
+IntrinsicCtx::enter_intrinsic_block ()
 {
   tree enclosing_scope = NULL_TREE;
   location_t start_location = UNDEF_LOCATION;
   location_t end_location = UNDEF_LOCATION;
 
-  auto block = Backend::block (fndecl, enclosing_scope, vars, start_location,
-			       end_location);
+  auto block = Backend::block (fn, enclosing_scope, block_variables,
+			       start_location, end_location);
 
-  ctx->push_block (block);
+  ctx.push_block (block);
 }
 
-static void
-finalize_intrinsic_block (Context *ctx, tree fndecl)
+void
+IntrinsicCtx::finalize_intrinsic_block ()
 {
-  tree bind_tree = ctx->pop_block ();
+  tree bind_tree = ctx.pop_block ();
 
   gcc_assert (TREE_CODE (bind_tree) == BIND_EXPR);
 
-  DECL_SAVED_TREE (fndecl) = bind_tree;
+  DECL_SAVED_TREE (fn) = bind_tree;
 
-  ctx->push_function (fndecl);
+  ctx.push_function (fn);
 
-  DECL_DECLARED_CONSTEXPR_P (fndecl) = 1;
-  maybe_save_constexpr_fundef (fndecl);
+  DECL_DECLARED_CONSTEXPR_P (fn) = 1;
+  maybe_save_constexpr_fundef (fn);
 }
 
 static TyTy::BaseType *
@@ -198,6 +243,7 @@ get_inner_dst (TyTy::BaseType *type)
   return curr;
 }
 
+namespace handlers {
 namespace inner {
 
 static std::string
@@ -240,70 +286,30 @@ build_atomic_builtin_name (const std::string &prefix, location_t locus,
   return result;
 }
 
-inline tree
-unchecked_op (Context *ctx, TyTy::FnType *fntype, tree_code op)
+inline void
+unchecked_op (IntrinsicCtx &ctx, tree_code op)
 {
-  rust_assert (fntype->get_params ().size () == 2);
-  rust_assert (fntype->get_num_substitutions () == 1);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN unchecked_<op> BODY BEGIN
-
-  auto x = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
-  auto y = Backend::var_expression (param_vars[1], UNDEF_LOCATION);
+  auto x = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
+  auto y = Backend::var_expression (ctx.param_vars[1], UNDEF_LOCATION);
 
   auto *monomorphized_type
-    = fntype->get_substs ().at (0).get_param_ty ()->resolve ();
+    = ctx.fntype.get_substs ().at (0).get_param_ty ()->resolve ();
 
-  auto call_locus = ctx->get_mappings ().lookup_location (fntype->get_ref ());
+  auto call_locus = ctx.get_mappings ().lookup_location (ctx.fntype.get_ref ());
   check_for_basic_integer_type ("unchecked operation", call_locus,
 				monomorphized_type);
 
   auto expr = build2 (op, TREE_TYPE (x), x, y);
   auto return_statement
-    = Backend::return_statement (fndecl, expr, UNDEF_LOCATION);
+    = Backend::return_statement (ctx.fn, expr, UNDEF_LOCATION);
 
-  ctx->add_statement (return_statement);
-
-  // BUILTIN unchecked_<op> BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (return_statement);
 }
 
-inline tree
-expect (Context *ctx, TyTy::FnType *fntype, bool likely)
+inline void
+expect (IntrinsicCtx &ctx, bool likely)
 {
-  rust_assert (fntype->get_params ().size () == 1);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN expect_handler_inner FN BODY BEGIN
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-  tree expr = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
+  tree expr = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
   auto expect_fn_raw
     = BuiltinsContext::get ().lookup_simple_builtin ("__builtin_expect");
   rust_assert (expect_fn_raw);
@@ -322,70 +328,50 @@ expect (Context *ctx, TyTy::FnType *fntype, bool likely)
   // the return value also needs to be casted (to bool)
   auto expect_call_bool = build1 (CONVERT_EXPR, boolean_type_node, expect_call);
   auto return_statement
-    = Backend::return_statement (fndecl, expect_call_bool, BUILTINS_LOCATION);
-  ctx->add_statement (return_statement);
-  // BUILTIN expect_handler_inner FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, expect_call_bool, BUILTINS_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
-tree
-try_handler (Context *ctx, TyTy::FnType *fntype, bool is_new_api)
+void
+try_handler (IntrinsicCtx &ctx, bool is_new_api)
 {
-  rust_assert (fntype->get_params ().size () == 3);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  enter_intrinsic_block (ctx, fndecl);
-
   // The following tricks are needed to make sure the try-catch blocks are not
   // optimized away
-  TREE_READONLY (fndecl) = 0;
-  DECL_DISREGARD_INLINE_LIMITS (fndecl) = 1;
-  DECL_ATTRIBUTES (fndecl) = tree_cons (get_identifier ("always_inline"),
-					NULL_TREE, DECL_ATTRIBUTES (fndecl));
+  TREE_READONLY (ctx.fn) = 0;
+  DECL_DISREGARD_INLINE_LIMITS (ctx.fn) = 1;
+  DECL_ATTRIBUTES (ctx.fn) = tree_cons (get_identifier ("always_inline"),
+					NULL_TREE, DECL_ATTRIBUTES (ctx.fn));
 
-  // BUILTIN try_handler FN BODY BEGIN
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
   tree enclosing_scope = NULL_TREE;
 
   bool panic_is_abort = Session::get_instance ().options.get_panic_strategy ()
 			== CompileOptions::PanicStrategy::Abort;
-  tree try_fn = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
-  tree user_data = Backend::var_expression (param_vars[1], UNDEF_LOCATION);
-  tree catch_fn = Backend::var_expression (param_vars[2], UNDEF_LOCATION);
+  tree try_fn = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
+  tree user_data = Backend::var_expression (ctx.param_vars[1], UNDEF_LOCATION);
+  tree catch_fn = Backend::var_expression (ctx.param_vars[2], UNDEF_LOCATION);
   tree normal_return_stmt = NULL_TREE;
   tree error_return_stmt = NULL_TREE;
   tree try_call = Backend::call_expression (try_fn, {user_data}, nullptr,
 					    BUILTINS_LOCATION);
   tree catch_call = NULL_TREE;
-  tree try_block = Backend::block (fndecl, enclosing_scope, {}, UNDEF_LOCATION,
+  tree try_block = Backend::block (ctx.fn, enclosing_scope, {}, UNDEF_LOCATION,
 				   UNDEF_LOCATION);
 
   if (is_new_api)
     {
-      auto ret_type = TyTyResolveCompile::get_unit_type (ctx);
+      auto ret_type = TyTyResolveCompile::get_unit_type (ctx.inner ());
       auto ret_expr = Backend::constructor_expression (ret_type, false, {}, -1,
 						       UNDEF_LOCATION);
       normal_return_stmt
-	= Backend::return_statement (fndecl, ret_expr, BUILTINS_LOCATION);
+	= Backend::return_statement (ctx.fn, ret_expr, BUILTINS_LOCATION);
       error_return_stmt
-	= Backend::return_statement (fndecl, ret_expr, BUILTINS_LOCATION);
+	= Backend::return_statement (ctx.fn, ret_expr, BUILTINS_LOCATION);
     }
   else
     {
-      normal_return_stmt = Backend::return_statement (fndecl, integer_zero_node,
+      normal_return_stmt = Backend::return_statement (ctx.fn, integer_zero_node,
 						      BUILTINS_LOCATION);
-      error_return_stmt = Backend::return_statement (fndecl, integer_one_node,
+      error_return_stmt = Backend::return_statement (ctx.fn, integer_one_node,
 						     BUILTINS_LOCATION);
     }
   Backend::block_add_statements (try_block,
@@ -394,9 +380,9 @@ try_handler (Context *ctx, TyTy::FnType *fntype, bool is_new_api)
   if (panic_is_abort)
     {
       // skip building the try-catch construct
-      ctx->add_statement (try_block);
-      finalize_intrinsic_block (ctx, fndecl);
-      return fndecl;
+      ctx.add_statement (try_block);
+
+      return;
     }
 
   tree eh_pointer
@@ -405,7 +391,7 @@ try_handler (Context *ctx, TyTy::FnType *fntype, bool is_new_api)
   catch_call = Backend::call_expression (catch_fn, {user_data, eh_pointer},
 					 NULL_TREE, BUILTINS_LOCATION);
 
-  tree catch_block = Backend::block (fndecl, enclosing_scope, {},
+  tree catch_block = Backend::block (ctx.fn, enclosing_scope, {},
 				     UNDEF_LOCATION, UNDEF_LOCATION);
   Backend::block_add_statements (catch_block,
 				 std::vector<tree>{catch_call,
@@ -419,41 +405,20 @@ try_handler (Context *ctx, TyTy::FnType *fntype, bool is_new_api)
   auto eh_construct
     = Backend::exception_handler_statement (try_block, inner_eh_construct,
 					    NULL_TREE, BUILTINS_LOCATION);
-  ctx->add_statement (eh_construct);
-  // BUILTIN try_handler FN BODY END
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (eh_construct);
 }
 
 /**
  * pub fn wrapping_{add, sub, mul}<T>(lhs: T, rhs: T) -> T;
  */
-tree
-wrapping_op (Context *ctx, TyTy::FnType *fntype, tree_code op)
+void
+wrapping_op (IntrinsicCtx &ctx, tree_code op)
 {
   // wrapping_<op> intrinsics have two parameter
-  rust_assert (fntype->get_params ().size () == 2);
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
+  auto &lhs_param = ctx.param_vars.at (0);
+  auto &rhs_param = ctx.param_vars.at (1);
 
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &lhs_param = param_vars.at (0);
-  auto &rhs_param = param_vars.at (1);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN wrapping_<op> FN BODY BEGIN
   auto lhs = Backend::var_expression (lhs_param, UNDEF_LOCATION);
   auto rhs = Backend::var_expression (rhs_param, UNDEF_LOCATION);
 
@@ -464,61 +429,40 @@ wrapping_op (Context *ctx, TyTy::FnType *fntype, tree_code op)
   auto wrap_expr = build2 (op, TREE_TYPE (lhs), lhs, rhs);
 
   auto return_statement
-    = Backend::return_statement (fndecl, wrap_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-  // BUILTIN wrapping_<op> FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, wrap_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
 /**
  * pub fn add_with_overflow<T>(x: T, y: T) -> (T, bool);
  */
-tree
-op_with_overflow (Context *ctx, TyTy::FnType *fntype, tree_code op)
+void
+op_with_overflow (IntrinsicCtx &ctx, tree_code op)
 {
   // wrapping_<op> intrinsics have two parameter
-  rust_assert (fntype->get_params ().size () == 2);
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
+  auto &x_param = ctx.param_vars.at (0);
+  auto &y_param = ctx.param_vars.at (1);
 
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &x_param = param_vars.at (0);
-  auto &y_param = param_vars.at (1);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  rust_assert (fntype->get_num_substitutions () == 1);
-  auto &param_mapping = fntype->get_substs ().at (0);
+  auto &param_mapping = ctx.fntype.get_substs ().at (0);
   const auto param_tyty = param_mapping.get_param_ty ();
   auto resolved_tyty = param_tyty->resolve ();
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, resolved_tyty);
+    = TyTyResolveCompile::compile (ctx.inner (), resolved_tyty);
 
   // this should match y as well or we can take it from the TyTy structure
   tree tmp_stmt = error_mark_node;
   Bvariable *result_variable
-    = Backend::temporary_variable (fndecl, NULL_TREE, template_parameter_type,
+    = Backend::temporary_variable (ctx.fn, NULL_TREE, template_parameter_type,
 				   NULL_TREE, true /*address_is_taken*/,
 				   UNDEF_LOCATION, &tmp_stmt);
   Bvariable *bool_variable
-    = Backend::temporary_variable (fndecl, NULL_TREE, boolean_type_node,
+    = Backend::temporary_variable (ctx.fn, NULL_TREE, boolean_type_node,
 				   NULL_TREE, true /*address_is_taken*/,
 				   UNDEF_LOCATION, &tmp_stmt);
 
-  enter_intrinsic_block (ctx, fndecl, {result_variable, bool_variable});
+  ctx.set_block_variables ({result_variable, bool_variable});
 
-  // BUILTIN op_with_overflow FN BODY BEGIN
   auto x = Backend::var_expression (x_param, UNDEF_LOCATION);
   auto y = Backend::var_expression (y_param, UNDEF_LOCATION);
 
@@ -559,66 +503,41 @@ op_with_overflow (Context *ctx, TyTy::FnType *fntype, tree_code op)
     = Backend::assignment_statement (bool_decl, builtin_call,
 				     BUILTINS_LOCATION);
 
-  ctx->add_statement (overflow_assignment);
+  ctx.add_statement (overflow_assignment);
 
   std::vector<tree> vals = {result_decl, bool_decl};
-  tree tuple_type = TREE_TYPE (DECL_RESULT (fndecl));
+  tree tuple_type = TREE_TYPE (DECL_RESULT (ctx.fn));
   tree result_expr = Backend::constructor_expression (tuple_type, false, vals,
 						      -1, UNDEF_LOCATION);
 
   auto return_statement
-    = Backend::return_statement (fndecl, result_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-
-  // BUILTIN wrapping_<op> FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, result_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
 /**
  * fn copy_nonoverlapping<T>(src: *const T, dst: *mut T, count: usize);
  * fn copy<T>(src: *const T, dst: *mut T, count: usize);
  */
-tree
-copy (Context *ctx, TyTy::FnType *fntype, bool overlaps)
+void
+copy (IntrinsicCtx &ctx, bool overlaps)
 {
-  rust_assert (fntype->get_params ().size () == 3);
-  rust_assert (fntype->get_num_substitutions () == 1);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
   // Most intrinsic functions are pure - not `copy_nonoverlapping` and `copy`
-  TREE_READONLY (fndecl) = 0;
-  TREE_SIDE_EFFECTS (fndecl) = 1;
+  TREE_READONLY (ctx.fn) = 0;
+  TREE_SIDE_EFFECTS (ctx.fn) = 1;
 
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN copy_nonoverlapping BODY BEGIN
-
-  auto src = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
-  auto dst = Backend::var_expression (param_vars[1], UNDEF_LOCATION);
-  auto count = Backend::var_expression (param_vars[2], UNDEF_LOCATION);
+  auto src = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
+  auto dst = Backend::var_expression (ctx.param_vars[1], UNDEF_LOCATION);
+  auto count = Backend::var_expression (ctx.param_vars[2], UNDEF_LOCATION);
 
   // We want to create the following statement
   // memcpy(dst, src, size_of::<T>());
   // so
   // memcpy(dst, src, size_expr);
 
-  auto *resolved_ty = fntype->get_substs ().at (0).get_param_ty ()->resolve ();
-  auto param_type = TyTyResolveCompile::compile (ctx, resolved_ty);
+  auto *resolved_ty
+    = ctx.fntype.get_substs ().at (0).get_param_ty ()->resolve ();
+  auto param_type = TyTyResolveCompile::compile (ctx.inner (), resolved_ty);
 
   tree size_expr
     = build2 (MULT_EXPR, size_type_node, TYPE_SIZE_UNIT (param_type), count);
@@ -632,58 +551,37 @@ copy (Context *ctx, TyTy::FnType *fntype, bool overlaps)
   auto copy_call = Backend::call_expression (memcpy, {dst, src, size_expr},
 					     nullptr, UNDEF_LOCATION);
 
-  ctx->add_statement (copy_call);
-
-  // BUILTIN copy_nonoverlapping BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (copy_call);
 }
 
-tree
-atomic_store (Context *ctx, TyTy::FnType *fntype, int ordering)
+void
+atomic_store (IntrinsicCtx &ctx, int ordering)
 {
-  rust_assert (fntype->get_params ().size () == 2);
-  rust_assert (fntype->get_num_substitutions () == 1);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
   // Most intrinsic functions are pure but not the atomic ones
-  TREE_READONLY (fndecl) = 0;
-  TREE_SIDE_EFFECTS (fndecl) = 1;
+  TREE_READONLY (ctx.fn) = 0;
+  TREE_SIDE_EFFECTS (ctx.fn) = 1;
 
-  // setup the params
-  std::vector<Bvariable *> param_vars;
   std::vector<tree> types;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars, &types);
 
-  auto ok = Backend::function_set_parameters (fndecl, param_vars);
-  rust_assert (ok);
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  auto dst = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
+  auto dst = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
   TREE_READONLY (dst) = 0;
 
-  auto value = Backend::var_expression (param_vars[1], UNDEF_LOCATION);
+  auto value = Backend::var_expression (ctx.param_vars[1], UNDEF_LOCATION);
   auto memorder = make_unsigned_long_tree (ordering);
 
   auto monomorphized_type
-    = fntype->get_substs ()[0].get_param_ty ()->resolve ();
+    = ctx.fntype.get_substs ()[0].get_param_ty ()->resolve ();
 
-  auto call_locus = ctx->get_mappings ().lookup_location (fntype->get_ref ());
+  auto call_locus = ctx.get_mappings ().lookup_location (ctx.fntype.get_ref ());
   auto builtin_name = build_atomic_builtin_name ("atomic_store_", call_locus,
 						 monomorphized_type);
+
   if (builtin_name.empty ())
-    return error_mark_node;
+    return;
 
   auto atomic_store_raw
     = BuiltinsContext::get ().lookup_simple_builtin (builtin_name);
+
   rust_assert (atomic_store_raw);
 
   auto atomic_store
@@ -695,50 +593,31 @@ atomic_store (Context *ctx, TyTy::FnType *fntype, int ordering)
   TREE_READONLY (store_call) = 0;
   TREE_SIDE_EFFECTS (store_call) = 1;
 
-  ctx->add_statement (store_call);
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (store_call);
 }
 
-tree
-atomic_load (Context *ctx, TyTy::FnType *fntype, int ordering)
+void
+atomic_load (IntrinsicCtx &ctx, int ordering)
 {
-  rust_assert (fntype->get_params ().size () == 1);
-  rust_assert (fntype->get_num_substitutions () == 1);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
   // Most intrinsic functions are pure but not the atomic ones
   // FIXME: Is atomic_load_* pure? Feels like it shouldn't so
-  TREE_READONLY (fndecl) = 0;
-  TREE_SIDE_EFFECTS (fndecl) = 1;
+  TREE_READONLY (ctx.fn) = 0;
+  TREE_SIDE_EFFECTS (ctx.fn) = 1;
 
-  // setup the params
-  std::vector<Bvariable *> param_vars;
   std::vector<tree> types;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars, &types);
 
-  auto ok = Backend::function_set_parameters (fndecl, param_vars);
-  rust_assert (ok);
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  auto src = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
+  auto src = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
   auto memorder = make_unsigned_long_tree (ordering);
 
   auto monomorphized_type
-    = fntype->get_substs ()[0].get_param_ty ()->resolve ();
+    = ctx.fntype.get_substs ()[0].get_param_ty ()->resolve ();
 
   auto builtin_name
-    = build_atomic_builtin_name ("atomic_load_", fntype->get_locus (),
+    = build_atomic_builtin_name ("atomic_load_", ctx.fntype.get_locus (),
 				 monomorphized_type);
+
   if (builtin_name.empty ())
-    return error_mark_node;
+    return;
 
   auto atomic_load_raw
     = BuiltinsContext::get ().lookup_simple_builtin (builtin_name);
@@ -750,16 +629,12 @@ atomic_load (Context *ctx, TyTy::FnType *fntype, int ordering)
   auto load_call = Backend::call_expression (atomic_load, {src, memorder},
 					     nullptr, UNDEF_LOCATION);
   auto return_statement
-    = Backend::return_statement (fndecl, load_call, UNDEF_LOCATION);
+    = Backend::return_statement (ctx.fn, load_call, UNDEF_LOCATION);
 
   TREE_READONLY (load_call) = 0;
   TREE_SIDE_EFFECTS (load_call) = 1;
 
-  ctx->add_statement (return_statement);
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (return_statement);
 }
 
 // Shared inner implementation for ctlz and ctlz_nonzero.
@@ -770,35 +645,18 @@ atomic_load (Context *ctx, TyTy::FnType *fntype, int ordering)
 //
 // nonzero=true → ctlz_nonzero: the caller guarantees arg != 0 (passing 0
 //   is immediate UB in Rust), so the zero guard is omitted entirely.
-static tree
-ctlz_handler (Context *ctx, TyTy::FnType *fntype, bool nonzero)
+static void
+ctlz_handler (IntrinsicCtx &ctx, bool nonzero)
 {
-  rust_assert (fntype->get_params ().size () == 1);
+  auto arg_param = ctx.param_vars.at (0);
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto arg_param = param_vars.at (0);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  rust_assert (fntype->get_num_substitutions () == 1);
   auto *monomorphized_type
-    = fntype->get_substs ().at (0).get_param_ty ()->resolve ();
-  auto call_locus = ctx->get_mappings ().lookup_location (fntype->get_ref ());
+    = ctx.fntype.get_substs ().at (0).get_param_ty ()->resolve ();
+  auto call_locus = ctx.get_mappings ().lookup_location (ctx.fntype.get_ref ());
   if (!check_for_basic_integer_type ("ctlz", call_locus, monomorphized_type))
-    return error_mark_node;
+    return;
 
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN ctlz FN BODY BEGIN
-  auto locus = fntype->get_locus ();
+  auto locus = ctx.fntype.get_locus ();
   auto arg_expr = Backend::var_expression (arg_param, locus);
   tree arg_type = TREE_TYPE (arg_expr);
   unsigned bit_size = TYPE_PRECISION (arg_type);
@@ -855,7 +713,7 @@ ctlz_handler (Context *ctx, TyTy::FnType *fntype, bool nonzero)
     {
       rust_sorry_at (locus, "ctlz for %u-bit integers is not yet implemented",
 		     bit_size);
-      return error_mark_node;
+      return;
     }
 
   // Widen the unsigned arg to the chosen builtin's operand type, call it,
@@ -865,7 +723,7 @@ ctlz_handler (Context *ctx, TyTy::FnType *fntype, bool nonzero)
 
   auto builtin_decl
     = BuiltinsContext::get ().lookup_simple_builtin (builtin_name);
-  rust_assert (builtin_decl != error_mark_node);
+  rust_assert (builtin_decl);
 
   tree builtin_fn = build_fold_addr_expr_loc (locus, *builtin_decl);
   tree clz_expr
@@ -898,13 +756,9 @@ ctlz_handler (Context *ctx, TyTy::FnType *fntype, bool nonzero)
       final_expr = clz_expr;
     }
 
-  tree result = fold_convert (TREE_TYPE (DECL_RESULT (fndecl)), final_expr);
-  auto return_stmt = Backend::return_statement (fndecl, result, locus);
-  ctx->add_statement (return_stmt);
-  // BUILTIN ctlz FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-  return fndecl;
+  tree result = fold_convert (TREE_TYPE (DECL_RESULT (ctx.fn)), final_expr);
+  auto return_stmt = Backend::return_statement (ctx.fn, result, locus);
+  ctx.add_statement (return_stmt);
 }
 
 // Shared inner implementation for cttz and cttz_nonzero.
@@ -915,35 +769,18 @@ ctlz_handler (Context *ctx, TyTy::FnType *fntype, bool nonzero)
 //
 // nonzero=true → cttz_nonzero: the caller guarantees arg != 0 (passing 0
 //   is immediate UB in Rust), so the zero guard is omitted entirely.
-static tree
-cttz_handler (Context *ctx, TyTy::FnType *fntype, bool nonzero)
+static void
+cttz_handler (IntrinsicCtx &ctx, bool nonzero)
 {
-  rust_assert (fntype->get_params ().size () == 1);
+  auto arg_param = ctx.param_vars.at (0);
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto arg_param = param_vars.at (0);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  rust_assert (fntype->get_num_substitutions () == 1);
   auto *monomorphized_type
-    = fntype->get_substs ().at (0).get_param_ty ()->resolve ();
-  auto call_locus = ctx->get_mappings ().lookup_location (fntype->get_ref ());
+    = ctx.fntype.get_substs ().at (0).get_param_ty ()->resolve ();
+  auto call_locus = ctx.get_mappings ().lookup_location (ctx.fntype.get_ref ());
   if (!check_for_basic_integer_type ("cttz", call_locus, monomorphized_type))
-    return error_mark_node;
+    return;
 
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN cttz FN BODY BEGIN
-  auto locus = fntype->get_locus ();
+  auto locus = ctx.fntype.get_locus ();
   auto arg_expr = Backend::var_expression (arg_param, locus);
   tree arg_type = TREE_TYPE (arg_expr);
   unsigned bit_size = TYPE_PRECISION (arg_type);
@@ -995,7 +832,7 @@ cttz_handler (Context *ctx, TyTy::FnType *fntype, bool nonzero)
     {
       rust_sorry_at (locus, "cttz for %u-bit integers is not yet implemented",
 		     bit_size);
-      return error_mark_node;
+      return;
     }
 
   tree call_arg = fold_convert (cast_type, unsigned_arg);
@@ -1028,215 +865,277 @@ cttz_handler (Context *ctx, TyTy::FnType *fntype, bool nonzero)
       final_expr = ctz_expr;
     }
 
-  tree result = fold_convert (TREE_TYPE (DECL_RESULT (fndecl)), final_expr);
-  auto return_stmt = Backend::return_statement (fndecl, result, locus);
-  ctx->add_statement (return_stmt);
-  // BUILTIN cttz FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-  return fndecl;
+  tree result = fold_convert (TREE_TYPE (DECL_RESULT (ctx.fn)), final_expr);
+  auto return_stmt = Backend::return_statement (ctx.fn, result, locus);
+  ctx.add_statement (return_stmt);
 }
 
-static tree
-fop_fast (Context *ctx, TyTy::FnType *fntype, location_t locus,
-	  ArithmeticOrLogicalOperator op)
+static void
+fop_fast (IntrinsicCtx &ctx, ArithmeticOrLogicalOperator op)
 {
-  // fast float ops intrinsics have two parameters
-  rust_assert (fntype->get_params ().size () == 2);
+  auto &lhs_param = ctx.param_vars.at (0);
+  auto &rhs_param = ctx.param_vars.at (1);
+  rust_assert (ctx.param_vars.size () == 2);
 
-  // and one generic parameter
-  rust_assert (fntype->get_num_substitutions () == 1);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &lhs_param = param_vars.at (0);
-  auto &rhs_param = param_vars.at (1);
-  rust_assert (param_vars.size () == 2);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN rotate FN BODY BEGIN
   tree lhs = Backend::var_expression (lhs_param, UNDEF_LOCATION);
   tree rhs = Backend::var_expression (rhs_param, UNDEF_LOCATION);
 
   tree result_expr
-    = Backend::arithmetic_or_logical_expression (op, lhs, rhs, locus);
+    = Backend::arithmetic_or_logical_expression (op, lhs, rhs, ctx.loc);
 
   auto return_statement
-    = Backend::return_statement (fndecl, result_expr, UNDEF_LOCATION);
+    = Backend::return_statement (ctx.fn, result_expr, UNDEF_LOCATION);
 
-  ctx->add_statement (return_statement);
-  // BUILTIN rotate FN BODY END
+  ctx.add_statement (return_statement);
+}
 
-  finalize_intrinsic_block (ctx, fndecl);
+static tree
+build_rust_string (IntrinsicCtx &ctx, const std::string &content)
+{
+  TyTy::BaseType *str = nullptr;
+  TyTy::BaseType *usize = nullptr;
+  rust_assert (ctx.get_tyctx ()->lookup_builtin ("str", &str));
+  rust_assert (ctx.get_tyctx ()->lookup_builtin ("usize", &usize));
 
-  return fndecl;
+  tree meta_pointer = TyTyResolveCompile::compile (ctx.inner (), str);
+  tree usize_ty = TyTyResolveCompile::compile (ctx.inner (), usize);
+
+  auto base = Backend::string_constant_expression (content);
+  tree data = build_fold_addr_expr (base);
+
+  tree size = build_int_cstu (usize_ty, content.size ());
+
+  return Backend::constructor_expression (meta_pointer, false, {data, size}, -1,
+					  ctx.loc);
+}
+
+/**
+ * Check if a type is uninhabited - either the Never type or a variant-less enum
+ */
+static bool
+is_uninhabited (TyTy::BaseType *t)
+{
+  rust_assert (t);
+
+  if (auto adt = t->try_as<TyTy::ADTType> ())
+    if (adt->is_enum () && adt->number_of_variants () == 0)
+      return true;
+
+  if (t->is<TyTy::NeverType> ())
+    return true;
+
+  return false;
+}
+
+static void
+type_assert (IntrinsicCtx &ctx, TyAssert assert)
+{
+  /**
+   * These functions check whether a type respects a predicate *statically* - if
+   * the given generic is invalid, then panic at runtime, otherwise do nothing.
+   */
+
+  /**
+   * TODO: Since gccrs currently lacks comprehensive layout engine support for
+   * validity ranges (such as `rustc_layout_scalar_valid_range_start`), we
+   * cannot accurately determine if a type is safely zeroable or can be left
+   * uninitialized. Therefore, this is implemented as a temporary no-op stub
+   * except for uninhabited types. We emit a warning regarding this limitation.
+   */
+
+  auto t_param = ctx.fntype.get_substs ().at (0);
+  auto t_ty = t_param.get_param_ty ();
+  auto t = t_ty->resolve ();
+  auto t_name = t->get_name ();
+  auto valid = true;
+
+  // In all cases, invalid types are... invalid. So single out never and
+  // variant-less enums and return early
+  if (is_uninhabited (t))
+    valid = false;
+
+  /**
+   * TODO: Since gccrs currently lacks comprehensive layout engine support for
+   * validity ranges (such as `rustc_layout_scalar_valid_range_start`), we
+   * cannot accurately determine if a type is safely zeroable or can be left
+   * uninitialized. Therefore, this is implemented as a temporary no-op stub
+   * except for uninhabited types
+   */
+  auto always_warn = false;
+  auto fn_name = "";
+
+  // FIXME: Once we have proper verification for the layout of the given type,
+  // we need to separate our panic strings based on the operation we're doing -
+  // asserting that a type is inhabited, zero valid, or uninit valid
+  std::string panic_str;
+
+  switch (assert)
+    {
+    case TyAssert::Inhabited:
+      panic_str = "attempted to instantiate uninhabited type `" + t_name + "`";
+      break;
+    case TyAssert::ZeroValid:
+      panic_str = "attempted to zero-initialize type `" + t_name
+		  + "`, which is invalid";
+
+      // FIXME: Remove eventually
+      always_warn = true;
+      fn_name = "assert_zero_valid<T>";
+      break;
+    case TyAssert::UninitValid:
+      panic_str = "attempted to leave type `" + t_name
+		  + "` uninitialized, which is invalid";
+
+      // FIXME: Remove eventually
+      always_warn = true;
+      fn_name = "assert_uninit_valid<T>";
+      break;
+    }
+
+  if (always_warn)
+    {
+      rust_warning_at (ctx.loc, 0,
+		       "%qs was emitted as a no-op and "
+		       "will not trigger - this may be invalid",
+		       fn_name);
+    }
+
+  if (!valid)
+    {
+      auto arg = build_rust_string (ctx, panic_str);
+
+      auto panic_call = lang_item_call (ctx, LangItem::Kind::PANIC, {arg});
+
+      ctx.add_statement (panic_call);
+
+      // buh :(
+      TREE_READONLY (ctx.fn) = 0;
+      TREE_USED (ctx.fn) = 1;
+      TREE_SIDE_EFFECTS (ctx.fn) = 1;
+    }
 }
 
 } // namespace inner
 
-const HandlerBuilder
+Intrinsic::CompileFn
 op_with_overflow (tree_code op)
 {
-  return [op] (Context *ctx, TyTy::FnType *fntype, location_t) {
-    return inner::op_with_overflow (ctx, fntype, op);
-  };
+  return [op] (IntrinsicCtx &ctx) { return inner::op_with_overflow (ctx, op); };
 }
 
-HandlerBuilder
+Intrinsic::CompileFn
 fop_fast (ArithmeticOrLogicalOperator op)
 {
-  return [op] (Context *ctx, TyTy::FnType *fntype, location_t locus) {
-    return inner::fop_fast (ctx, fntype, locus, op);
-  };
+  return [op] (IntrinsicCtx &ctx) { return inner::fop_fast (ctx, op); };
 }
 
-tree
-rotate_left (Context *ctx, TyTy::FnType *fntype, location_t)
+Intrinsic::CompileFn
+type_assert (TyAssert assert)
 {
-  return handlers::rotate (ctx, fntype, LROTATE_EXPR);
+  return
+    [assert] (IntrinsicCtx &ctx) { return inner::type_assert (ctx, assert); };
 }
 
-tree
-rotate_right (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+rotate_left (IntrinsicCtx &ctx)
 {
-  return handlers::rotate (ctx, fntype, RROTATE_EXPR);
+  return handlers::rotate (ctx, LROTATE_EXPR);
 }
 
-const HandlerBuilder
+void
+rotate_right (IntrinsicCtx &ctx)
+{
+  return handlers::rotate (ctx, RROTATE_EXPR);
+}
+
+Intrinsic::CompileFn
 wrapping_op (tree_code op)
 {
-  return [op] (Context *ctx, TyTy::FnType *fntype, location_t) {
-    return inner::wrapping_op (ctx, fntype, op);
-  };
+  return [op] (IntrinsicCtx &ctx) { return inner::wrapping_op (ctx, op); };
 }
 
-HandlerBuilder
+Intrinsic::CompileFn
 atomic_store (int ordering)
 {
-  return [ordering] (Context *ctx, TyTy::FnType *fntype, location_t) {
-    return inner::atomic_store (ctx, fntype, ordering);
+  return [ordering] (IntrinsicCtx &ctx) {
+    return inner::atomic_store (ctx, ordering);
   };
 }
 
-HandlerBuilder
+Intrinsic::CompileFn
 atomic_load (int ordering)
 {
-  return [ordering] (Context *ctx, TyTy::FnType *fntype, location_t) {
-    return inner::atomic_load (ctx, fntype, ordering);
+  return [ordering] (IntrinsicCtx &ctx) {
+    return inner::atomic_load (ctx, ordering);
   };
 }
 
-const HandlerBuilder
+Intrinsic::CompileFn
 unchecked_op (tree_code op)
 {
-  return [op] (Context *ctx, TyTy::FnType *fntype, location_t) {
-    return inner::unchecked_op (ctx, fntype, op);
-  };
+  return [op] (IntrinsicCtx &ctx) { return inner::unchecked_op (ctx, op); };
 }
 
-const HandlerBuilder
+Intrinsic::CompileFn
 copy (bool overlaps)
 {
-  return [overlaps] (Context *ctx, TyTy::FnType *fntype, location_t) {
-    return inner::copy (ctx, fntype, overlaps);
-  };
+  return [overlaps] (IntrinsicCtx &ctx) { return inner::copy (ctx, overlaps); };
 }
 
-const HandlerBuilder
+Intrinsic::CompileFn
 expect (bool likely)
 {
-  return [likely] (Context *ctx, TyTy::FnType *fntype, location_t) {
-    return inner::expect (ctx, fntype, likely);
-  };
+  return [likely] (IntrinsicCtx &ctx) { return inner::expect (ctx, likely); };
 }
 
-const HandlerBuilder
+Intrinsic::CompileFn
 try_handler (bool is_new_api)
 {
-  return [is_new_api] (Context *ctx, TyTy::FnType *fntype, location_t) {
-    return inner::try_handler (ctx, fntype, is_new_api);
+  return [is_new_api] (IntrinsicCtx &ctx) {
+    return inner::try_handler (ctx, is_new_api);
   };
 }
 
-tree
-sorry (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+sorry (IntrinsicCtx &ctx)
 {
-  rust_sorry_at (fntype->get_locus (), "intrinsic %qs is not yet implemented",
-		 fntype->get_identifier ().c_str ());
-
-  return error_mark_node;
+  rust_sorry_at (ctx.loc, "intrinsic %qs is not yet implemented",
+		 ctx.fntype.get_identifier ().c_str ());
 }
 
-tree
-assume (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+assume (IntrinsicCtx &ctx)
 {
   // TODO: make sure this is actually helping the compiler optimize
 
-  rust_assert (fntype->get_params ().size () == 1);
-  rust_assert (fntype->param_at (0).get_type ()->get_kind ()
+  rust_assert (ctx.fntype.param_at (0).get_type ()->get_kind ()
 	       == TyTy::TypeKind::BOOL);
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
   // TODO: make sure these are necessary
-  TREE_READONLY (fndecl) = 0;
-  DECL_DISREGARD_INLINE_LIMITS (fndecl) = 1;
-  DECL_ATTRIBUTES (fndecl) = tree_cons (get_identifier ("always_inline"),
-					NULL_TREE, DECL_ATTRIBUTES (fndecl));
+  TREE_READONLY (ctx.fn) = 0;
+  DECL_DISREGARD_INLINE_LIMITS (ctx.fn) = 1;
+  DECL_ATTRIBUTES (ctx.fn) = tree_cons (get_identifier ("always_inline"),
+					NULL_TREE, DECL_ATTRIBUTES (ctx.fn));
 
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN assume FN BODY BEGIN
-
-  tree val = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
+  tree val = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
 
   tree assume_expr = build_call_expr_internal_loc (UNDEF_LOCATION, IFN_ASSUME,
 						   void_type_node, 1, val);
   TREE_SIDE_EFFECTS (assume_expr) = 1;
 
-  ctx->add_statement (assume_expr);
-  // BUILTIN assume FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (assume_expr);
 }
 
-tree
-discriminant_value (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+discriminant_value (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 1);
-  rust_assert (fntype->has_substitutions ());
-  rust_assert (fntype->get_num_type_params () == 1);
-  auto &mapping = fntype->get_substs ().at (0);
+  auto &mapping = ctx.fntype.get_substs ().at (0);
   auto param_ty = mapping.get_param_ty ();
   rust_assert (param_ty->can_resolve ());
   auto resolved = param_ty->resolve ();
 
   TyTy::BaseType *return_type = nullptr;
-  bool ok = ctx->get_tyctx ()->lookup_builtin ("isize", &return_type);
+  bool ok = ctx.get_tyctx ()->lookup_builtin ("isize", &return_type);
   rust_assert (ok);
 
   bool is_adt = resolved->is<TyTy::ADTType> ();
@@ -1250,46 +1149,23 @@ discriminant_value (Context *ctx, TyTy::FnType *fntype, location_t)
       is_enum = adt.is_enum ();
     }
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN disriminant_value FN BODY BEGIN
-
   tree result = integer_zero_node;
   if (is_enum)
     {
-      tree val = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
+      tree val = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
       tree deref = build_fold_indirect_ref_loc (UNKNOWN_LOCATION, val);
       result = Backend::struct_field_expression (deref, 0, UNKNOWN_LOCATION);
     }
 
   auto return_statement
-    = Backend::return_statement (fndecl, result, BUILTINS_LOCATION);
-  ctx->add_statement (return_statement);
-
-  // BUILTIN disriminant_value FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, result, BUILTINS_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
-tree
-variant_count (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+variant_count (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_num_type_params () == 1);
-  auto &mapping = fntype->get_substs ().at (0);
+  auto &mapping = ctx.fntype.get_substs ().at (0);
   auto param_ty = mapping.get_param_ty ();
   rust_assert (param_ty->can_resolve ());
   auto resolved = param_ty->resolve ();
@@ -1302,22 +1178,7 @@ variant_count (Context *ctx, TyTy::FnType *fntype, location_t)
       variant_count = adt.number_of_variants ();
     }
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN disriminant_value FN BODY BEGIN
-  tree result_decl = DECL_RESULT (fndecl);
+  tree result_decl = DECL_RESULT (ctx.fn);
   tree type = TREE_TYPE (result_decl);
 
   mpz_t ival;
@@ -1326,51 +1187,26 @@ variant_count (Context *ctx, TyTy::FnType *fntype, location_t)
   mpz_clear (ival);
 
   auto return_statement
-    = Backend::return_statement (fndecl, result, BUILTINS_LOCATION);
-  ctx->add_statement (return_statement);
-
-  // BUILTIN disriminant_value FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, result, BUILTINS_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
-tree
-move_val_init (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+move_val_init (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 2);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
   // Most intrinsic functions are pure - not `move_val_init`
-  TREE_READONLY (fndecl) = 0;
-  TREE_SIDE_EFFECTS (fndecl) = 1;
+  TREE_READONLY (ctx.fn) = 0;
+  TREE_SIDE_EFFECTS (ctx.fn) = 1;
 
   // get the template parameter type tree fn size_of<T>();
-  rust_assert (fntype->get_num_substitutions () == 1);
-  auto &param_mapping = fntype->get_substs ().at (0);
+  auto &param_mapping = ctx.fntype.get_substs ().at (0);
   auto param_tyty = param_mapping.get_param_ty ();
   auto resolved_tyty = param_tyty->resolve ();
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, resolved_tyty);
+    = TyTyResolveCompile::compile (ctx.inner (), resolved_tyty);
 
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN size_of FN BODY BEGIN
-
-  tree dst = Backend::var_expression (param_vars[0], UNDEF_LOCATION);
-  tree src = Backend::var_expression (param_vars[1], UNDEF_LOCATION);
+  tree dst = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
+  tree src = Backend::var_expression (ctx.param_vars[1], UNDEF_LOCATION);
   tree size = TYPE_SIZE_UNIT (template_parameter_type);
 
   auto memcpy_builtin
@@ -1381,52 +1217,37 @@ move_val_init (Context *ctx, TyTy::FnType *fntype, location_t)
   tree memset_call = build_call_expr_loc (BUILTINS_LOCATION, *memcpy_builtin, 3,
 					  dst, src, size);
 
-  ctx->add_statement (memset_call);
-  // BUILTIN size_of FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (memset_call);
 }
 
-tree
-uninit (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+uninit (IntrinsicCtx &ctx)
 {
   // uninit has _zero_ parameters its parameter is the generic one
-  rust_assert (fntype->get_params ().size () == 0);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
 
   // Most intrinsic functions are pure - not `uninit_handler`
-  TREE_READONLY (fndecl) = 0;
-  TREE_SIDE_EFFECTS (fndecl) = 1;
+  TREE_READONLY (ctx.fn) = 0;
+  TREE_SIDE_EFFECTS (ctx.fn) = 1;
 
   // get the template parameter type tree fn uninit<T>();
-  rust_assert (fntype->get_num_substitutions () == 1);
-  auto &param_mapping = fntype->get_substs ().at (0);
+  auto &param_mapping = ctx.fntype.get_substs ().at (0);
   const auto param_tyty = param_mapping.get_param_ty ();
   auto resolved_tyty = param_tyty->resolve ();
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, resolved_tyty);
+    = TyTyResolveCompile::compile (ctx.inner (), resolved_tyty);
 
   // result temporary
-  tree dst_type = TREE_TYPE (DECL_RESULT (fndecl));
+  tree dst_type = TREE_TYPE (DECL_RESULT (ctx.fn));
   rust_assert (TYPE_SIZE_UNIT (template_parameter_type)
 	       == TYPE_SIZE_UNIT (dst_type));
 
   tree tmp_stmt = error_mark_node;
   Bvariable *bvar
-    = Backend::temporary_variable (fndecl, NULL_TREE, dst_type, NULL_TREE,
+    = Backend::temporary_variable (ctx.fn, NULL_TREE, dst_type, NULL_TREE,
 				   true /*address_is_taken*/, UNDEF_LOCATION,
 				   &tmp_stmt);
 
-  enter_intrinsic_block (ctx, fndecl, {bvar});
-
-  // BUILTIN size_of FN BODY BEGIN
+  ctx.set_block_variables ({bvar});
 
   auto memset_builtin
     = BuiltinsContext::get ().lookup_simple_builtin ("__builtin_memset");
@@ -1442,53 +1263,32 @@ uninit (Context *ctx, TyTy::FnType *fntype, location_t)
 
   tree memset_call = build_call_expr_loc (BUILTINS_LOCATION, *memset_builtin, 3,
 					  dst_addr, constant_byte, size_expr);
-  ctx->add_statement (memset_call);
+  ctx.add_statement (memset_call);
 
   auto return_statement
-    = Backend::return_statement (fndecl, dst, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-  // BUILTIN size_of FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, dst, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
-tree
-prefetch_read_data (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+prefetch_read_data (IntrinsicCtx &ctx)
 {
-  return prefetch_data (ctx, fntype, Prefetch::Read);
+  return prefetch_data (ctx, Prefetch::Read);
 }
-tree
-prefetch_write_data (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+prefetch_write_data (IntrinsicCtx &ctx)
 {
-  return prefetch_data (ctx, fntype, Prefetch::Write);
+  return prefetch_data (ctx, Prefetch::Write);
 }
 
-tree
-prefetch_data (Context *ctx, TyTy::FnType *fntype, Prefetch kind)
+void
+prefetch_data (IntrinsicCtx &ctx, Prefetch kind)
 {
-  rust_assert (fntype->get_params ().size () == 2);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
   // prefetching isn't pure and shouldn't be discarded after GIMPLE
-  TREE_READONLY (fndecl) = 0;
-  TREE_SIDE_EFFECTS (fndecl) = 1;
+  TREE_READONLY (ctx.fn) = 0;
+  TREE_SIDE_EFFECTS (ctx.fn) = 1;
 
-  std::vector<Bvariable *> args;
-  compile_fn_params (ctx, fntype, fndecl, &args);
-
-  if (!Backend::function_set_parameters (fndecl, args))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  auto addr = Backend::var_expression (args[0], UNDEF_LOCATION);
+  auto addr = Backend::var_expression (ctx.param_vars[0], UNDEF_LOCATION);
 
   // The core library technically allows you to pass any i32 value as a
   // locality, but LLVM will then complain if the value cannot be constant
@@ -1502,7 +1302,7 @@ prefetch_data (Context *ctx, TyTy::FnType *fntype, Prefetch kind)
   // site directly This has the bad side-effect of creating warnings about
   // `unused name - locality`, which we hack away here:
   // TODO: Take care of handling locality properly
-  Backend::var_expression (args[1], UNDEF_LOCATION);
+  Backend::var_expression (ctx.param_vars[1], UNDEF_LOCATION);
 
   auto rw_flag = make_unsigned_long_tree (kind == Prefetch::Write ? 1 : 0);
 
@@ -1521,79 +1321,38 @@ prefetch_data (Context *ctx, TyTy::FnType *fntype, Prefetch kind)
   TREE_READONLY (prefetch_call) = 0;
   TREE_SIDE_EFFECTS (prefetch_call) = 1;
 
-  ctx->add_statement (prefetch_call);
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (prefetch_call);
 }
 
-tree
-rotate (Context *ctx, TyTy::FnType *fntype, tree_code op)
+void
+rotate (IntrinsicCtx &ctx, tree_code op)
 {
   // rotate intrinsic has two parameter
-  rust_assert (fntype->get_params ().size () == 2);
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
+  auto &x_param = ctx.param_vars.at (0);
+  auto &y_param = ctx.param_vars.at (1);
+  rust_assert (ctx.param_vars.size () == 2);
 
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &x_param = param_vars.at (0);
-  auto &y_param = param_vars.at (1);
-  rust_assert (param_vars.size () == 2);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN rotate FN BODY BEGIN
   tree x = Backend::var_expression (x_param, UNDEF_LOCATION);
   tree y = Backend::var_expression (y_param, UNDEF_LOCATION);
   tree rotate_expr
     = fold_build2_loc (BUILTINS_LOCATION, op, TREE_TYPE (x), x, y);
   auto return_statement
-    = Backend::return_statement (fndecl, rotate_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-  // BUILTIN rotate FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, rotate_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
-tree
-transmute (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+transmute (IntrinsicCtx &ctx)
 {
-  // transmute intrinsic has one parameter
-  rust_assert (fntype->get_params ().size () == 1);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  std::vector<Bvariable *> param_vars;
-  std::vector<tree_node *> compiled_types;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars, &compiled_types);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
   // param to convert
-  Bvariable *convert_me_param = param_vars.at (0);
+  Bvariable *convert_me_param = ctx.param_vars.at (0);
   tree convert_me_expr
     = Backend::var_expression (convert_me_param, UNDEF_LOCATION);
 
   // check for transmute pre-conditions
-  tree target_type_expr = TREE_TYPE (DECL_RESULT (fndecl));
-  tree source_type_expr = compiled_types.at (0);
+  tree target_type_expr = TREE_TYPE (DECL_RESULT (ctx.fn));
+  tree source_type_expr = ctx.param_types.at (0);
   tree target_size_expr = TYPE_SIZE (target_type_expr);
   tree source_size_expr = TYPE_SIZE (source_type_expr);
   // for some reason, unit types and other zero-sized types return NULL for the
@@ -1608,21 +1367,17 @@ transmute (Context *ctx, TyTy::FnType *fntype, location_t)
   // types
   if (target_size != source_size)
     {
-      rust_error_at (fntype->get_locus (),
+      rust_error_at (ctx.fntype.get_locus (),
 		     "cannot transmute between types of different sizes, or "
 		     "dependently-sized types");
       rust_inform (
-	fntype->get_ident ().locus, "source type: %qs (%lu bits)",
-	fntype->get_params ().at (0).get_type ()->as_string ().c_str (),
+	ctx.fntype.get_ident ().locus, "source type: %qs (%lu bits)",
+	ctx.fntype.get_params ().at (0).get_type ()->as_string ().c_str (),
 	(unsigned long) source_size);
-      rust_inform (fntype->get_ident ().locus, "target type: %qs (%lu bits)",
-		   fntype->get_return_type ()->as_string ().c_str (),
+      rust_inform (ctx.fntype.get_ident ().locus, "target type: %qs (%lu bits)",
+		   ctx.fntype.get_return_type ()->as_string ().c_str (),
 		   (unsigned long) target_size);
     }
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN transmute FN BODY BEGIN
 
   // Return *((orig_type*)&decl)  */
 
@@ -1632,83 +1387,44 @@ transmute (Context *ctx, TyTy::FnType *fntype, location_t)
   tree result_expr = build_fold_indirect_ref_loc (UNKNOWN_LOCATION, t);
 
   auto return_statement
-    = Backend::return_statement (fndecl, result_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-  // BUILTIN transmute FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, result_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
-tree
-sizeof_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+sizeof_handler (IntrinsicCtx &ctx)
 {
   // size_of has _zero_ parameters its parameter is the generic one
-  rust_assert (fntype->get_params ().size () == 0);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
 
   // get the template parameter type tree fn size_of<T>();
-  rust_assert (fntype->get_num_substitutions () == 1);
-  auto &param_mapping = fntype->get_substs ().at (0);
+  auto &param_mapping = ctx.fntype.get_substs ().at (0);
   const auto param_tyty = param_mapping.get_param_ty ();
   auto resolved_tyty = param_tyty->resolve ();
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, resolved_tyty);
+    = TyTyResolveCompile::compile (ctx.inner (), resolved_tyty);
 
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN size_of FN BODY BEGIN
   tree size_expr = TYPE_SIZE_UNIT (template_parameter_type);
   auto return_statement
-    = Backend::return_statement (fndecl, size_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-  // BUILTIN size_of FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, size_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
 /**
  * pub fn size_of_val<T: ?Sized>(_: *const T) -> usize;
  */
-tree
-size_of_val_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+size_of_val_handler (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 1);
+  auto locus = ctx.fntype.get_locus ();
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
+  auto &__param = ctx.param_vars.at (0);
+  rust_assert (ctx.param_vars.size () == 1);
 
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  auto locus = fntype->get_locus ();
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &__param = param_vars.at (0);
-  rust_assert (param_vars.size () == 1);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  rust_assert (fntype->get_num_substitutions () == 1);
-  auto &param_mapping = fntype->get_substs ().at (0);
+  auto &param_mapping = ctx.fntype.get_substs ().at (0);
   const auto param_tyty = param_mapping.get_param_ty ();
   auto resolved_tyty = param_tyty->resolve ();
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, resolved_tyty);
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN size_of FN BODY BEGIN
+    = TyTyResolveCompile::compile (ctx.inner (), resolved_tyty);
 
   tree size_expr = NULL_TREE;
 
@@ -1732,7 +1448,7 @@ size_of_val_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 	    {
 	      auto slice_tyty = static_cast<TyTy::SliceType *> (inner_dst);
 	      elem_type
-		= TyTyResolveCompile::compile (ctx,
+		= TyTyResolveCompile::compile (ctx.inner (),
 					       slice_tyty->get_element_type ());
 	    }
 	  else
@@ -1778,89 +1494,49 @@ size_of_val_handler (Context *ctx, TyTy::FnType *fntype, location_t)
     size_expr = TYPE_SIZE_UNIT (template_parameter_type);
 
   auto return_statement
-    = Backend::return_statement (fndecl, size_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-
-  // BUILTIN size_of FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, size_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
 /**
  * pub fn min_align_of<T>() -> usize;
  */
-tree
-min_align_of_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+min_align_of_handler (IntrinsicCtx &ctx)
 {
   // min_align_of has _zero_ parameters its parameter is the generic one
-  rust_assert (fntype->get_params ().size () == 0);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
 
   // get the template parameter type tree fn min_align_of<T>();
-  rust_assert (fntype->get_num_substitutions () == 1);
-  auto &param_mapping = fntype->get_substs ().at (0);
+  auto &param_mapping = ctx.fntype.get_substs ().at (0);
   const auto param_tyty = param_mapping.get_param_ty ();
   auto resolved_tyty = param_tyty->resolve ();
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, resolved_tyty);
+    = TyTyResolveCompile::compile (ctx.inner (), resolved_tyty);
 
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN min_align_of FN BODY BEGIN
   tree align_expr
     = build_int_cst (size_type_node, TYPE_ALIGN_UNIT (template_parameter_type));
 
   auto return_statement
-    = Backend::return_statement (fndecl, align_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-  // BUILTIN min_align_of FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, align_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
 /**
  * pub fn min_align_of_val<T: ?Sized>(_: *const T) -> usize;
  */
-tree
-min_align_of_val_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+min_align_of_val_handler (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 1);
+  auto locus = ctx.fntype.get_locus ();
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
+  auto &__param = ctx.param_vars.at (0);
+  rust_assert (ctx.param_vars.size () == 1);
 
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  auto locus = fntype->get_locus ();
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &__param = param_vars.at (0);
-  rust_assert (param_vars.size () == 1);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  rust_assert (fntype->get_num_substitutions () == 1);
-  auto &param_mapping = fntype->get_substs ().at (0);
+  auto &param_mapping = ctx.fntype.get_substs ().at (0);
   const auto param_tyty = param_mapping.get_param_ty ();
   auto resolved_tyty = param_tyty->resolve ();
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, resolved_tyty);
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN size_of FN BODY BEGIN
+    = TyTyResolveCompile::compile (ctx.inner (), resolved_tyty);
 
   tree align_expr = NULL_TREE;
   tree param = Backend::var_expression (__param, UNDEF_LOCATION);
@@ -1884,7 +1560,7 @@ min_align_of_val_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 	    {
 	      auto slice_tyty = static_cast<TyTy::SliceType *> (inner_dst);
 	      elem_type
-		= TyTyResolveCompile::compile (ctx,
+		= TyTyResolveCompile::compile (ctx.inner (),
 					       slice_tyty->get_element_type ());
 	    }
 	  else
@@ -1931,88 +1607,49 @@ min_align_of_val_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 				TYPE_ALIGN_UNIT (template_parameter_type));
 
   auto return_statement
-    = Backend::return_statement (fndecl, align_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-
-  // BUILTIN size_of FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, align_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
-tree
-offset (Context *ctx, TyTy::FnType *fntype, location_t expr_locus)
+void
+offset (IntrinsicCtx &ctx)
 {
   // offset intrinsic has two params dst pointer and offset isize
-  rust_assert (fntype->get_params ().size () == 2);
 
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
+  auto &dst_param = ctx.param_vars.at (0);
+  auto &size_param = ctx.param_vars.at (1);
+  rust_assert (ctx.param_vars.size () == 2);
 
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &dst_param = param_vars.at (0);
-  auto &size_param = param_vars.at (1);
-  rust_assert (param_vars.size () == 2);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN offset FN BODY BEGIN
   tree dst = Backend::var_expression (dst_param, UNDEF_LOCATION);
   tree size = Backend::var_expression (size_param, UNDEF_LOCATION);
-  tree pointer_offset_expr = pointer_offset_expression (dst, size, expr_locus);
+  tree pointer_offset_expr = pointer_offset_expression (dst, size, ctx.loc);
   auto return_statement
-    = Backend::return_statement (fndecl, pointer_offset_expr, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-  // BUILTIN offset FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, pointer_offset_expr, UNDEF_LOCATION);
+  ctx.add_statement (return_statement);
 }
 
 /**
  * pub const fn bswap<T: Copy>(x: T) -> T;
  */
-tree
-bswap_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+bswap_handler (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 1);
+  auto locus = ctx.fntype.get_locus ();
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  auto locus = fntype->get_locus ();
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &x_param = param_vars.at (0);
-  rust_assert (param_vars.size () == 1);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
+  auto &x_param = ctx.param_vars.at (0);
+  rust_assert (ctx.param_vars.size () == 1);
 
   auto *monomorphized_type
-    = fntype->get_substs ().at (0).get_param_ty ()->resolve ();
+    = ctx.fntype.get_substs ().at (0).get_param_ty ()->resolve ();
 
-  auto call_locus = ctx->get_mappings ().lookup_location (fntype->get_ref ());
+  auto call_locus = ctx.get_mappings ().lookup_location (ctx.fntype.get_ref ());
   check_for_basic_integer_type ("bswap", call_locus, monomorphized_type);
 
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, monomorphized_type);
+    = TyTyResolveCompile::compile (ctx.inner (), monomorphized_type);
 
   tree size_expr = TYPE_SIZE_UNIT (template_parameter_type);
   unsigned HOST_WIDE_INT size = TREE_INT_CST_LOW (size_expr);
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN bswap FN BODY BEGIN
 
   auto expr_x = Backend::var_expression (x_param, locus);
   tree result = NULL_TREE;
@@ -2044,7 +1681,8 @@ bswap_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 	  target_type = uint128_type_node;
 	  break;
 	default:
-	  return error_mark_node;
+	  rust_unreachable ();
+	  return;
 	}
 
       auto bswap_raw
@@ -2071,10 +1709,10 @@ bswap_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 
 	  tree tmp_in_stmt = error_mark_node;
 	  Bvariable *in_var
-	    = Backend::temporary_variable (fndecl, NULL_TREE,
+	    = Backend::temporary_variable (ctx.fn, NULL_TREE,
 					   template_parameter_type, expr_x,
 					   true, locus, &tmp_in_stmt);
-	  ctx->add_statement (tmp_in_stmt);
+	  ctx.add_statement (tmp_in_stmt);
 
 	  tree addr_x
 	    = build_fold_addr_expr_loc (locus, in_var->get_tree (locus));
@@ -2094,10 +1732,10 @@ bswap_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 
 	  tree tmp_stmt = error_mark_node;
 	  Bvariable *result_var
-	    = Backend::temporary_variable (fndecl, NULL_TREE,
+	    = Backend::temporary_variable (ctx.fn, NULL_TREE,
 					   template_parameter_type, NULL_TREE,
 					   true, locus, &tmp_stmt);
-	  ctx->add_statement (tmp_stmt);
+	  ctx.add_statement (tmp_stmt);
 
 	  tree addr_res
 	    = build_fold_addr_expr_loc (locus, result_var->get_tree (locus));
@@ -2106,7 +1744,7 @@ bswap_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 	  tree store_low
 	    = build2 (MODIFY_EXPR, void_type_node,
 		      build_fold_indirect_ref_loc (locus, res_ptr), new_low);
-	  ctx->add_statement (store_low);
+	  ctx.add_statement (store_low);
 
 	  tree res_high_ptr = fold_build2 (POINTER_PLUS_EXPR, u64_ptr_type,
 					   res_ptr, size_int (8));
@@ -2114,86 +1752,63 @@ bswap_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 	    = build2 (MODIFY_EXPR, void_type_node,
 		      build_fold_indirect_ref_loc (locus, res_high_ptr),
 		      new_high);
-	  ctx->add_statement (store_high);
+	  ctx.add_statement (store_high);
 
 	  result = result_var->get_tree (locus);
 	}
     }
 
-  auto return_statement = Backend::return_statement (fndecl, result, locus);
+  auto return_statement = Backend::return_statement (ctx.fn, result, locus);
 
   TREE_READONLY (result) = 1;
 
-  ctx->add_statement (return_statement);
-
-  // BUILTIN bswap FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (return_statement);
 }
 
-tree
-ctlz_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+ctlz_handler (IntrinsicCtx &ctx)
 {
-  return inner::ctlz_handler (ctx, fntype, false);
+  return inner::ctlz_handler (ctx, false);
 }
 
-tree
-ctlz_nonzero_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+ctlz_nonzero_handler (IntrinsicCtx &ctx)
 {
-  return inner::ctlz_handler (ctx, fntype, true);
+  return inner::ctlz_handler (ctx, true);
 }
 
-tree
-cttz_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+cttz_handler (IntrinsicCtx &ctx)
 {
-  return inner::cttz_handler (ctx, fntype, false);
+  return inner::cttz_handler (ctx, false);
 }
 
-tree
-cttz_nonzero_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+cttz_nonzero_handler (IntrinsicCtx &ctx)
 {
-  return inner::cttz_handler (ctx, fntype, true);
+  return inner::cttz_handler (ctx, true);
 }
 
 /**
  * pub unsafe fn write_bytes<T>(dst: *mut T, val: u8, count: usize);
  */
-tree
-write_bytes_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+write_bytes_handler (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 3);
+  auto locus = ctx.fntype.get_locus ();
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  tree fndecl = compile_intrinsic_function (ctx, fntype);
-
-  auto locus = fntype->get_locus ();
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &dst_param = param_vars.at (0);
-  auto &val_param = param_vars.at (1);
-  auto &count_param = param_vars.at (2);
-  rust_assert (param_vars.size () == 3);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
+  auto &dst_param = ctx.param_vars.at (0);
+  auto &val_param = ctx.param_vars.at (1);
+  auto &count_param = ctx.param_vars.at (2);
+  rust_assert (ctx.param_vars.size () == 3);
 
   auto *monomorphized_type
-    = fntype->get_substs ().at (0).get_param_ty ()->resolve ();
+    = ctx.fntype.get_substs ().at (0).get_param_ty ()->resolve ();
 
   tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, monomorphized_type);
+    = TyTyResolveCompile::compile (ctx.inner (), monomorphized_type);
   tree dst_size_expr = TYPE_SIZE_UNIT (template_parameter_type);
   rust_assert (dst_size_expr != NULL_TREE);
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN WRITE_BYTES FN BODY START
 
   tree expr_dst = Backend::var_expression (dst_param, locus);
   tree expr_val = Backend::var_expression (val_param, locus);
@@ -2215,149 +1830,90 @@ write_bytes_handler (Context *ctx, TyTy::FnType *fntype, location_t)
 				{expr_dst, expr_val, expr_count_final},
 				NULL_TREE, locus);
 
-  ctx->add_statement (write_bytes_call);
+  ctx.add_statement (write_bytes_call);
 
-  // BUILTIN WRITE_BYTES FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  TREE_READONLY (fndecl) = 0;
-
-  return fndecl;
+  TREE_READONLY (ctx.fn) = 0;
 }
 
 /**
  * pub fn arith_offset<T>(dst: *const T, offset: isize) -> *const T;
  */
-tree
-arith_offset_handler (Context *ctx, TyTy::FnType *fntype, location_t expr_locus)
+void
+arith_offset_handler (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 2);
+  auto locus = ctx.fntype.get_locus ();
 
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  auto locus = fntype->get_locus ();
-
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
-
-  auto &dst_param = param_vars.at (0);
-  auto &size_param = param_vars.at (1);
-  rust_assert (param_vars.size () == 2);
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN arith_offset FN BODY BEGIN
+  auto &dst_param = ctx.param_vars.at (0);
+  auto &size_param = ctx.param_vars.at (1);
+  rust_assert (ctx.param_vars.size () == 2);
 
   tree dst = Backend::var_expression (dst_param, locus);
   tree size = Backend::var_expression (size_param, locus);
-  tree pointer_offset_expr = pointer_offset_expression (dst, size, expr_locus);
+  tree pointer_offset_expr = pointer_offset_expression (dst, size, ctx.loc);
   auto return_statement
-    = Backend::return_statement (fndecl, pointer_offset_expr, locus);
-  ctx->add_statement (return_statement);
-
-  // BUILTIN arith_offset FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+    = Backend::return_statement (ctx.fn, pointer_offset_expr, locus);
+  ctx.add_statement (return_statement);
 }
 
-/**
- * pub fn assert_zero_valid<T>();
- *
- * TODO: Since gccrs currently lacks comprehensive layout engine support for
- * validity ranges (such as `rustc_layout_scalar_valid_range_start`), we cannot
- * accurately determine if a type is safely zeroable. Therefore, this is
- * implemented as a temporary no-op stub that always returns void (unit) and
- * succeeds for all types.
- */
-tree
-assert_zero_valid_handler (Context *ctx, TyTy::FnType *fntype, location_t)
+void
+exact_div_handler (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 0);
+  auto lhs_param = ctx.param_vars.at (0);
+  auto rhs_param = ctx.param_vars.at (1);
 
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
+  auto lhs = Backend::var_expression (lhs_param, ctx.loc);
+  auto rhs = Backend::var_expression (rhs_param, ctx.loc);
 
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
+  auto div_expr
+    = build2_loc (ctx.loc, EXACT_DIV_EXPR, TREE_TYPE (lhs), lhs, rhs);
 
-  rust_assert (fntype->get_num_substitutions () == 1);
-  auto &param_mapping = fntype->get_substs ().at (0);
-  const auto param_tyty = param_mapping.get_param_ty ();
-  auto resolved_tyty = param_tyty->resolve ();
+  auto return_stmt = Backend::return_statement (ctx.fn, div_expr, ctx.loc);
 
-  // Safely resolve the template parameter type to ensure monomorphization
-  // works.
-  // Suppress unused-variable warning since layout verification is a FIXME.
-  [[gnu::unused]] tree template_parameter_type
-    = TyTyResolveCompile::compile (ctx, resolved_tyty);
-
-  enter_intrinsic_block (ctx, fndecl);
-
-  // BUILTIN assert_zero_valid FN BODY BEGIN
-
-  // TODO: Implement layout verification via template_parameter_type once
-  // niche-filling and valid scalar ranges are supported in the layout engine.
-  // If invalid, this should emit a panic.
-
-  // we always return unit for now.
-  auto return_statement
-    = Backend::return_statement (fndecl, void_node, UNDEF_LOCATION);
-  ctx->add_statement (return_statement);
-
-  // BUILTIN assert_zero_valid FN BODY END
-
-  finalize_intrinsic_block (ctx, fndecl);
-
-  return fndecl;
+  ctx.add_statement (return_stmt);
 }
 
-tree
-float_to_int_unchecked (Context *ctx, TyTy::FnType *fntype, location_t loc)
+void
+float_to_int_unchecked (IntrinsicCtx &ctx)
 {
-  rust_assert (fntype->get_params ().size () == 1);
-  rust_assert (fntype->get_num_substitutions () == 2);
-
-  tree lookup = NULL_TREE;
-  if (check_for_cached_intrinsic (ctx, fntype, &lookup))
-    return lookup;
-
-  auto fndecl = compile_intrinsic_function (ctx, fntype);
-
-  auto &dst_param = fntype->get_substs ().at (1);
+  auto &dst_param = ctx.fntype.get_substs ().at (1);
   const auto dst_ty = dst_param.get_param_ty ();
   auto int_ty_resolved = dst_ty->resolve ();
 
-  auto int_ty = TyTyResolveCompile::compile (ctx, int_ty_resolved);
+  auto int_ty = TyTyResolveCompile::compile (ctx.inner (), int_ty_resolved);
 
-  // setup the params
-  std::vector<Bvariable *> param_vars;
-  compile_fn_params (ctx, fntype, fndecl, &param_vars);
+  rust_assert (ctx.param_vars.size () == 1);
 
-  rust_assert (param_vars.size () == 1);
-
-  auto &float_param = param_vars.at (0);
-
-  if (!Backend::function_set_parameters (fndecl, param_vars))
-    return error_mark_node;
-
-  enter_intrinsic_block (ctx, fndecl);
+  auto &float_param = ctx.param_vars.at (0);
 
   tree float_value = Backend::var_expression (float_param, UNDEF_LOCATION);
 
-  auto convert_expr = Backend::convert_expression (int_ty, float_value, loc);
+  auto convert_expr
+    = Backend::convert_expression (int_ty, float_value, ctx.loc);
 
-  auto return_statement = Backend::return_statement (fndecl, convert_expr, loc);
+  auto return_statement
+    = Backend::return_statement (ctx.fn, convert_expr, ctx.loc);
 
-  ctx->add_statement (return_statement);
+  ctx.add_statement (return_statement);
+}
 
-  finalize_intrinsic_block (ctx, fndecl);
+void
+breakpoint (IntrinsicCtx &ctx)
+{
+  // For now, we don't have access to an equivalent of LLVM's debugtrap inst. We
+  // work around the problem by emitting a regular trap and we hope that the
+  // user's debugger can catch it :) Ideally, this would emit an `int3` on x86
+  // rather than a `ud2`
 
-  return fndecl;
+  auto trap = BuiltinsContext::get ().lookup_simple_builtin ("__builtin_trap");
+  rust_assert (trap);
+
+  tree trap_call = build_call_expr_loc (ctx.loc, *trap, 0);
+
+  ctx.add_statement (trap_call);
+
+  TREE_READONLY (ctx.fn) = 0;
+  TREE_USED (ctx.fn) = 1;
+  TREE_SIDE_EFFECTS (ctx.fn) = 1;
 }
 
 } // namespace handlers

@@ -1210,13 +1210,7 @@ issue_prefetch_ref (struct mem_ref *ref, unsigned unroll_factor, unsigned ahead)
       if (addr_base != addr
 	  && TREE_CODE (addr_base) == SSA_NAME
 	  && TREE_CODE (addr) == SSA_NAME)
-	{
-	  duplicate_ssa_name_ptr_info (addr, SSA_NAME_PTR_INFO (addr_base));
-	  /* As this isn't a plain copy we have to reset alignment
-	     information.  */
-	  if (SSA_NAME_PTR_INFO (addr))
-	    mark_ptr_info_alignment_unknown (SSA_NAME_PTR_INFO (addr));
-	}
+	duplicate_ssa_name_ptr_info (addr, addr_base);
 
       /* Create the prefetch instruction.  */
       prefetch = gimple_build_call (builtin_decl_explicit (BUILT_IN_PREFETCH),

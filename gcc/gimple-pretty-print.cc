@@ -2400,29 +2400,32 @@ dump_ssaname_info (pretty_printer *pp, tree node, int spc)
   if (TREE_CODE (node) != SSA_NAME)
     return;
 
-  if (POINTER_TYPE_P (TREE_TYPE (node))
-      && SSA_NAME_PTR_INFO (node))
+  if (const pt_solution *pt = ssa_name_pt_solution (node))
     {
-      unsigned int align, misalign;
-      struct ptr_info_def *pi = SSA_NAME_PTR_INFO (node);
       pp_string (pp, "# PT = ");
-      pp_points_to_solution (pp, &pi->pt);
+      pp_points_to_solution (pp, pt);
       newline_and_indent (pp, spc);
-      if (get_ptr_info_alignment (pi, &align, &misalign))
-	{
-	  pp_printf (pp, "# ALIGN = %u, MISALIGN = %u", align, misalign);
-	  newline_and_indent (pp, spc);
-	}
     }
 
-  if (!POINTER_TYPE_P (TREE_TYPE (node))
-      && SSA_NAME_RANGE_INFO (node))
+  unsigned int align, misalign;
+  if (get_ptr_info_alignment (node, &align, &misalign))
+    {
+      pp_printf (pp, "# ALIGN = %u, MISALIGN = %u", align, misalign);
+      newline_and_indent (pp, spc);
+    }
+
+  if (SSA_NAME_RANGE_INFO (node))
     {
       value_range r (TREE_TYPE (node));
       get_global_range_query ()->range_of_expr (r, node);
-      pp_string (pp, "# RANGE ");
-      pp_vrange (pp, &r);
-      newline_and_indent (pp, spc);
+      /* A pointer has storage as soon as it has aliasing info, so do not
+	 print the VARYING that results.  */
+      if (!r.varying_p ())
+	{
+	  pp_string (pp, "# RANGE ");
+	  pp_vrange (pp, &r);
+	  newline_and_indent (pp, spc);
+	}
     }
 }
 

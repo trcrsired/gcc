@@ -3504,19 +3504,11 @@ sem_item_optimizer::merge_classes (unsigned int prev_class_count,
 	    tree name;
 	    FOR_EACH_SSA_NAME (i, name, DECL_STRUCT_FUNCTION (source->decl))
 	      {
-		/* We need to either merge or reset SSA_NAME_*_INFO.
+		/* We need to either merge or reset SSA_NAME_RANGE_INFO.
 		   For merging we don't preserve the mapping between
 		   original and alias SSA_NAMEs from successful equals
 		   calls.  */
-		if (POINTER_TYPE_P (TREE_TYPE (name)))
-		  {
-		    if (SSA_NAME_PTR_INFO (name))
-		      {
-			gcc_checking_assert (!flag_wpa);
-			SSA_NAME_PTR_INFO (name) = NULL;
-		      }
-		  }
-		else if (SSA_NAME_RANGE_INFO (name))
+		if (SSA_NAME_RANGE_INFO (name))
 		  {
 		    gcc_checking_assert (!flag_wpa);
 		    SSA_NAME_RANGE_INFO (name) = NULL;
@@ -3534,7 +3526,7 @@ sem_item_optimizer::merge_classes (unsigned int prev_class_count,
 /* Fixup points to set PT.  */
 
 void
-sem_item_optimizer::fixup_pt_set (struct pt_solution *pt)
+sem_item_optimizer::fixup_pt_set (const pt_solution *pt)
 {
   if (pt->vars == NULL)
     return;
@@ -3581,8 +3573,8 @@ sem_item_optimizer::fixup_points_to_sets (void)
 
       FOR_EACH_SSA_NAME (i, name, fn)
 	if (POINTER_TYPE_P (TREE_TYPE (name))
-	    && SSA_NAME_PTR_INFO (name))
-	  fixup_pt_set (&SSA_NAME_PTR_INFO (name)->pt);
+	    && ssa_name_pt_solution (name))
+	  fixup_pt_set (ssa_name_pt_solution (name));
       fixup_pt_set (&fn->gimple_df->escaped);
       fixup_pt_set (&fn->gimple_df->escaped_return);
 

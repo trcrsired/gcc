@@ -227,7 +227,7 @@ create_array_ref (tree type, tree ptr, tree alias_ptr_type)
 
   mem_ref = build2 (MEM_REF, type, ptr, build_int_cst (alias_ptr_type, 0));
   /* Arrays have the same alignment as their type.  */
-  set_ptr_info_alignment (get_ptr_info (ptr), TYPE_ALIGN_UNIT (type), 0);
+  set_ptr_info_alignment (ptr, TYPE_ALIGN_UNIT (type), 0);
   return mem_ref;
 }
 
@@ -4176,9 +4176,21 @@ vectorizable_simd_clone_call (vec_info *vinfo, stmt_vec_info stmt_info,
 	  gcc_assert (cost_vec
 		      || thisarginfo.vectype != NULL_TREE);
 	  if (cost_vec)
-	    thisarginfo.vectype = get_vectype_for_scalar_type (vinfo,
-							       TREE_TYPE (op),
-							       slp_node);
+	    {
+	      thisarginfo.vectype = get_vectype_for_scalar_type (vinfo,
+								 TREE_TYPE (op),
+								 slp_node);
+	      /* ???  While for example uniform arguments might not need
+		 a vector type we are not set up to handle this case
+		 right now.  */
+	      if (!thisarginfo.vectype)
+		{
+		  if (dump_enabled_p ())
+		    dump_printf_loc (MSG_MISSED_OPTIMIZATION, vect_location,
+				     "no vector type for argument.\n");
+		  return false;
+		}
+	    }
 	}
       else
 	gcc_assert (thisarginfo.vectype != NULL_TREE);
@@ -4381,6 +4393,9 @@ vectorizable_simd_clone_call (vec_info *vinfo, stmt_vec_info stmt_info,
 	  {
 	    gcc_assert (n->simdclone->args[n->simdclone->nargs - 1].arg_type ==
 			SIMD_CLONE_ARG_TYPE_MASK);
+	    if (!SCALAR_INT_MODE_P (n->simdclone->mask_mode)
+		&& n->simdclone->mask_mode != VOIDmode)
+	      continue;
 	    /* Penalize using a masked SIMD clone in a non-masked loop, that is
 	       not in a branch, as we'd have to construct an all-true mask.  */
 	    this_badness += 64;
@@ -4492,15 +4507,20 @@ vectorizable_simd_clone_call (vec_info *vinfo, stmt_vec_info stmt_info,
 		  else
 		    {
 		      masktype = bestn_inbranch->simdclone->args[i].vector_type;
-		      /* The aarch64 port will add custom attributes to types
-			 for SVE simdclones which make the types different.  We
-			 should use canonincal types for masks within the
-			 vectorizer, hence we construct the related vectype
-			 here.  */
-		      masktype
-			= build_truth_vector_type_for_mode
-			  (TYPE_VECTOR_SUBPARTS (masktype),
-			   TYPE_MODE (masktype));
+		      if (VECTOR_BOOLEAN_TYPE_P (masktype))
+			{
+			  if (VECTOR_MODE_P (TYPE_MODE (masktype)))
+			    /* The aarch64 port will add custom attributes to
+			       types for SVE simdclones which make the types
+			       different.  We should use canonincal types for
+			       masks within the vectorizer, hence we
+			       re-construct the vectype from its mode.  */
+			    masktype = build_truth_vector_type_for_mode
+					 (TYPE_VECTOR_SUBPARTS (masktype),
+					  TYPE_MODE (masktype));
+			}
+		      else
+			masktype = truth_type_for (masktype);
 		      callee_nelements = TYPE_VECTOR_SUBPARTS (masktype);
 		    }
 		  if (!masktype)
@@ -9477,7 +9497,7 @@ vectorizable_store (vec_info *vinfo,
 	misalign = misalignment;
       if (dataref_offset == NULL_TREE
 	  && TREE_CODE (dataref_ptr) == SSA_NAME)
-	set_ptr_info_alignment (get_ptr_info (dataref_ptr), align, misalign);
+	set_ptr_info_alignment (dataref_ptr, align, misalign);
       align = least_bit_hwi (misalign | align);
 
       /* Compute IFN when LOOP_LENS or final_mask valid.  */
@@ -11543,8 +11563,7 @@ vectorizable_load (vec_info *vinfo,
 	      misalign = misalignment;
 	    if (dataref_offset == NULL_TREE
 		&& TREE_CODE (dataref_ptr) == SSA_NAME)
-	      set_ptr_info_alignment (get_ptr_info (dataref_ptr), align,
-				      misalign);
+	      set_ptr_info_alignment (dataref_ptr, align, misalign);
 	    align = least_bit_hwi (misalign | align);
 
 	    /* Compute IFN when LOOP_LENS or final_mask valid.  */

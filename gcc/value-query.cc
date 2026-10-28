@@ -582,7 +582,6 @@ static inline void
 get_ssa_name_range_info (vrange &r, const_tree name)
 {
   tree type = TREE_TYPE (name);
-  gcc_checking_assert (!POINTER_TYPE_P (type));
   gcc_checking_assert (TREE_CODE (name) == SSA_NAME);
 
   vrange_storage *ri = SSA_NAME_RANGE_INFO (name);
@@ -593,14 +592,14 @@ get_ssa_name_range_info (vrange &r, const_tree name)
     r.set_varying (type);
 }
 
-// Return nonnull attribute of pointer NAME from SSA_NAME_PTR_INFO.
+// Return nonnull attribute of pointer NAME from its points-to solution.
 
 static inline bool
 get_ssa_name_ptr_info_nonnull (const_tree name)
 {
   gcc_assert (POINTER_TYPE_P (TREE_TYPE (name)));
-  struct ptr_info_def *pi = SSA_NAME_PTR_INFO (name);
-  if (pi == NULL)
+  const pt_solution *pt = ssa_name_pt_solution (name);
+  if (pt == NULL)
     return false;
   /* TODO Now pt->null is conservatively set to true in PTA
      analysis. vrp is the only pass (including ipa-vrp)
@@ -610,7 +609,7 @@ get_ssa_name_ptr_info_nonnull (const_tree name)
      When PTA analysis is improved, pt.anything, pt.nonlocal
      and pt.escaped may also has to be considered before
      deciding that pointer cannot point to NULL.  */
-  return !pi->pt.null;
+  return !pt->null;
 }
 
 // Update the global range for NAME into the SSA_RANGE_NAME_INFO and
@@ -633,21 +632,20 @@ gimple_range_global (vrange &r, tree name, struct function *fun)
       // Use a range from an SSA_NAME's available range.
       if (TREE_CODE (sym) == PARM_DECL)
 	{
-	  // Try to use the "nonnull" attribute to create ~[0, 0]
-	  // anti-ranges for pointers.  Note that this is only valid with
-	  // default definitions of PARM_DECLs.
+	  get_ssa_name_range_info (r, name);
+	  if (r.undefined_p ())
+	    r.set_varying (type);
+	  // Try to use the "nonnull" attribute to refine a pointer to
+	  // ~[0, 0].  Note that this is only valid with default definitions
+	  // of PARM_DECLs
 	  if (POINTER_TYPE_P (type)
 	      && ((cfun && fun == cfun && nonnull_arg_p (sym))
 		  || get_ssa_name_ptr_info_nonnull (name)))
-	    r.set_nonzero (type);
-	  else if (!POINTER_TYPE_P (type))
 	    {
-	      get_ssa_name_range_info (r, name);
-	      if (r.undefined_p ())
-		r.set_varying (type);
+	      prange nz (type);
+	      nz.set_nonzero (type);
+	      r.intersect (nz);
 	    }
-	  else
-	    r.set_varying (type);
 	}
       // If this is a local automatic with no definition, use undefined.
       else if (TREE_CODE (sym) != RESULT_DECL)
@@ -655,18 +653,18 @@ gimple_range_global (vrange &r, tree name, struct function *fun)
       else
 	r.set_varying (type);
    }
-  else if (!POINTER_TYPE_P (type) && SSA_NAME_RANGE_INFO (name))
+  else if (SSA_NAME_RANGE_INFO (name))
     {
       get_ssa_name_range_info (r, name);
       if (r.undefined_p ())
 	r.set_varying (type);
-    }
-  else if (POINTER_TYPE_P (type) && SSA_NAME_PTR_INFO (name))
-    {
-      if (get_ssa_name_ptr_info_nonnull (name))
-	r.set_nonzero (type);
-      else
-	r.set_varying (type);
+      // pt.null may still carry non-nullness the stored range does not.
+      if (POINTER_TYPE_P (type) && get_ssa_name_ptr_info_nonnull (name))
+	{
+	  prange nz (type);
+	  nz.set_nonzero (type);
+	  r.intersect (nz);
+	}
     }
   else
     r.set_varying (type);
