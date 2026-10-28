@@ -1540,9 +1540,12 @@
    (set_attr "sls_length" "retbr")])
 
 ;; A return edge whose discriminant the branch already implies needs no
-;; slot read at all: set NZCV.C directly from the constant.  C is clear
-;; for success and set for failure, and `cmp' against zero sets C to
-;; "no borrow", so the two constants swap.
+;; slot read at all: set NZCV.C directly from a known value.  C is clear
+;; for success and set for failure.  The zero register cannot be the
+;; first operand of `cmp'/`cmn' with an immediate, so compare zero with
+;; itself through the register form: `cmp wzr, wzr' is 0 - 0 (no borrow,
+;; C = 1) and `cmn wzr, wzr' is 0 + 0 (no carry, C = 0).  Neither form
+;; needs a general-purpose scratch register.
 
 (define_expand "herbceptions_set_failed"
   [(match_operand 0 "const_int_operand")]
@@ -1561,7 +1564,7 @@
 	  [(const_int 1)]
 	  UNSPECV_HERBCEPTIONS_SETF))]
   ""
-  "cmp\twzr, #0"
+  "cmp\twzr, wzr"
   [(set_attr "type" "branch")])
 
 (define_insn "herbceptions_set_failed_0"
@@ -1570,7 +1573,7 @@
 	  [(const_int 0)]
 	  UNSPECV_HERBCEPTIONS_SETF))]
   ""
-  "cmp\twzr, #1"
+  "cmn\twzr, wzr"
   [(set_attr "type" "branch")])
 
 (define_insn "herbceptions_return"
