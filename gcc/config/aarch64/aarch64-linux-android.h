@@ -67,12 +67,12 @@
    ignores DT_RPATH, so use DT_RUNPATH as clang does.
 
    Bionic refuses load segments that are both writable and executable.
-   GNU ld merges the writable part into the last executable segment when
-   the first writable section follows the read-only data without page
-   padding (libstdc++.so hits this), so keep one segment per permission
-   class for shared libraries, as lld's --rosegment does.  Executables do
-   not need the extra segments and each one only costs a page of padding,
-   so pack them normally.
+   The default linker script already starts the writable segment on a
+   fresh page (DATA_SEGMENT_ALIGN) and RELRO keeps the writable data on
+   a separate page, so one RX and one RW segment are enough.
+   --separate-code only adds more page-aligned PT_LOADs, which GNU ld
+   pads to max-page-size in the file.  Verified by relinking
+   libstdc++.so without it: the segments are R E and RW, never RWE.
 
    Segments are aligned to 64K: some Android devices (for example
    NVIDIA Jetson boards, and emulator or Waydroid images built for
@@ -80,14 +80,13 @@
    and 16K kernels, since congruence holds for the smaller page size as
    well.
 
-   GNU ld pads the file to the maximum page size for every load segment
-   and asks for one segment per permission class; that costs a page per
-   extra segment.  Keep --separate-code only for shared libraries,
-   where bionic's W^X check needs it; executables pack into one RX and
-   one RW segment.  lld can lay the file out without the padding
-   because it only keeps offsets and addresses congruent, but GNU ld's
-   RELRO handling forces the writable data onto a fresh page, so a
-   small executable stays larger than an lld one.  */
+   GNU ld pads the file to the maximum page size for every load segment,
+   so more segments mean more 64K holes.  One RX plus one RW segment
+   keeps a hello world at ~67K instead of ~190K; RELRO still forces the
+   writable data onto a fresh page, which GNU ld writes as one page of
+   padding.  lld lays the file out without that padding because it only
+   keeps offsets and addresses congruent, so gcc -fuse-ld=lld produces
+   a ~6K executable.  */
 #undef  LINK_SPEC
 #define LINK_SPEC							\
   LINUX_OR_ANDROID_LD (LINUX_TARGET_LINK_SPEC " "			\
@@ -95,8 +94,7 @@
 		       LINUX_TARGET_LINK_SPEC " "			\
 		       AARCH64_ERRATA_LINK_SPEC " " ANDROID_LINK_SPEC	\
 		       " -z max-page-size=0x10000"			\
-		       " %{shared:-z separate-code}"			\
-		       " %{!shared:-z noseparate-code}"		\
+		       " -z noseparate-code"				\
 		       " --enable-new-dtags"				\
 		       " %{!shared:%{!static:%{!static-pie:"		\
 		       "%{!r:%{!no-pie:-pie}}}}}")
