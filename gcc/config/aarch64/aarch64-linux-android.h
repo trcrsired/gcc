@@ -74,20 +74,27 @@
    not need the extra segments and each one only costs a page of padding,
    so pack them normally.
 
-   Segments are aligned to 16K, matching clang's Android AArch64
-   default, which is what lets the result run on both 4K and 16K page
-   kernels.  GNU ld pads the file to the maximum page size for every
-   load segment, while lld merely keeps file offsets and addresses
-   congruent, so a small executable is inevitably larger than an lld
-   one.  Do not raise this to 64K: that would add 64K of padding per
-   segment.  */
+   Segments are aligned to 64K: some Android devices (for example
+   NVIDIA Jetson boards, and emulator or Waydroid images built for
+   them) run 64K page kernels.  A 64K-aligned binary also works on 4K
+   and 16K kernels, since congruence holds for the smaller page size as
+   well.
+
+   GNU ld pads the file to the maximum page size for every load segment
+   and asks for one segment per permission class; that costs a page per
+   extra segment.  Keep --separate-code only for shared libraries,
+   where bionic's W^X check needs it; executables pack into one RX and
+   one RW segment.  lld can lay the file out without the padding
+   because it only keeps offsets and addresses congruent, but GNU ld's
+   RELRO handling forces the writable data onto a fresh page, so a
+   small executable stays larger than an lld one.  */
 #undef  LINK_SPEC
 #define LINK_SPEC							\
   LINUX_OR_ANDROID_LD (LINUX_TARGET_LINK_SPEC " "			\
 		       AARCH64_ERRATA_LINK_SPEC,			\
 		       LINUX_TARGET_LINK_SPEC " "			\
 		       AARCH64_ERRATA_LINK_SPEC " " ANDROID_LINK_SPEC	\
-		       " -z max-page-size=0x4000"			\
+		       " -z max-page-size=0x10000"			\
 		       " %{shared:-z separate-code}"			\
 		       " %{!shared:-z noseparate-code}"		\
 		       " --enable-new-dtags"				\
