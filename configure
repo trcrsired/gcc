@@ -9828,12 +9828,26 @@ $as_echo "$as_me: WARNING: PIE executables are required for the configured host,
        host_pie=yes
        gcc_host_pie=--enable-host-pie
      fi ;;
+   *-*-android*)
+     if test x$host_pie != xyes ; then
+       # Android only runs PIE executables.
+       { $as_echo "$as_me:${as_lineno-$LINENO}: WARNING: PIE executables are required for an Android host, host-pie setting ignored." >&5
+$as_echo "$as_me: WARNING: PIE executables are required for an Android host, host-pie setting ignored." >&2;}
+     fi
+     host_pie=yes
+     gcc_host_pie=--enable-host-pie
+     ;;
   *) ;;
  esac
 else
   case $host in
   *-*-darwin2*)
     # Default to PIE (mandatory for aarch64).
+    host_pie=yes
+    gcc_host_pie=--enable-host-pie
+    ;;
+  *-*-android*)
+    # Android only runs PIE executables.
     host_pie=yes
     gcc_host_pie=--enable-host-pie
     ;;
