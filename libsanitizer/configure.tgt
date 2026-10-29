@@ -22,12 +22,6 @@
 TSAN_TARGET_DEPENDENT_OBJECTS=
 SANITIZER_COMMON_TARGET_DEPENDENT_OBJECTS=
 case "${target}" in
-  *-*-linux-android*)
-	# Android's bionic libc provides the pthread interfaces itself and
-	# has no libpthread to link against; Android sanitizers come from
-	# compiler-rt rather than libsanitizer.
-	UNSUPPORTED=1
-	;;
   x86_64-*-freebsd* | i?86-*-freebsd*)
 	;;
   x86_64-*-linux* | i?86-*-linux*)

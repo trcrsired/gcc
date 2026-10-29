@@ -109,7 +109,14 @@ AM_CONDITIONAL(HWASAN_SUPPORTED, [test "x$HWASAN_SUPPORTED" = "xyes"])
 AC_CHECK_FUNCS(clock_getres clock_gettime clock_settime lstat readlink)
 
 # Common libraries that we need to link against for all sanitizer libs.
-link_sanitizer_common='-lpthread -lm'
+link_sanitizer_common='-lm'
+
+# glibc keeps the pthread interfaces in a separate libpthread, but bionic
+# (Android) provides them as part of libc and ships no libpthread at all.
+# Probe for the library rather than assuming it exists, otherwise the
+# sanitizer libraries fail to link on Android with "cannot find -lpthread".
+AC_CHECK_LIB(pthread, pthread_create,
+  [link_sanitizer_common="-lpthread $link_sanitizer_common"])
 
 # At least for glibc, shm_open is in librt.  But don't pull that
 # in if it still doesn't give us the function we want.  This
