@@ -56,7 +56,12 @@
 	     the way to suppress it.  C++ uses our overloadable support    \
 	     instead, so the overload stays available there.  */	    \
 	  if (!c_dialect_cxx ())					\
-	    builtin_define ("BIONIC_IOCTL_NO_SIGNEDNESS_OVERLOAD");	\
+	    {								\
+	      builtin_define ("BIONIC_IOCTL_NO_SIGNEDNESS_OVERLOAD");	\
+	      /* fixincludes' machine_name pass rewrites the non-reserved	\
+		 guard to this reserved spelling in include-fixed.  */	\
+	      builtin_define ("__BIONIC_IOCTL_NO_SIGNEDNESS_OVERLOAD__"); \
+	    }								\
 	}								\
     }									\
   while (0)
