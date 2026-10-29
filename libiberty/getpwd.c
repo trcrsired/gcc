@@ -39,6 +39,13 @@ extern int errno;
 #include <limits.h>
 #endif
 
+/* bionic's <sys/param.h> defines MAXPATHLEN in terms of PATH_MAX, but
+   PATH_MAX lives in <linux/limits.h> and is not exposed by every
+   compiler's <limits.h>.  */
+#if defined (__ANDROID__) && !defined PATH_MAX
+#include <linux/limits.h>
+#endif
+
 #include "libiberty.h"
 
 /* Virtually every UN*X system now in common use (except for pre-4.3-tahoe

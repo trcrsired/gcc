@@ -317,6 +317,13 @@ extern int fprintf_unlocked (FILE *, const char *, ...);
 
 #include <limits.h>
 
+/* bionic's <sys/param.h> defines MAXPATHLEN in terms of PATH_MAX, but
+   PATH_MAX lives in <linux/limits.h> and is not exposed by every
+   compiler's <limits.h>.  */
+#if defined (__ANDROID__) && !defined PATH_MAX
+# include <linux/limits.h>
+#endif
+
 /* A macro to determine whether a VALUE lies inclusively within a
    certain range without evaluating the VALUE more than once.  This
    macro won't warn if the VALUE is unsigned and the LOWER bound is
