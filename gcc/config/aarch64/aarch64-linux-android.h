@@ -69,17 +69,27 @@
    Bionic refuses load segments that are both writable and executable.
    GNU ld merges the writable part into the last executable segment when
    the first writable section follows the read-only data without page
-   padding (libstdc++.so hits this), so ask for one segment per
-   permission class as lld's --rosegment does.  Segments are aligned to
-   64K, matching the NDK and the large-page kernels Android is moving
-   to.  */
+   padding (libstdc++.so hits this), so keep one segment per permission
+   class for shared libraries, as lld's --rosegment does.  Executables do
+   not need the extra segments and each one only costs a page of padding,
+   so pack them normally.
+
+   Segments are aligned to 16K, matching clang's Android AArch64
+   default, which is what lets the result run on both 4K and 16K page
+   kernels.  GNU ld pads the file to the maximum page size for every
+   load segment, while lld merely keeps file offsets and addresses
+   congruent, so a small executable is inevitably larger than an lld
+   one.  Do not raise this to 64K: that would add 64K of padding per
+   segment.  */
 #undef  LINK_SPEC
 #define LINK_SPEC							\
   LINUX_OR_ANDROID_LD (LINUX_TARGET_LINK_SPEC " "			\
 		       AARCH64_ERRATA_LINK_SPEC,			\
 		       LINUX_TARGET_LINK_SPEC " "			\
 		       AARCH64_ERRATA_LINK_SPEC " " ANDROID_LINK_SPEC	\
-		       " -z separate-code -z max-page-size=0x10000"	\
+		       " -z max-page-size=0x4000"			\
+		       " %{shared:-z separate-code}"			\
+		       " %{!shared:-z noseparate-code}"		\
 		       " --enable-new-dtags"				\
 		       " %{!shared:%{!static:%{!static-pie:"		\
 		       "%{!r:%{!no-pie:-pie}}}}}")
