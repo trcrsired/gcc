@@ -16461,7 +16461,52 @@ done
 
 
 # Common libraries that we need to link against for all sanitizer libs.
-link_sanitizer_common='-lpthread -lm'
+link_sanitizer_common='-lm'
+
+# glibc keeps the pthread interfaces in a separate libpthread, but bionic
+# (Android) provides them as part of libc and ships no libpthread at all.
+# Probe for the library rather than assuming it exists, otherwise the
+# sanitizer libraries fail to link on Android with "cannot find -lpthread".
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for pthread_create in -lpthread" >&5
+$as_echo_n "checking for pthread_create in -lpthread... " >&6; }
+if ${ac_cv_lib_pthread_pthread_create+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lpthread  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char pthread_create ();
+int
+main ()
+{
+return pthread_create ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_pthread_pthread_create=yes
+else
+  ac_cv_lib_pthread_pthread_create=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_pthread_pthread_create" >&5
+$as_echo "$ac_cv_lib_pthread_pthread_create" >&6; }
+if test "x$ac_cv_lib_pthread_pthread_create" = xyes; then :
+  link_sanitizer_common="-lpthread $link_sanitizer_common"
+fi
+
 
 # At least for glibc, shm_open is in librt.  But don't pull that
 # in if it still doesn't give us the function we want.  This
