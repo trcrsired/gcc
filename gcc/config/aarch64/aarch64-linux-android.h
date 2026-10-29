@@ -80,13 +80,13 @@
    and 16K kernels, since congruence holds for the smaller page size as
    well.
 
-   GNU ld pads the file to the maximum page size for every load segment,
-   so more segments mean more 64K holes.  One RX plus one RW segment
-   keeps a hello world at ~67K instead of ~190K; RELRO still forces the
-   writable data onto a fresh page, which GNU ld writes as one page of
-   padding.  lld lays the file out without that padding because it only
-   keeps offsets and addresses congruent, so gcc -fuse-ld=lld produces
-   a ~6K executable.  */
+   GNU ld used to align the end of RELRO to the maximum page size and
+   then start the writable segment at the next page boundary, which
+   forced a max-page-size hole into the file.  It now packs RELRO and
+   the writable segment the same way lld does: the writable segment
+   starts on the next page in virtual address space but keeps the file
+   offset of the previous one plus the RELRO size, so no padding is
+   written.  A hello world is ~6K with either linker.  */
 #undef  LINK_SPEC
 #define LINK_SPEC							\
   LINUX_OR_ANDROID_LD (LINUX_TARGET_LINK_SPEC " "			\
