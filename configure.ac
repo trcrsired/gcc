@@ -2118,11 +2118,24 @@ AC_ARG_ENABLE(host-pie,
        host_pie=yes
        gcc_host_pie=--enable-host-pie
      fi ;;
+   *-*-android*)
+     if test x$host_pie != xyes ; then
+       # Android only runs PIE executables.
+       AC_MSG_WARN([PIE executables are required for an Android host, host-pie setting ignored.])
+     fi
+     host_pie=yes
+     gcc_host_pie=--enable-host-pie
+     ;;
   *) ;;
  esac],
 [case $host in
   *-*-darwin2*)
     # Default to PIE (mandatory for aarch64).
+    host_pie=yes
+    gcc_host_pie=--enable-host-pie
+    ;;
+  *-*-android*)
+    # Android only runs PIE executables.
     host_pie=yes
     gcc_host_pie=--enable-host-pie
     ;;
