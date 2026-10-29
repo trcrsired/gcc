@@ -11932,8 +11932,13 @@ if test -d ${srcdir}/gcc; then
     FLAGS_FOR_TARGET=$FLAGS_FOR_TARGET' -B$(build_tooldir)/bin/ -B$(build_tooldir)/lib/'
   fi
 
-  # Search for pre-installed headers if nothing else fits.
-  FLAGS_FOR_TARGET=$FLAGS_FOR_TARGET' -isystem $(build_tooldir)/include -isystem $(build_tooldir)/sys-include'
+  # Search for pre-installed headers if nothing else fits.  When a build
+  # sysroot is given, the compiler searches it after its own headers, so
+  # these directories are unnecessary and would only let libc headers
+  # shadow GCC's own (bionic's Clang-only <stdatomic.h>, for example).
+  if test x"$SYSROOT_CFLAGS_FOR_TARGET" = x; then
+    FLAGS_FOR_TARGET=$FLAGS_FOR_TARGET' -isystem $(build_tooldir)/include -isystem $(build_tooldir)/sys-include'
+  fi
 fi
 
 if test "x${use_gnu_ld}" = x &&
