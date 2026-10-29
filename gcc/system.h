@@ -324,6 +324,12 @@ extern int fprintf_unlocked (FILE *, const char *, ...);
 # include <linux/limits.h>
 #endif
 
+/* bionic's <limits.h> does not provide the C99 LLONG_MAX/ULLONG_MAX
+   macros to C++; <climits> fills them in from __LONG_LONG_MAX__.  */
+#if defined (__ANDROID__) && defined (__cplusplus)
+# include <climits>
+#endif
+
 /* A macro to determine whether a VALUE lies inclusively within a
    certain range without evaluating the VALUE more than once.  This
    macro won't warn if the VALUE is unsigned and the LOWER bound is
