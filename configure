@@ -9845,6 +9845,14 @@ fi
 
 
 
+# Forward an explicitly requested PIE host build to the gcc directory on
+# every host, not only Darwin; Android also requires PIE executables and
+# non-PIE host tools hit copy-relocation overflows on aarch64.
+if test x$host_pie = xyes && test x$gcc_host_pie = x; then
+  gcc_host_pie=--enable-host-pie
+fi
+
+
 # Enable --enable-host-shared.
 # Checked early to determine whether jit is an 'all' language
 # Check whether --enable-host-shared was given.

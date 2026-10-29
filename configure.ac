@@ -2115,6 +2115,12 @@ AC_ARG_ENABLE(host-pie,
  esac])
 
 AC_SUBST(host_pie)
+# Forward an explicitly requested PIE host build to the gcc directory on
+# every host, not only Darwin; Android also requires PIE executables and
+# non-PIE host tools hit copy-relocation overflows on aarch64.
+if test x$host_pie = xyes && test x$gcc_host_pie = x; then
+  gcc_host_pie=--enable-host-pie
+fi
 AC_SUBST(gcc_host_pie)
 
 # Enable --enable-host-shared.
