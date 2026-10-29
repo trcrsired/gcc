@@ -844,7 +844,7 @@ is_host_cpu_not_armv8_base (int argc, const char **argv)
 
 /* Implement TARGET_EXCEPT_UNWIND_INFO.  */
 static enum unwind_info_type
-aarch64_except_unwind_info (struct gcc_options *opts)
+aarch64_except_unwind_info (struct gcc_options *opts ATTRIBUTE_UNUSED)
 {
   /* Honor the --enable-sjlj-exceptions configure switch.  */
 #ifdef CONFIG_SJLJ_EXCEPTIONS
@@ -852,9 +852,13 @@ aarch64_except_unwind_info (struct gcc_options *opts)
     return UI_SJLJ;
 #endif
 
-  /* Use SEH for aarch64-w64-mingw32 when SEH tables are enabled.  */
-  if (opts->x_flag_unwind_tables)
+  /* Use SEH for aarch64-w64-mingw32 when SEH tables are enabled.  TARGET_SEH
+     is only defined by the Windows target headers; other aarch64 targets must
+     keep DWARF2 unwind tables even when -funwind-tables is on.  */
+#ifdef TARGET_SEH
+  if (TARGET_SEH)
     return UI_SEH;
+#endif
 
   if (DWARF2_UNWIND_INFO)
     return UI_DWARF2;
