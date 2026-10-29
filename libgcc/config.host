@@ -427,6 +427,11 @@ aarch64*-*-linux*)
 	tmake_file="${tmake_file} ${cpu_type}/t-softfp t-softfp t-crtfm"
 	tmake_file="${tmake_file} t-dfprules"
 	tmake_file="${tmake_file} ${cpu_type}/t-heap-trampoline"
+	case ${host} in
+	*-*-linux-android*)
+		tmake_file="${tmake_file} ${cpu_type}/t-android"
+		;;
+	esac
 	;;
 aarch64*-*-gnu*)
 	extra_parts="$extra_parts crtfastmath.o"

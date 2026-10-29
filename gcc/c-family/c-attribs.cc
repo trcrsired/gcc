@@ -178,6 +178,8 @@ static tree handle_btf_type_tag_attribute (tree *, tree, tree, int, bool *);
 
 static tree handle_suppress_coverage_attribute (tree *, tree, tree, int,
 						bool *);
+static tree handle_ignored_clang_attribute (tree *, tree, tree, int, bool *);
+static tree handle_enable_if_attribute (tree *, tree, tree, int, bool *);
 
 /* Helper to define attribute exclusions.  */
 #define ATTR_EXCL(name, function, type, variable)	\
@@ -272,6 +274,23 @@ const struct attribute_spec c_common_gnu_attributes[] =
 			      NULL },
   { "herbceptions_return_failure", 0, 1, false, true, false, false,
 			      NULL, NULL },
+  /* Clang attributes used by bionic and other system headers.  GCC
+     accepts them; only enable_if has semantics (overload viability and
+     signature identity).  */
+  { "availability",           0, -1, false, false, false, false,
+			      handle_ignored_clang_attribute, NULL },
+  { "overloadable",           0,  0, false, false, false, false,
+			      NULL, NULL },
+  { "diagnose_if",            3,  3, false, false, false, false,
+			      handle_ignored_clang_attribute, NULL },
+  { "diagnose_as_builtin",    1, -1, false, false, false, false,
+			      handle_ignored_clang_attribute, NULL },
+  { "pass_object_size",       1,  1, false, false, false, false,
+			      handle_ignored_clang_attribute, NULL },
+  { "pass_dynamic_object_size", 1, 1, false, false, false, false,
+			      handle_ignored_clang_attribute, NULL },
+  { "enable_if",              2,  2, false, false, false, false,
+			      handle_enable_if_attribute, NULL },
   { "nocommon",               0, 0, true,  false, false, false,
 			      handle_nocommon_attribute,
 	                      attr_common_exclusions },
@@ -1138,6 +1157,35 @@ handle_musttail_attribute (tree ARG_UNUSED (*node), tree name, tree ARG_UNUSED (
   /* Currently only a statement attribute, handled directly in parser.  */
   warning (OPT_Wattributes, "%qE attribute ignored", name);
   *no_add_attrs = true;
+  return NULL_TREE;
+}
+
+/* Handle Clang attributes that GCC accepts for source compatibility but
+   does not implement (availability, diagnose_if, pass_object_size and
+   friends).  They carry no information GCC can use, so discard them.  */
+
+static tree
+handle_ignored_clang_attribute (tree ARG_UNUSED (*node),
+				tree ARG_UNUSED (name),
+				tree ARG_UNUSED (args),
+				int ARG_UNUSED (flags), bool *no_add_attrs)
+{
+  *no_add_attrs = true;
+  return NULL_TREE;
+}
+
+/* Handle an "enable_if" attribute; arguments as in
+   struct attribute_spec.handler.  enable_if constrains overload
+   viability and overload resolution, but like in Clang it is not part
+   of the function's type, so that the address of such a function can
+   still be taken with an ordinary function pointer type.  */
+
+static tree
+handle_enable_if_attribute (tree *node, tree ARG_UNUSED (name),
+			    tree ARG_UNUSED (args),
+			    int ARG_UNUSED (flags), bool *no_add_attrs)
+{
+  *no_add_attrs = (TREE_CODE (*node) != FUNCTION_DECL);
   return NULL_TREE;
 }
 

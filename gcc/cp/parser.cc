@@ -18986,6 +18986,17 @@ cp_parser_decl_specifier_seq (cp_parser* parser,
 	  continue;
 	}
 
+      /* Clang nullability specifiers can appear in a declaration; they
+	 do not affect the type, so accept and discard them here.  */
+      if (token->keyword == RID_NONNULL
+	  || token->keyword == RID_NULLABLE
+	  || token->keyword == RID_NULLABLE_RESULT
+	  || token->keyword == RID_NULL_UNSPECIFIED)
+	{
+	  cp_lexer_consume_token (parser->lexer);
+	  continue;
+	}
+
       /* Assume we will find a decl-specifier keyword.  */
       found_decl_spec = true;
       /* If the next token is an appropriate keyword, we can simply
@@ -26279,8 +26290,7 @@ cp_parser_init_declarator (cp_parser* parser,
 			   location_t* init_loc,
 			   tree* auto_result)
 {
-  cp_token *token = NULL, *asm_spec_start_token = NULL,
-           *attributes_start_token = NULL;
+  cp_token *token = NULL, *asm_spec_start_token = NULL;
   cp_declarator *declarator;
   tree prefix_attributes;
   tree attributes = NULL;
@@ -26374,8 +26384,15 @@ cp_parser_init_declarator (cp_parser* parser,
   prefix_attributes = decl_specifiers->attributes;
 
   /* Look for attributes.  */
-  attributes_start_token = cp_lexer_peek_token (parser->lexer);
   attributes = cp_parser_attributes_opt (parser);
+
+  /* GNU syntax also permits an asm-specification after the
+     attributes, as in `int f(int) __attribute__((foo)) __asm__("f");'.  */
+  if (!asm_specification && cp_parser_allow_gnu_extensions_p (parser))
+    {
+      asm_spec_start_token = cp_lexer_peek_token (parser->lexer);
+      asm_specification = cp_parser_asm_specification_opt (parser);
+    }
 
   /* Peek at the next token.  */
   token = cp_lexer_peek_token (parser->lexer);
@@ -26411,16 +26428,16 @@ cp_parser_init_declarator (cp_parser* parser,
 	  location_t func_brace_location
 	    = cp_lexer_peek_token (parser->lexer)->location;
 
-	  /* Neither attributes nor an asm-specification are allowed
-	     on a function-definition.  */
+	  /* An asm-specification is not allowed on a
+	     function-definition.  */
 	  if (asm_specification)
 	    error_at (asm_spec_start_token->location,
 		      "an %<asm%> specification is not allowed "
 		      "on a function-definition");
+	  /* GNU attributes may follow the declarator of a function
+	     definition; they appertain to the function.  */
 	  if (attributes)
-	    error_at (attributes_start_token->location,
-		      "attributes are not allowed "
-		      "on a function-definition");
+	    prefix_attributes = attr_chainon (attributes, prefix_attributes);
 	  /* This is a function-definition.  */
 	  *function_definition_p = true;
 
@@ -27284,6 +27301,20 @@ cp_parser_direct_declarator (cp_parser* parser,
 	  parser->in_declarator_p = true;
 	  /* Consume the `['.  */
 	  cp_lexer_consume_token (parser->lexer);
+	  /* Clang permits nullability specifiers in the array bounds of a
+	     parameter declaration, as in `void f (int a[_Nonnull 3])'.
+	     They carry no information GCC can use, so accept and discard
+	     them.  */
+	  while (cp_lexer_peek_token (parser->lexer)->type == CPP_KEYWORD
+		 && (cp_lexer_peek_token (parser->lexer)->keyword
+		       == RID_NONNULL
+		     || cp_lexer_peek_token (parser->lexer)->keyword
+		       == RID_NULLABLE
+		     || cp_lexer_peek_token (parser->lexer)->keyword
+		       == RID_NULLABLE_RESULT
+		     || cp_lexer_peek_token (parser->lexer)->keyword
+		       == RID_NULL_UNSPECIFIED))
+	    cp_lexer_consume_token (parser->lexer);
 	  /* Peek at the next token.  */
 	  token = cp_lexer_peek_token (parser->lexer);
 	  /* If the next token is `]', then there is no
@@ -27810,6 +27841,15 @@ cp_parser_cv_qualifier_seq_opt (cp_parser* parser)
 	case RID_RESTRICT:
 	  cv_qualifier = TYPE_QUAL_RESTRICT;
 	  break;
+
+	case RID_NONNULL:
+	case RID_NULLABLE:
+	case RID_NULLABLE_RESULT:
+	case RID_NULL_UNSPECIFIED:
+	  /* Clang nullability specifiers carry no information GCC can
+	     use; accept and discard them.  */
+	  cp_lexer_consume_token (parser->lexer);
+	  continue;
 
 	default:
 	  cv_qualifier = TYPE_UNQUALIFIED;
@@ -33736,20 +33776,35 @@ cp_parser_gnu_attribute_list (cp_parser* parser, bool exactly_one /* = false */)
 	  if (token->type == CPP_OPEN_PAREN)
 	    {
 	      vec<tree, va_gc> *vec;
-	      int attr_flag = (attribute_takes_identifier_p (identifier)
-			       ? id_attr : normal_attr);
-	      if (is_attribute_p ("assume", identifier))
-		attr_flag = assume_attr;
-	      vec = cp_parser_parenthesized_expression_list
-		    (parser, attr_flag, /*cast_p=*/false,
-		    /*allow_expansion_p=*/false,
-		    /*non_constant_p=*/NULL);
-	      if (vec == NULL)
-		arguments = error_mark_node;
+	      if (is_attribute_p ("availability", identifier))
+		{
+		  /* The availability attribute's arguments are a platform
+		     name followed by name=value pairs, which are not
+		     expressions.  GCC does not implement availability
+		     checking, so skip the balanced token sequence.  */
+		  for (size_t n = cp_parser_skip_balanced_tokens (parser, 1) - 1;
+		       n; --n)
+		    cp_lexer_consume_token (parser->lexer);
+		  arguments = NULL_TREE;
+		  vec = NULL;
+		}
 	      else
 		{
-		  arguments = build_tree_list_vec (vec);
-		  release_tree_vector (vec);
+		  int attr_flag = (attribute_takes_identifier_p (identifier)
+				   ? id_attr : normal_attr);
+		  if (is_attribute_p ("assume", identifier))
+		    attr_flag = assume_attr;
+		  vec = cp_parser_parenthesized_expression_list
+			(parser, attr_flag, /*cast_p=*/false,
+			 /*allow_expansion_p=*/false,
+			 /*non_constant_p=*/NULL);
+		  if (vec == NULL)
+		    arguments = error_mark_node;
+		  else
+		    {
+		      arguments = build_tree_list_vec (vec);
+		      release_tree_vector (vec);
+		    }
 		}
 	      /* Save the arguments away.  */
 	      TREE_VALUE (attribute) = arguments;

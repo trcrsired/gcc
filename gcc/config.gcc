@@ -1291,6 +1291,16 @@ aarch64*-*-netbsd*)
 aarch64*-*-linux*)
 	tm_file="${tm_file} elfos.h gnu-user.h linux.h glibc-stdint.h"
 	tm_file="${tm_file} aarch64/aarch64-elf.h aarch64/aarch64-errata.h aarch64/aarch64-linux.h"
+	case ${target} in
+	*-*-linux-android*)
+		tm_file="${tm_file} linux-android.h aarch64/aarch64-linux-android.h"
+		extra_options="${extra_options} linux-android.opt"
+		# The API level encoded in the triple (e.g. android30); a
+		# version-less triple means the lowest supported level.
+		android_api_level=`echo ${target} | sed -n 's/^.*-android\([0-9][0-9]*\)$/\1/p'`
+		tm_defines="${tm_defines} TARGET_ANDROID_API_LEVEL=${android_api_level:-0}"
+		;;
+	esac
 	tmake_file="${tmake_file} aarch64/t-aarch64 aarch64/t-aarch64-linux"
 	tm_defines="${tm_defines}  TARGET_DEFAULT_ASYNC_UNWIND_TABLES=1"
 	case $target in
