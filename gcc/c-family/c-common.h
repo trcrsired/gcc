@@ -89,8 +89,10 @@ enum rid
 
   /* ObjC nullability support keywords that also can appear in the
      property attribute context.  These values should remain contiguous
-     with the other property attributes.  */
+     with the other property attributes.  RID_NULLABLE_RESULT is the
+     Clang nullability qualifier that has no ObjC property counterpart.  */
   RID_NULL_UNSPECIFIED, RID_NULLABLE, RID_NONNULL, RID_NULL_RESETTABLE,
+  RID_NULLABLE_RESULT,
 
   /* C (reserved and imaginary types not implemented, so any use is a
      syntax error) */

@@ -355,7 +355,13 @@ poly_uint16 aarch64_sve_vg;
 
 #ifdef HAVE_AS_TLS
 #undef TARGET_HAVE_TLS
+/* Bionic only gained ELF TLS in API level 29; older releases, and
+   version-less Android triples, use emulated TLS as clang does.  */
+#if ANDROID_DEFAULT && TARGET_ANDROID_API_LEVEL < 29
+#define TARGET_HAVE_TLS 0
+#else
 #define TARGET_HAVE_TLS 1
+#endif
 #endif
 
 static bool aarch64_composite_type_p (const_tree, machine_mode);

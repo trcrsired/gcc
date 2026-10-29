@@ -1,0 +1,19 @@
+# Bionic's AArch64 loader requires the executable's TLS segment to be
+# aligned to at least 64 bytes.  GNU ld derives the segment alignment from
+# the alignment of non-empty TLS sections only, so link a small object that
+# carries a retained, 64-byte-aligned, empty TLS section into executables.
+crtandroidtls.o: $(srcdir)/config/aarch64/crtandroidtls.S
+	$(crt_compile) -c -x assembler-with-cpp $<
+
+EXTRA_PARTS += crtandroidtls.o
+
+# EXTRA_PARTS is expanded in the prerequisites of libgcc-extra-parts before
+# this fragment is read, so make the dependency explicit.
+libgcc-extra-parts: crtandroidtls.o
+
+# Configured without --with-sysroot, gcc only probes .../sys-include for the
+# target's stdio.h, decides there is no libc, and arms -Dinhibit_libc.  The
+# bundled bionic headers are on the include path when libgcc is compiled, so
+# clear the flag: it would drop the dl_iterate_phdr FDE lookup (the only
+# registration mechanism bionic supports) and break C++ exceptions.
+INHIBIT_LIBC_CFLAGS =

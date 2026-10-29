@@ -2518,6 +2518,25 @@ build_this_conversion (tree fn, tree ctype,
   return t;
 }
 
+/* Return true unless one of the enable_if conditions attached to FN's
+   type is a constant expression that is false.  Conditions we cannot
+   evaluate (for example because they refer to the parameters, which our
+   attribute argument parser does not keep in scope) are treated as
+   satisfied.  */
+
+static bool
+enable_if_conditions_met_p (tree fn)
+{
+  for (tree a = lookup_attribute ("enable_if", DECL_ATTRIBUTES (fn));
+       a; a = lookup_attribute ("enable_if", TREE_CHAIN (a)))
+    {
+      tree cond = TREE_VALUE (TREE_VALUE (a));
+      if (cond && TREE_CODE (cond) == INTEGER_CST && integer_zerop (cond))
+	return false;
+    }
+  return true;
+}
+
 /* Create an overload candidate for the function or method FN called
    with the argument list FIRST_ARG/ARGS and add it to CANDIDATES.
    FLAGS is passed on to implicit_conversion.
@@ -2624,6 +2643,11 @@ add_function_candidate (struct z_candidate **candidates,
       reason = constraint_failure ();
       viable = false;
     }
+
+  /* Likewise, an enable_if condition that is constant false makes the
+     function non-viable, as in Clang.  */
+  if (viable && !enable_if_conditions_met_p (fn))
+    viable = false;
 
   /* When looking for a function from a subobject from an implicit
      copy/move constructor/operator=, don't consider anything that takes (a
@@ -13243,6 +13267,52 @@ joust_maybe_elide_copy (z_candidate *cand)
   return false;
 }
 
+/* Return true if the enable_if conditions of attributes A1 and A2 are
+   the same.  Clang only compares the conditions, not the message.  */
+
+static bool
+enable_if_conds_equal_p (tree a1, tree a2)
+{
+  tree c1 = TREE_VALUE (TREE_VALUE (a1));
+  tree c2 = TREE_VALUE (TREE_VALUE (a2));
+  return c1 == c2 || (c1 && c2 && simple_cst_equal (c1, c2) == 1);
+}
+
+/* Compare the enable_if attributes of FN1 and FN2 for overload
+   resolution.  Following Clang, a candidate with enable_if attributes
+   is better than one without, and a candidate whose list of conditions
+   is a proper extension of the other's is better.  Differing
+   conditions leave the candidates unordered.  Return 1 if FN1 is
+   better, -1 if FN2 is better, and 0 if neither is.  */
+
+static int
+compare_enable_if_attrs (tree fn1, tree fn2)
+{
+  tree attrs1 = lookup_attribute ("enable_if", DECL_ATTRIBUTES (fn1));
+  tree attrs2 = lookup_attribute ("enable_if", DECL_ATTRIBUTES (fn2));
+
+  if (!attrs1 || !attrs2)
+    {
+      if (attrs1 == attrs2)
+	return 0;
+      return attrs1 ? 1 : -1;
+    }
+
+  while (attrs1 && attrs2)
+    {
+      if (!enable_if_conds_equal_p (attrs1, attrs2))
+	return 0;
+      attrs1 = lookup_attribute ("enable_if", TREE_CHAIN (attrs1));
+      attrs2 = lookup_attribute ("enable_if", TREE_CHAIN (attrs2));
+    }
+
+  if (attrs1)
+    return 1;
+  if (attrs2)
+    return -1;
+  return 0;
+}
+
 /* Return the class that CAND's implicit object parameter refers to.  */
 
 static tree
@@ -13890,6 +13960,19 @@ joust (struct z_candidate *cand1, struct z_candidate *cand2, bool warn,
 	  else
 	    return -1;
 	}
+    }
+
+  /* Clang's enable_if tie-breaker: prefer a candidate with satisfied
+     enable_if attributes over one without, and prefer more such
+     conditions over fewer.  This must come before the arbitrary choice
+     below, since overloads that differ only in enable_if conditions
+     can end up with the same assembler name via an asm label.  */
+  if (TREE_CODE (cand1->fn) == FUNCTION_DECL
+      && TREE_CODE (cand2->fn) == FUNCTION_DECL)
+    {
+      int cmp = compare_enable_if_attrs (cand1->fn, cand2->fn);
+      if (cmp)
+	return cmp;
     }
 
   /* If the two function declarations represent the same function (this can

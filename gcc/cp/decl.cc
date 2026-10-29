@@ -1916,6 +1916,40 @@ merge_decl_arguments (tree newdecl, tree olddecl, bool new_defines_function,
     }
 }
 
+/* Return true if the enable_if conditions of attributes A1 and A2 are
+   the same.  Clang only compares the conditions, not the message.  */
+
+static bool
+enable_if_conds_equal_p (tree a1, tree a2)
+{
+  tree c1 = TREE_VALUE (TREE_VALUE (a1));
+  tree c2 = TREE_VALUE (TREE_VALUE (a2));
+  return c1 == c2 || (c1 && c2 && simple_cst_equal (c1, c2) == 1);
+}
+
+/* Return true if NEWDECL and OLDDECL have identical enable_if
+   attributes, i.e. the same conditions in the same order.  Clang makes
+   the enable_if conditions an order-sensitive part of the function
+   signature, so functions that differ only in those conditions are
+   distinct overloads rather than redeclarations.  */
+
+static bool
+enable_if_attrs_equal_p (tree newdecl, tree olddecl)
+{
+  tree newattr = lookup_attribute ("enable_if",
+				   DECL_ATTRIBUTES (newdecl));
+  tree oldattr = lookup_attribute ("enable_if",
+				   DECL_ATTRIBUTES (olddecl));
+
+  for (; newattr && oldattr;
+       newattr = lookup_attribute ("enable_if", TREE_CHAIN (newattr)),
+       oldattr = lookup_attribute ("enable_if", TREE_CHAIN (oldattr)))
+    if (!enable_if_conds_equal_p (newattr, oldattr))
+      return false;
+
+  return newattr == NULL_TREE && oldattr == NULL_TREE;
+}
+
 /* If NEWDECL is a redeclaration of OLDDECL, merge the declarations.
    If the redeclaration is invalid, a diagnostic is issued, and the
    error_mark_node is returned.  Otherwise, OLDDECL is returned.
@@ -2270,6 +2304,13 @@ duplicate_decls (tree newdecl, tree olddecl, bool hiding, bool was_hidden)
 	{
 	  if (DECL_EXTERN_C_P (newdecl) && DECL_EXTERN_C_P (olddecl))
 	    {
+	      /* Clang's overloadable attribute permits a C linkage
+		 function to be overloaded; bionic uses it for ioctl.  */
+	      if (lookup_attribute ("overloadable",
+				    DECL_ATTRIBUTES (newdecl))
+		  || lookup_attribute ("overloadable",
+				       DECL_ATTRIBUTES (olddecl)))
+		return NULL_TREE;
 	      auto_diagnostic_group d;
 	      error_at (newdecl_loc,
 			"conflicting declaration of C function %q#D",
@@ -2292,7 +2333,10 @@ duplicate_decls (tree newdecl, tree olddecl, bool hiding, bool was_hidden)
 		   && compparms (TYPE_ARG_TYPES (TREE_TYPE (newdecl)),
 				 TYPE_ARG_TYPES (TREE_TYPE (olddecl)))
                    // And the same constraints.
-                   && equivalently_constrained (newdecl, olddecl))
+                   && equivalently_constrained (newdecl, olddecl)
+		   /* But different enable_if conditions make for
+		      distinct overloads.  */
+		   && enable_if_attrs_equal_p (newdecl, olddecl))
 	    {
 	      auto_diagnostic_group d;
 	      error_at (newdecl_loc,

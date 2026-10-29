@@ -963,6 +963,35 @@ write_encoding (const tree decl)
 	  d = decl;
 	}
 
+      /* A Clang enable_if attribute is an order-sensitive part of the
+	 function signature and of its mangled name.  Emit the same
+	 encoding Clang does so that functions declared in bionic
+	 headers have the same symbol with GCC.  */
+      {
+	tree attrs = lookup_attribute ("enable_if", DECL_ATTRIBUTES (decl));
+	if (attrs)
+	  {
+	    /* Only constant conditions are manglable through
+	       write_expression; bionic only ever uses constants.  */
+	    bool mangle_p = true;
+	    for (tree a = attrs; a && mangle_p;
+		 a = lookup_attribute ("enable_if", TREE_CHAIN (a)))
+	      {
+		tree cond = TREE_VALUE (TREE_VALUE (a));
+		if (!cond || TREE_CODE_CLASS (TREE_CODE (cond)) != tcc_constant)
+		  mangle_p = false;
+	      }
+	    if (mangle_p)
+	      {
+		write_string ("Ua9enable_ifI");
+		for (tree a = attrs; a;
+		     a = lookup_attribute ("enable_if", TREE_CHAIN (a)))
+		  write_expression (TREE_VALUE (TREE_VALUE (a)));
+		write_char ('E');
+	      }
+	  }
+      }
+
       write_bare_function_type (fn_type,
 				mangle_return_type_p (decl),
 				d);

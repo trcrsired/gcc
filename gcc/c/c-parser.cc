@@ -766,6 +766,10 @@ c_token_is_qualifier (c_token *token)
 	case RID_RESTRICT:
 	case RID_ATTRIBUTE:
 	case RID_ATOMIC:
+	case RID_NONNULL:
+	case RID_NULLABLE:
+	case RID_NULLABLE_RESULT:
+	case RID_NULL_UNSPECIFIED:
 	  return true;
 	default:
 	  return false;
@@ -2894,15 +2898,22 @@ c_parser_declaration_or_fndef (c_parser *parser, bool fndef_ok,
 	    d = d->declarator;
 	  underspec_name = d->u.id.id;
 	}
+      /* A declarator may be followed by an asm-specification and GNU
+	 attributes, in either order.  */
+      tree asm_name = NULL_TREE;
+      tree postfix_attrs = NULL_TREE;
+      if (c_parser_next_token_is_keyword (parser, RID_ASM))
+	asm_name = c_parser_simple_asm_expr (parser);
+      if (c_parser_next_token_is_keyword (parser, RID_ATTRIBUTE))
+	postfix_attrs = c_parser_gnu_attributes (parser);
+      if (c_parser_next_token_is_keyword (parser, RID_ASM))
+	asm_name = c_parser_simple_asm_expr (parser);
+
       if (c_parser_next_token_is (parser, CPP_EQ)
 	  || c_parser_next_token_is (parser, CPP_COMMA)
 	  || c_parser_next_token_is (parser, CPP_SEMICOLON)
-	  || c_parser_next_token_is_keyword (parser, RID_ASM)
-	  || c_parser_next_token_is_keyword (parser, RID_ATTRIBUTE)
 	  || c_parser_next_token_is_keyword (parser, RID_IN))
 	{
-	  tree asm_name = NULL_TREE;
-	  tree postfix_attrs = NULL_TREE;
 	  if (!diagnosed_no_specs && !specs->declspecs_seen_p)
 	    {
 	      diagnosed_no_specs = true;
@@ -2911,22 +2922,6 @@ c_parser_declaration_or_fndef (c_parser *parser, bool fndef_ok,
 	  /* Having seen a data definition, there cannot now be a
 	     function definition.  */
 	  fndef_ok = false;
-	  if (c_parser_next_token_is_keyword (parser, RID_ASM))
-	    asm_name = c_parser_simple_asm_expr (parser);
-	  if (c_parser_next_token_is_keyword (parser, RID_ATTRIBUTE))
-	    {
-	      postfix_attrs = c_parser_gnu_attributes (parser);
-	      if (c_parser_next_token_is (parser, CPP_OPEN_BRACE))
-		{
-		  /* This means there is an attribute specifier after
-		     the declarator in a function definition.  Provide
-		     some more information for the user.  */
-		  error_at (here, "attributes should be specified before the "
-			    "declarator in a function definition");
-		  c_parser_skip_to_end_of_block_or_statement (parser);
-		  return result;
-		}
-	    }
 	  if (c_parser_next_token_is (parser, CPP_EQ))
 	    {
 	      tree d;
@@ -3255,7 +3250,8 @@ c_parser_declaration_or_fndef (c_parser *parser, bool fndef_ok,
 	  dv_base = omp_start_variant_function (declarator, dv_ctx);
 	}
 
-      if (!start_function (specs, declarator, all_prefix_attrs))
+      if (!start_function (specs, declarator,
+			   chainon (postfix_attrs, all_prefix_attrs)))
 	{
 	  /* At this point we've consumed:
 	       declaration-specifiers declarator
@@ -4019,6 +4015,15 @@ c_parser_declspecs (c_parser *parser, struct c_declspecs *specs,
 	case RID_RESTRICT:
 	  attrs_ok = true;
 	  declspecs_add_qual (loc, specs, c_parser_peek_token (parser)->value);
+	  c_parser_consume_token (parser);
+	  break;
+	case RID_NONNULL:
+	case RID_NULLABLE:
+	case RID_NULLABLE_RESULT:
+	case RID_NULL_UNSPECIFIED:
+	  /* Clang nullability specifiers carry no information GCC can
+	     use; accept and discard them.  */
+	  attrs_ok = true;
 	  c_parser_consume_token (parser);
 	  break;
 	case RID_ATTRIBUTE:
@@ -5858,12 +5863,34 @@ c_parser_gnu_attribute (c_parser *parser, tree attrs,
     }
   c_parser_consume_token (parser);
 
-  tree attr_args
-    = c_parser_attribute_arguments (parser,
-				    attribute_takes_identifier_p (attr_name),
-				    false,
-				    is_attribute_p ("assume", attr_name),
-				    true);
+  tree attr_args;
+  if (is_attribute_p ("availability", attr_name))
+    {
+      /* The availability attribute's arguments are a platform name
+	 followed by name=value pairs, which are not C expressions.
+	 GCC does not implement availability checking, so the arguments
+	 carry no meaning; skip the balanced token sequence.  */
+      int depth = 1;
+      while (depth > 0)
+	{
+	  c_token *tok = c_parser_peek_token (parser);
+	  if (tok->type == CPP_EOF)
+	    break;
+	  if (tok->type == CPP_OPEN_PAREN)
+	    ++depth;
+	  else if (tok->type == CPP_CLOSE_PAREN && --depth == 0)
+	    break;
+	  c_parser_consume_token (parser);
+	}
+      attr_args = NULL_TREE;
+    }
+  else
+    attr_args
+      = c_parser_attribute_arguments (parser,
+				      attribute_takes_identifier_p (attr_name),
+				      false,
+				      is_attribute_p ("assume", attr_name),
+				      true);
 
   attr = build_tree_list (attr_name, attr_args);
   if (c_parser_next_token_is (parser, CPP_CLOSE_PAREN))
