@@ -4964,16 +4964,23 @@ ix86_function_value_1 (const_tree valtype, const_tree fntype_or_decl,
 	{
 	  /* Win64 `throws': a trivially-copyable 16-byte aggregate is
 	     returned as the integer pair {i64, i64} in RAX:RDX instead
-	     of in memory.  */
+	     of in memory.  Describe it as two 8-byte chunks, not as one
+	     TImode pseudo-register: a single 16-byte return register
+	     makes the expander assemble the whole value in a stack slot
+	     and reload it into RAX:RDX on every return, so each call
+	     pays a store/reload pair.  The pair of DImode pieces is
+	     written straight into the two return registers, which is
+	     also the shape ix86_function_arg uses for the same value.  */
 	  if (fn_has_herbceptions_spec_p (fntype)
 	      && ix86_herbceptions_16byte_p (valtype))
 	    {
-	      rtx part = gen_rtx_EXPR_LIST (VOIDmode,
-					    gen_rtx_REG (TImode, AX_REG),
-					    const0_rtx);
-	      rtx ret = gen_rtx_PARALLEL (orig_mode, rtvec_alloc (1));
-	      XVECEXP (ret, 0, 0) = part;
-	      return ret;
+	      rtx t1 = gen_rtx_EXPR_LIST (VOIDmode,
+					  gen_rtx_REG (DImode, AX_REG),
+					  const0_rtx);
+	      rtx t2 = gen_rtx_EXPR_LIST (VOIDmode,
+					  gen_rtx_REG (DImode, DX_REG),
+					  GEN_INT (8));
+	      return gen_rtx_PARALLEL (orig_mode, gen_rtvec (2, t1, t2));
 	    }
 	  return function_value_ms_64 (orig_mode, mode, valtype);
 	}
