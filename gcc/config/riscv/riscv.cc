@@ -4730,6 +4730,23 @@ riscv_rtx_costs (rtx x, machine_mode mode, int outer_code, int opno ATTRIBUTE_UN
       return false;
 
     case AND:
+      /* The masked byte shift can be implemented with packh and a zero
+	 first operand.  Cost it as one instruction so that combine can
+	 use it as a bridge to the two-register packh pattern, even when
+	 Zbb makes the separate zero extension inexpensive.  */
+      if (TARGET_ZBKB
+	  && mode == word_mode
+	  && GET_CODE (XEXP (x, 0)) == ASHIFT
+	  && register_operand (XEXP (XEXP (x, 0), 0), mode)
+	  && CONST_INT_P (XEXP (XEXP (x, 0), 1))
+	  && INTVAL (XEXP (XEXP (x, 0), 1)) == 8
+	  && CONST_INT_P (XEXP (x, 1))
+	  && INTVAL (XEXP (x, 1)) == 0xff00)
+	{
+	  *total = COSTS_N_INSNS (1);
+	  return true;
+	}
+
       /* Andes bfo patterns.  */
       if (TARGET_XANDESPERF && GET_CODE (XEXP (x, 0)) == ASHIFT)
 	{
@@ -13561,7 +13578,7 @@ riscv_optab_supported_p (int op, machine_mode, machine_mode result_mode,
   if (op == crc_rev_optab && opt_type != OPTIMIZE_FOR_SPEED)
     return (((TARGET_ZBKC || TARGET_ZBC || TARGET_ZVBC)
 	     && result_mode < word_mode)
-	    || (!TARGET_64BIT && TARGET_ZBC && result_mode == word_mode));
+	    || (TARGET_ZBC && result_mode == word_mode));
 
   return true;
 }
@@ -16005,15 +16022,31 @@ expand_reversed_crc_using_clmul (scalar_mode crc_mode, scalar_mode data_mode,
   gcc_assert (!CONST_INT_P (operands[0]));
   gcc_assert (CONST_INT_P (operands[3]));
   unsigned short crc_size = GET_MODE_BITSIZE (crc_mode);
-  gcc_assert (crc_size <= 32);
+  gcc_assert (crc_size <= BITS_PER_WORD);
   unsigned short data_size = GET_MODE_BITSIZE (data_mode);
   rtx polynomial = operands[3];
 
-  /* Calculate the quotient.  */
-  unsigned HOST_WIDE_INT
-  q = gf2n_poly_long_div_quotient (UINTVAL (polynomial), crc_size);
-  /* Reflect the calculated quotient.  */
-  q = reflect_hwi (q, crc_size + 1);
+  unsigned HOST_WIDE_INT q;
+  if (crc_size == 64)
+    {
+      /* Calculate the quotient.
+	x^64 is left implicit at the msb to fit in 64 bits.  */
+      q = gf2n_poly_long_div_quotient (UINTVAL (polynomial), crc_size);
+      /* Reflect the calculated quotient.
+	Implicit bit is now missing at the lsb.  */
+      q = reflect_hwi (q, crc_size);
+      /* Add the implicit bit back at the lsb.
+	This is okay because the extra bit falls outside the 64 lsbs output
+	by clmul.  */
+      q = (q << 1) | 1;
+    }
+  else
+    {
+      /* Calculate the quotient.  */
+      q = gf2n_poly_long_div_quotient (UINTVAL (polynomial), crc_size);
+      /* Reflect the calculated quotient.  */
+      q = reflect_hwi (q, crc_size + 1);
+    }
   rtx t0 = gen_reg_rtx (word_mode);
   riscv_emit_move (t0, gen_int_mode (q, word_mode));
 
@@ -16052,8 +16085,10 @@ expand_reversed_crc_using_clmul (scalar_mode crc_mode, scalar_mode data_mode,
 
       if (use_clmulr)
 	{
-	  gcc_assert (!TARGET_64BIT);
-	  emit_insn (gen_riscv_clmulr_si (a0, a0, t1));
+	  if (TARGET_64BIT)
+	    emit_insn (gen_riscv_clmulr_di (a0, a0, t1));
+	  else
+	    emit_insn (gen_riscv_clmulr_si (a0, a0, t1));
 	}
       else
 	{
@@ -16262,12 +16297,18 @@ synthesize_ior_xor (rtx_code code, rtx operands[3])
 	 of leading zeros after masking off all but the low 11 bits.  */
       int rotcount = clz_hwi (ival & 0x7ff) - (BITS_PER_WORD - 11);
 
-      /* Rotate the constant left by MSB bits.  */
-      ival = (ival << rotcount) | (ival >> (BITS_PER_WORD - rotcount));
+      /* Rotate the constant left by MSB bits.  Avoid undefined behavior if
+	 rotcount is zero.  A rotcount of zero means there's no room to rotate
+	 in bits.  We can just set ival to all ones so is rejected later with
+	 the msb - lsb check.  */
+      if (rotcount != 0)
+	ival = (ival << rotcount) | (ival >> (BITS_PER_WORD - rotcount));
+      else
+	ival = HOST_WIDE_INT_M1U;
 
       /* Now we can do the same tests as before. */
       lsb = ctz_hwi (ival);
-      msb = BITS_PER_WORD - clz_hwi (ival);
+      msb = BITS_PER_WORD - 1 - clz_hwi (ival);
       if ((INTVAL (operands[2]) & HOST_WIDE_INT_UC (0x7ff)) != 0
 	  && msb - lsb + 1 <= 11)
 	{
@@ -16516,7 +16557,7 @@ synthesize_and (rtx operands[3])
       && budget >= 3
       && consecutive_bits_operand (GEN_INT (~t), word_mode)
       && ((TARGET_ZBA && popcount_hwi (t) == 32)
-	  || popcount_hwi (t) == 16
+	  || (TARGET_ZBB && popcount_hwi (t) == 16)
 	  || popcount_hwi (t) <= 11))
     {
       /* First rotate the relevant bits into the low position.  */

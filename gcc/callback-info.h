@@ -35,9 +35,16 @@ public:
      parameter, we will need a separate id field.  */
   unsigned fn_idx;
 
-  /* Mapping from the dispatching function's arguments to the callback
-     function.  */
+  /* Mapping from the indices of the arguments passed to the callback to their
+     indices in the call to the dispatching function or to
+     ARG_MAPPING_UNKNOWN_IDX if they do not correspond to any. */
   auto_vec<int> arg_mapping;
+
+  /* Mapping in the opposite direction, from indices of the actual
+     arguments of the call to the dispatcher to indices of arguments in
+     which they are passed to the callback or to ARG_MAPPING_UNKNOWN_IDX
+     if they are not passed to the callback.  */
+  auto_vec<int> inverted_mapping;
 
   /* TRUE iff the associated callback edge was redirected.  */
   bool redirected;
@@ -52,7 +59,11 @@ public:
   unsigned get_id () const;
 
   /* Initializes the summary.  */
-  void init (unsigned fn_idx, tree attr);
+  void init (cgraph_edge *e, unsigned fn_idx, tree attr);
+
+  /* Create the summary for a callback call CBE of internal function IFN. */
+  static callback_info *create_internal_summary (cgraph_edge *cbe,
+						 internal_fn ifn);
 };
 
 class callback_info_sum_t : public call_summary<callback_info *>
@@ -74,5 +85,21 @@ public:
 };
 
 extern callback_info_sum_t *callback_info_sum;
+
+/* Return the argument of STMT at IDX if CI is null, otherwise use the mapping
+   in CI and return the remapped argument.  Presumes that the remapped index is
+   not ARG_MAPPING_UNKNOWN_IDX.  */
+tree callback_call_arg_summary (const gimple *stmt, int idx, callback_info *ci);
+
+/* Return the number of arguments of STMT if CI is null,
+   ci->arg_mapping.length() otherwise.  */
+unsigned callback_call_num_args_summary (const gcall *stmt, callback_info *ci);
+
+/* Returns TRUE iff STMT is an internal call statement to IFN_ASSUME.  */
+bool callback_ifn_assume_call_p (const gimple *stmt);
+
+/* Returns TRUE iff STMT is an internal call statement to IFN_ASSUME with a
+   callback edge pointing to the outlined body.  */
+bool callback_ifn_assume_call_with_edge_p (cgraph_node *caller, gimple *stmt);
 
 #endif /* CALLBACK_INFO_H  */

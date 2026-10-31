@@ -1,3 +1,60 @@
+2026-10-30  Andrew Stubbs  <ams@baylibre.com>
+
+	* libgomp.texi (AMD Radeon (GCN)): Document stack size rounding.
+	* plugin/plugin-gcn.c (init_environment_variables): Round stack_size
+	up to an odd multiple of 4 kiB.
+
+2026-10-30  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* plugin/Makefrag.am (libgomp_plugin_nvptx_la_LINK)
+	(libgomp_plugin_gcn_la_LINK): Set, to use...
+	(libgomp_plugin_LINK): ... this new variable.
+	* Makefile.am (LINK): Cross-reference it.
+	* Makefile.in: Regenerate.
+
+2026-10-29  Andrew Stubbs  <ams@baylibre.com>
+
+	* plugin/plugin-gcn.c (drain_queue): Execute placeholder entries
+	with the queue lock held.
+
+2026-10-27  Tobias Burnus  <tburnus@baylibre.com>
+
+	* fortran.c (omp_get_gprivate_limit_): Add.
+	* libgomp-plugin.h (GOMP_OFFLOAD_get_gprivate_limit): Add.
+	* libgomp.h (struct gomp_device_descr): Add get_gprivate_limit_func.
+	* libgomp.map: Add omp_get_gprivate_limit_.
+	* libgomp.texi (omp_get_gprivate_limit): Document new routine.
+	* omp.h.in (omp_access_t, omp_get_gprivate_limit): Add.
+	* omp_lib.f90.in (omp_access_kind, omp_get_gprivate_limit): Add.
+	* omp_lib.h.in (omp_access_kind, omp_get_gprivate_limit): Add.
+	* plugin/plugin-gcn.c (GOMP_OFFLOAD_get_gprivate_limit): Add.
+	* plugin/plugin-nvptx.c (GOMP_OFFLOAD_get_gprivate_limit): Add.
+	* target.c (omp_get_gprivate_limit): Add.
+	* testsuite/libgomp.c-c++-common/gprivate-1.c: New test.
+	* testsuite/libgomp.fortran/gprivate-1.f90: New test.
+
+2026-10-26  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* acinclude.m4 (LIBGOMP_CHECK_LINKER_FEATURES): Update AC_PROG_LD to LT_PATH_LD.
+	* configure: Regenerate.
+
+2026-10-23  Thomas Schwinge  <thomas@codesourcery.com>
+	    Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* testsuite/libgomp.fortran/reverse-offload-5.f90: For NVIDIA GPU
+	code offloading, shorten timeout to 10 s.
+
+2026-10-23  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR c++/127559
+	* testsuite/libgomp.c++/target-lambda-6.C: Un-XFAIL.
+
+2026-10-23  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR c++/127559
+	* testsuite/libgomp.c++/target-lambda-5.C: Enhance testing.
+	* testsuite/libgomp.c++/target-lambda-6.C: Likewise.
+
 2026-10-17  Sam James  <sam@gentoo.org>
 
 	PR bootstrap/112422

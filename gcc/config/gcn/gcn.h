@@ -120,6 +120,7 @@ extern const struct gcn_device_def {
 
 #define DATA_ALIGNMENT(TYPE,ALIGN) ((ALIGN) > 128 ? (ALIGN) : 128)
 #define LOCAL_ALIGNMENT(TYPE,ALIGN) ((ALIGN) > 64 ? (ALIGN) : 64)
+#define LOCAL_DECL_ALIGNMENT(DECL) gcn_local_decl_alignment (DECL)
 #define STACK_SLOT_ALIGNMENT(TYPE,MODE,ALIGN) ((ALIGN) > 64 ? (ALIGN) : 64)
 #define STRICT_ALIGNMENT 1
 
@@ -911,3 +912,6 @@ enum gcn_builtin_codes
       || M == V2SFmode || M == V2DImode || M == V2DFmode) \
    ? 2 \
    : 1)
+
+/* For switching between kernel and regular function.  */
+#define SWITCHABLE_TARGET 1

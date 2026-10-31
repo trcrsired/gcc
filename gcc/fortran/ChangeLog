@@ -1,3 +1,183 @@
+2026-10-30  Mikael Morin  <mikael@gcc.gnu.org>
+
+	PR fortran/114024
+	PR fortran/128033
+	* trans-stmt.cc (gfc_trans_allocate): Remove automatic wrapping of
+	array subreferences in a parentheses expression.
+	* trans-array.cc (gfc_array_allocate): Find the single non-element
+	array reference in the source expression instead of getting the last
+	reference in the chain.  Use a gfc_array_ref pointer instead of a
+	gfc_ref pointer and simplify the references using it.
+
+2026-10-30  Mikael Morin  <mikael@gcc.gnu.org>
+
+	PR fortran/127613
+	* expr.cc (gfc_is_simply_contiguous): Track the current type
+	during the data reference walk and only keep component references
+	that are not the _data component of a class container.  Query the
+	array type on the _data component of the class container for
+	polymorphic variables.
+
+2026-10-30  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/128042
+	* target-memory.cc (encode_derived): Handle the case where an array
+	component of a derived type is initialized by a scalar.
+
+2026-10-29  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/126968
+	* primary.cc (skip_ref_groups): New function.
+	(inferred_type_chain_ok): New function.
+	(gfc_match_varspec): Use it to choose among the candidate types of
+	an inferred-type associate name.
+	* resolve.cc (fixup_inferred_component_array_ref): Turn a substring
+	into an array section when the component is a rank-1 array.
+	* symbol.cc (find_derived_types): Walk the symtree in order.
+
+2026-10-28  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/128144
+	* resolve.cc (find_array_spec): Handle CLASS array components
+	followed directly by an array reference.
+	(fixup_inferred_compcall_refs): New function.
+	(resolve_typebound_function, resolve_typebound_subroutine)
+	(resolve_ppc_call, resolve_expr_ppc): Use it.
+	* trans-expr.cc (gfc_conv_variable): Do not call
+	gfc_fixup_inferred_type_refs.
+
+2026-10-27  Tobias Burnus  <tburnus@baylibre.com>
+
+	* intrinsic.texi (OpenMP intrinsic modules): Update list of
+	kind value and parameters.
+
+2026-10-27  Kael Andrew Alonzo Franco  <kaelfandrew@gmail.com>
+
+	PR bootstrap/112422
+	* gfortran.h (gfc_char_t): Remove HAVE_LONG_LONG and
+	HOST_BITS_PER_LONGLONG >= 32 since it is at least
+	64 according to C++14 standard.
+
+2026-10-27  Paul Thomas  <pault@gcc.gnu.org>
+
+	PR fortran/82173
+	* decl.cc (get_proc_name): Transfer the interface result parms
+	to the stashed procedure decl 'sym->tlink'...
+	(gfc_match_submod_proc): ... so that they can be copied to the
+	final procedure symbol.
+	* resolve.cc (resolve_pdt): Finally, transfer the parms to the
+	explicit result, if present.
+	* trans-decl.cc (gfc_trans_deferred_vars): If a PDT procedure
+	result has no default initializer or it is in a submodule then
+	allocate the parameterized components using its param_list if
+	present.
+	* trans-stmt.cc (gfc_trans_allocate): If a PDT MOLD expr3 is a
+	variable, use the symbol's param_list. Assert that there is a
+	param_list.
+
+2026-10-26  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/126968
+	* resolve.cc (fixup_inferred_component_array_ref): New function.
+	(gfc_fixup_inferred_type_refs): Look each component reference up
+	again by name in the corrected derived type and update both
+	u.c.sym and u.c.component.  Walk the whole reference chain instead
+	of stopping at the first component.  Look up '_data', '_vptr' and
+	'_len' in the class container of the preceding CLASS component.
+	Check component access.  Use fixup_inferred_component_array_ref on
+	the reference after each rebound component.
+
+2026-10-25  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/127892
+	* simplify.cc (gfc_simplify_transfer): Fix a GMP memleak.
+	Reorganize the generation of the result expression so that its
+	known rank is directly used.
+	* target-memory.cc (gfc_target_interpret_expr): Use mpfr_clear /
+	mpz_clear before reinitializing scalar numerical value components.
+
+2026-10-24  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/126798
+	* resolve.cc (resolve_assoc_var): Move the procedure pointer check
+	out of the EXPR_VARIABLE branch and diagnose a function reference
+	whose result is a procedure pointer.
+
+2026-10-24  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	* resolve.cc (resolve_variable): Do not call gfc_fix_class_refs
+	for an inferred-type reference.
+
+2026-10-24  Thomas Koenig  <tkoenig@gcc.gnu.org>
+
+	PR fortran/128124
+	* gfortran.texi: Note that LEADZ, POPCNT, POPPAR and TRAILZ take
+	unsigned arguments.
+	* intrinsic.cc (add_functions): LEADZ and TRAILZ also take unsigned
+	arguments.
+	* intrinsic.texi: Document unsigned arguments for LEADZ, POPCNT, POPPAR
+	and TRAILZ.
+
+2026-10-24  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/128067
+	* module.cc (load_needed): Prevent scanning of empty name for
+	prefix "__".
+
+2026-10-23  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/127731
+	* expr.cc (gfc_check_pointer_assign): Set subref_array_pointer
+	on the pointer object when the target is a pointer array
+	function result.
+	* resolve.cc (resolve_assoc_var): Likewise on the associate name
+	when the selector is a pointer array function result.
+	* trans-expr.cc (pointer_array_result_p): New function.
+	(pointer_result_var): New function.
+	(gfc_conv_procedure_call): Pass a pointer array function result
+	to a non-pointer dummy through gfc_conv_subref_array_arg.  Mark
+	the temporary for a pointer array result GFC_DECL_PTR_ARRAY_P.
+
+2026-10-23  Jerry DeLisle  <jvdelisle@gcc.gnu.org>
+
+	PR fortran/125763
+	* frontend-passes.cc (create_var): Clear ts.deferred when the
+	temporary gets an explicit length from LEN().
+	* resolve.cc (gfc_resolve_expr): Resolve the substring length
+	also when the first reference is the substring.
+
+2026-10-23  Mikael Morin  <mikael@gcc.gnu.org>
+
+	PR fortran/128103
+	* trans-array.cc (gfc_conv_expr_descriptor): Unwrap any class
+	container from the type to use as array descriptor element type.
+
+2026-10-23  Paul Thomas  <pault@gcc.gnu.org>
+
+	PR fortran/128093
+	* trans-stmt.cc (gfc_trans_allocate): Move gfc_replace_expr to
+	after deallocation of PDT components.
+
+2026-10-22  Paul Thomas  <pault@gcc.gnu.org>
+
+	PR fortran/82173
+	* trans-array.cc (structure_alloc_comps): CHECK_PDT_INTENT_OUT_
+	DUMMY added to enum and flag 'intent_out' set. If any of -
+	'intent_out' is false, the component has a codimension, is a
+	pointer, is a parmeterized kind, a KIND or LEN parameter, does
+	not have an initializer then continue through the components.
+	Otherwise, convert the initializer and set the component for
+	constants, array constructors or structure constructors.
+	(gfc_check_pdt_dummy): Incorporate a new argument 'intent_out';
+	use it to switch to the above path in structure_alloc_comps.
+	* trans-array.h : Add the new argument to the prototype of
+	gfc_check_pdt_dummy.
+	* trans-decl.cc (gfc_get_symbol_decl): gfc_defer_symbol_init is
+	now called for intent_out dummies.
+	(gfc_trans_deferred_vars): Call gfc_check_pdt_dummy with the
+	new argument set. For optional arguments, gfc_conv_expr_present
+	is used to apply a condition to the gfc_check_pdt_dummy result.
+
 2026-10-20  Harald Anlauf  <anlauf@gmx.de>
 
 	PR fortran/127892

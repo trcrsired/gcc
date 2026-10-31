@@ -1506,8 +1506,8 @@ vect_recog_sad_pattern (vec_info *vinfo,
   vect_pattern_detected ("vect_recog_sad_pattern", last_stmt);
 
   tree half_vectype;
-  if (!vect_supportable_direct_optab_p (vinfo, sum_type, SAD_EXPR, half_type,
-					type_out, &half_vectype))
+  if (!vect_supportable_conv_optab_p (vinfo, sum_type, SAD_EXPR, half_type,
+				      type_out, &half_vectype))
     return NULL;
 
   /* Get the inputs to the SAD_EXPR in the appropriate types.  */
@@ -5420,6 +5420,19 @@ vect_recog_divmod_pattern (vec_info *vinfo,
 
       *type_out = vectype;
 
+      /* OPRND1 is a positive power of two here and the dividend of an
+	 exact division is a multiple of it, so the right shift is exact
+	 also for negative dividends and needs no rounding fixup.  */
+      if (rhs_code == EXACT_DIV_EXPR)
+	{
+	  tree shift = build_int_cst (itype, tree_log2 (oprnd1));
+	  pattern_stmt
+	    = gimple_build_assign (vect_recog_temp_ssa_var (itype, NULL),
+				   RSHIFT_EXPR, oprnd0, shift);
+	  gimple_set_location (pattern_stmt, gimple_location (last_stmt));
+	  return pattern_stmt;
+	}
+
       /* Check if the target supports this internal function.  */
       internal_fn ifn = IFN_DIV_POW2;
       if (!TYPE_UNSIGNED (itype)
@@ -5465,7 +5478,6 @@ vect_recog_divmod_pattern (vec_info *vinfo,
 			      truth_type_for (vectype), itype);
       tree div_result = NULL_TREE;
       if (rhs_code == TRUNC_DIV_EXPR
-	  || rhs_code == EXACT_DIV_EXPR
 	  || rhs_code == FLOOR_DIV_EXPR
 	  || rhs_code == CEIL_DIV_EXPR
 	  || rhs_code == ROUND_DIV_EXPR)

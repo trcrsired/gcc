@@ -61,7 +61,7 @@ init_reflection ()
   /* The type std::meta::info is a scalar type for which equality and
      inequality are meaningful, but for which no ordering relation is
      defined.  */
-  meta_info_type_node = make_node (LANG_TYPE);
+  meta_info_type_node = make_node (OPAQUE_TYPE);
   /* Make it a complete type.  */
   TYPE_SIZE (meta_info_type_node) = bitsize_int (GET_MODE_BITSIZE (ptr_mode));
   TYPE_SIZE_UNIT (meta_info_type_node) = size_int (GET_MODE_SIZE (ptr_mode));
@@ -7686,18 +7686,25 @@ extract_ref (location_t loc, const constexpr_ctx *ctx, tree T, tree r,
       if (adju != error_mark_node
 	  && adjt != error_mark_node
 	  && is_convertible (adju, adjt)
-	  && (!var_p || is_constant_expression (r)))
+	  && (!var_p
+	      || decl_constant_var_p (r)
+	      || cxx_constexpr_in_eval_lifetime_p (ctx, r)))
 	{
 	  if (TYPE_REF_P (TREE_TYPE (r)))
 	    {
-	      r = DECL_INITIAL (r);
-	      r = maybe_get_reference_referent (r);
-	      gcc_checking_assert (!TYPE_REF_P (TREE_TYPE (r)));
+	      bool nc = false, ovf = false;
+	      tree jt = NULL_TREE;
+	      r = cxx_eval_constant_expression (ctx, convert_from_reference (r),
+						vc_glvalue, &nc, &ovf, &jt);
+	      if (nc || jt)
+		goto throw_;
+	      gcc_checking_assert (!TYPE_P (r));
 	    }
-	  return build_address (r);
+	  return build_nop (T, build_address (r));
 	}
     }
 
+throw_:
   return throw_exception (loc, ctx, "value cannot be extracted", fun,
 			  non_constant_p, jump_target);
 }
@@ -8151,6 +8158,12 @@ process_metafunction (const constexpr_ctx *ctx, tree fun, tree call,
       default:
 	gcc_unreachable ();
       }
+
+  /* Some of the eval_ functions build new trees and in a template
+     that could produce template trees.  The subsequent evaluation
+     cannot process such trees, though, so force a non-template
+     context.  This assumes that the call is not instantiation-dependent.  */
+  processing_template_decl_sentinel ptds;
 
   switch (minfo->code)
     {
@@ -9253,7 +9266,7 @@ valid_splice_for_member_access_p (const_tree t, bool decls_only_p/*=true*/)
    splice is used in foo.[: bar :] or foo->[: bar :] context.  TEMPLATE_P is
    true if the splice-expression was preceded by 'template'.  TARGS_P is true
    if there were template arguments.  COMPLAIN_P is true if any errors should
-   be emitted.  Returns true is no problems are found, false otherwise.  */
+   be emitted.  Returns true if no problems are found, false otherwise.  */
 
 bool
 check_splice_expr (location_t loc, location_t start_loc, tree t,
@@ -9478,6 +9491,29 @@ dependent_splice_p (const_tree t)
   return (TREE_CODE (t) == SPLICE_EXPR
 	  || (TREE_CODE (t) == TEMPLATE_ID_EXPR
 	      && TREE_CODE (TREE_OPERAND (t, 0)) == SPLICE_EXPR));
+}
+
+/* Check if SPLICE is a valid namespace splice.  Returns true if no problems
+   are found, false otherwise.  */
+
+bool
+check_namespace_splice (cp_expr splice)
+{
+  if (TREE_CODE (splice) != NAMESPACE_DECL && !dependent_namespace_p (splice))
+    {
+      auto_diagnostic_group d;
+      error_at (splice.get_location (), "expected a reflection of "
+		"a namespace");
+      inform_tree_category (splice);
+      return false;
+    }
+  else if (splice == global_namespace)
+    {
+      error_at (splice.get_location (), "splice of the global namespace "
+		"can only appear in a nested-name-specifier");
+      return false;
+    }
+  return true;
 }
 
 /* Annotation index for mangling.  */

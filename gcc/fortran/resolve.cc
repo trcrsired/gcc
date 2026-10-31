@@ -5682,6 +5682,15 @@ find_array_spec (gfc_expr *e)
 	      gfc_internal_error ("find_array_spec(): unused as(1)");
 	    as = c->as;
 	  }
+	else if (c->ts.type == BT_CLASS && CLASS_DATA (c)
+		 && CLASS_DATA (c)->attr.dimension
+		 && ref->next && ref->next->type == REF_ARRAY)
+	  {
+	    /* CLASS array component with an implicit '_data' reference.  */
+	    if (as != NULL)
+	      gfc_internal_error ("find_array_spec(): unused as(1)");
+	    as = CLASS_DATA (c)->as;
+	  }
 
 	break;
 
@@ -6717,7 +6726,8 @@ resolve_variable (gfc_expr *e)
      TODO Understand why class scalar expressions must be excluded.  */
   if (sym->assoc && !(sym->ts.type == BT_CLASS && e->rank == 0))
     {
-      if (sym->ts.type == BT_CLASS)
+      /* Inferred-type references are already fixed up above.  */
+      if (sym->ts.type == BT_CLASS && !IS_INFERRED_TYPE (e))
 	gfc_fix_class_refs (e);
       if (!sym->attr.dimension && !sym->attr.codimension && e->ref
 	  && e->ref->type == REF_ARRAY)
@@ -6997,6 +7007,76 @@ resolve_procedure:
 }
 
 
+/* The reference at *LINK follows a reference to component C in the
+   inferred type expression E.  Make it agree with the array spec of C.  */
+
+static void
+fixup_inferred_component_array_ref (gfc_expr *e, gfc_component *c,
+				    gfc_ref **link)
+{
+  gfc_ref *ref = *link;
+  gfc_array_spec *as;
+
+  if (c->ts.type == BT_CLASS)
+    as = CLASS_DATA (c) ? CLASS_DATA (c)->as : NULL;
+  else
+    as = c->as;
+
+  if (ref && ref->type == REF_ARRAY)
+    {
+      if (as)
+	ref->u.ar.as = as;
+      else if (ref->u.ar.type == AR_FULL)
+	{
+	  /* Drop the full array ref of a component guessed to be an array.  */
+	  *link = ref->next;
+	  free (ref);
+	}
+      else if (c->ts.type == BT_CHARACTER && ref->u.ar.dimen == 1
+	       && ref->u.ar.dimen_type[0] == DIMEN_RANGE
+	       && !ref->u.ar.stride[0])
+	{
+	  /* A substring misidentified as an array section.  */
+	  gfc_expr *start = ref->u.ar.start[0];
+	  gfc_expr *end = ref->u.ar.end[0];
+	  ref->type = REF_SUBSTRING;
+	  ref->u.ss.start = start;
+	  ref->u.ss.end = end;
+	  ref->u.ss.length = c->ts.u.cl;
+	}
+      else
+	/* Leave the array ref of a scalar to find_array_spec to diagnose.  */
+	ref->u.ar.as = NULL;
+    }
+  else if (as && as->rank == 1 && ref && ref->type == REF_SUBSTRING)
+    {
+      /* An array section misidentified as a substring.  */
+      gfc_expr *start = ref->u.ss.start;
+      gfc_expr *end = ref->u.ss.end;
+      memset (&ref->u, 0, sizeof (ref->u));
+      ref->type = REF_ARRAY;
+      ref->u.ar.type = AR_SECTION;
+      ref->u.ar.dimen = 1;
+      ref->u.ar.dimen_type[0] = DIMEN_RANGE;
+      ref->u.ar.start[0] = start;
+      ref->u.ar.end[0] = end;
+      ref->u.ar.as = as;
+      ref->u.ar.where = e->where;
+    }
+  else if (as)
+    {
+      /* Supply the full array ref of a component guessed to be scalar.  */
+      ref = gfc_get_ref ();
+      ref->type = REF_ARRAY;
+      ref->u.ar.type = AR_FULL;
+      ref->u.ar.as = as;
+      ref->u.ar.where = e->where;
+      ref->next = *link;
+      *link = ref;
+    }
+}
+
+
 /* 'sym' was initially guessed to be derived type but has been corrected
    in resolve_assoc_var to be a class entity or the derived type correcting.
    If a class entity it will certainly need the _data reference or the
@@ -7007,7 +7087,7 @@ void
 gfc_fixup_inferred_type_refs (gfc_expr *e)
 {
   gfc_ref *ref, *new_ref;
-  gfc_symbol *sym, *derived;
+  gfc_symbol *sym, *derived, *dt, *container;
   gfc_expr *target;
   sym = e->symtree->n.sym;
 
@@ -7108,17 +7188,82 @@ gfc_fixup_inferred_type_refs (gfc_expr *e)
 	}
     }
 
-  /* Proceed as far as the first component reference and ensure that the
-     correct derived type is being used.  */
-  for (ref = e->ref; ref; ref = ref->next)
-    if (ref->type == REF_COMPONENT)
-      {
-	if (ref->u.c.component->name[0] != '_')
-	  ref->u.c.sym = derived;
-	else
-	  ref->u.c.sym = sym->ts.u.derived;
+  /* The type used to build the component references at parse time was only
+     a guess, so they can point into a different derived type that happens
+     to have a component of the same name.  Bind each one by name to the
+     corrected type and fix up the array ref that follows it.  */
+  dt = derived;
+  container = sym->ts.type == BT_CLASS ? sym->ts.u.derived : NULL;
+  gfc_component *comp = NULL;
+  gfc_ref **link;
+  for (link = &e->ref; ; link = &(*link)->next)
+    {
+      gfc_component *c;
+
+      ref = *link;
+      if (comp && !(ref && ref->type == REF_COMPONENT
+		    && ref->u.c.component->name[0] == '_'))
+	{
+	  fixup_inferred_component_array_ref (e, comp, link);
+	  comp = NULL;
+	  ref = *link;
+	}
+
+      if (!ref)
 	break;
-      }
+
+      if (ref->type != REF_COMPONENT)
+	continue;
+
+      /* '_data', '_vptr' and '_len' are fields of the preceding class
+	 container; 'dt' already is the declared type that follows '_data'.  */
+      if (ref->u.c.component->name[0] == '_')
+	{
+	  if (!container)
+	    break;
+	  c = gfc_find_component (container, ref->u.c.component->name,
+				  true, true, NULL);
+	  if (!c)
+	    break;
+	  ref->u.c.sym = container;
+	  ref->u.c.component = c;
+	  container = NULL;
+	  if (strcmp (c->name, "_data") != 0)
+	    break;
+	  continue;
+	}
+
+      if (!dt)
+	break;
+
+      c = gfc_find_component (dt, ref->u.c.component->name, false, true, NULL);
+      if (!c)
+	{
+	  if (gfc_find_component (dt, ref->u.c.component->name,
+				  true, true, NULL))
+	    gfc_error ("Component %qs at %L is a PRIVATE component of %qs",
+		       ref->u.c.component->name, &e->where, dt->name);
+	  else
+	    gfc_error ("%qs at %L is not a member of the %qs structure",
+		       ref->u.c.component->name, &e->where, dt->name);
+	  return;
+	}
+
+      ref->u.c.sym = dt;
+      ref->u.c.component = c;
+      comp = c;
+
+      container = NULL;
+      if (c->ts.type == BT_DERIVED)
+	dt = c->ts.u.derived;
+      else if (c->ts.type == BT_CLASS && CLASS_DATA (c))
+	{
+	  container = c->ts.u.derived;
+	  dt = CLASS_DATA (c)->ts.u.derived;
+	}
+      else
+	dt = NULL;
+    }
 
   /* Verify that the type inference mechanism has not introduced a spurious
      array reference.  This can happen with an associate name, whose selector
@@ -7927,6 +8072,52 @@ resolve_compcall (gfc_expr* e, const char **name)
 static bool resolve_fl_derived (gfc_symbol *sym);
 
 
+/* Fix up the references of the EXPR_COMPCALL or EXPR_PPC E, whose base
+   object is an inferred type associate name, as for the equivalent
+   variable.  Look up the type-bound procedure again in the corrected
+   type.  */
+
+static void
+fixup_inferred_compcall_refs (gfc_expr *e)
+{
+  gfc_symbol *sym, *dt;
+  gfc_symtree *tbp;
+  gfc_expr *var;
+  bool t;
+
+  sym = e->symtree->n.sym;
+  if (!sym->assoc || !sym->assoc->inferred_type
+      || (sym->ts.type != BT_DERIVED && sym->ts.type != BT_CLASS))
+    return;
+
+  if (e->ref)
+    {
+      var = gfc_get_expr ();
+      var->expr_type = EXPR_VARIABLE;
+      var->symtree = e->symtree;
+      var->ref = e->ref;
+      var->ts = sym->ts;
+      var->where = e->where;
+      gfc_fixup_inferred_type_refs (var);
+      e->ref = var->ref;
+      var->ref = NULL;
+      gfc_free_expr (var);
+    }
+
+  if (e->expr_type != EXPR_COMPCALL || !e->value.compcall.name)
+    return;
+
+  dt = get_declared_from_expr (NULL, NULL, e, true);
+  if (dt->attr.is_class && dt->components)
+    dt = dt->components->ts.u.derived;
+
+  tbp = gfc_find_typebound_proc (dt, &t, e->value.compcall.name, false,
+				 &e->where);
+  if (tbp && t)
+    e->value.compcall.tbp = tbp->n.tb;
+}
+
+
 /* Resolve a typebound function, or 'method'. First separate all
    the non-CLASS references by calling resolve_compcall directly.  */
 
@@ -7994,6 +8185,8 @@ resolve_typebound_function (gfc_expr* e)
 
   if (st == NULL)
     return resolve_compcall (e, NULL);
+
+  fixup_inferred_compcall_refs (e);
 
   if (!gfc_resolve_ref (e))
     return false;
@@ -8144,6 +8337,8 @@ resolve_typebound_subroutine (gfc_code *code)
   if (st == NULL)
     return resolve_typebound_call (code, NULL, NULL);
 
+  fixup_inferred_compcall_refs (code->expr1);
+
   if (!gfc_resolve_ref (code->expr1))
     return false;
 
@@ -8198,6 +8393,8 @@ resolve_ppc_call (gfc_code* c)
 {
   gfc_component *comp;
 
+  fixup_inferred_compcall_refs (c->expr1);
+
   comp = gfc_get_proc_ptr_comp (c->expr1);
   gcc_assert (comp != NULL);
 
@@ -8235,6 +8432,8 @@ static bool
 resolve_expr_ppc (gfc_expr* e)
 {
   gfc_component *comp;
+
+  fixup_inferred_compcall_refs (e);
 
   comp = gfc_get_proc_ptr_comp (e);
   gcc_assert (comp != NULL);
@@ -8377,8 +8576,7 @@ gfc_resolve_expr (gfc_expr *e)
       else
 	t = resolve_variable (e);
 
-      if (e->ts.type == BT_CHARACTER && e->ts.u.cl == NULL && e->ref
-	  && e->ref->type != REF_SUBSTRING)
+      if (e->ts.type == BT_CHARACTER && e->ts.u.cl == NULL && e->ref)
 	gfc_resolve_substring_charlen (e);
 
       break;
@@ -10724,6 +10922,40 @@ resolve_assoc_var (gfc_symbol* sym, bool resolve_target)
 	}
     }
 
+  /* F2023:C1105 - the selector shall be neither a procedure pointer
+     designator nor a function reference returning a procedure pointer.
+     Note that calling a procedure pointer is fine; what matters here is
+     whether the function result is itself a procedure pointer.  */
+  if (target->expr_type == EXPR_VARIABLE
+      && gfc_expr_attr (target).proc_pointer)
+    {
+      gfc_error ("Associating entity %qs at %L is a procedure pointer",
+		 target->symtree->n.sym->name, &target->where);
+      return;
+    }
+
+  if (target->expr_type == EXPR_FUNCTION)
+    {
+      gfc_symbol *fsym = target->value.function.esym;
+      gfc_symbol *result = NULL;
+
+      if (fsym && fsym->attr.proc_pointer)
+	/* Called through a procedure pointer, whose own result symbol is
+	   itself; the result is described by the interface instead.  */
+	result = fsym->ts.interface ? fsym->ts.interface->result : NULL;
+      else if (fsym)
+	result = fsym->result;
+      else if (target->symtree && target->symtree->n.sym->ts.interface)
+	result = target->symtree->n.sym->ts.interface->result;
+
+      if (result && result->attr.proc_pointer)
+	{
+	  gfc_error ("Selector at %L returns a procedure pointer",
+		     &target->where);
+	  return;
+	}
+    }
+
   /* For variable targets, we get some attributes from the target.  */
   if (target->expr_type == EXPR_VARIABLE
       || (target->expr_type == EXPR_OP
@@ -10734,13 +10966,6 @@ resolve_assoc_var (gfc_symbol* sym, bool resolve_target)
 
       tsym = target->expr_type == EXPR_VARIABLE ? target->symtree->n.sym :
 				  target->value.op.op1->symtree->n.sym;
-
-      if (gfc_expr_attr (target).proc_pointer)
-	{
-	  gfc_error ("Associating entity %qs at %L is a procedure pointer",
-		     tsym->name, &target->where);
-	  return;
-	}
 
       if (tsym->attr.flavor == FL_PROCEDURE && tsym->generic
 	  && (dsym = gfc_find_dt_in_generic (tsym)) != NULL
@@ -10786,6 +11011,13 @@ resolve_assoc_var (gfc_symbol* sym, bool resolve_target)
 		 &target->where);
       return;
     }
+
+  /* The elements of a pointer function result may be spaced by more than
+     the element size.  */
+  if (target->expr_type == EXPR_FUNCTION
+      && target->rank > 0
+      && gfc_expr_attr (target).pointer)
+    sym->attr.subref_array_pointer = 1;
 
   if (sym->assoc->inferred_type || IS_INFERRED_TYPE (target))
     {
@@ -18612,6 +18844,14 @@ resolve_pdt (gfc_symbol* sym)
 
   gcc_assert (derived->attr.pdt_type);
 
+  /* Now that the result symbol has been corrected for these module
+     procedures, we can transfer the param_list from the proc sym.  */
+  if (sym->abr_modproc_decl && sym->result && sym != sym->result)
+    {
+      sym->result->param_list = sym->param_list;
+      sym->param_list = NULL;
+    }
+
   for (param = sym->param_list; param; param = param->next)
     {
       c = gfc_find_component (derived, param->name, false, true, NULL);
@@ -18633,7 +18873,6 @@ resolve_pdt (gfc_symbol* sym)
 		   "or ALLOCATABLE attribute",
 		   sym->name, &sym->declared_at,
 		   param->name);
-
     }
 
   if (!const_len_exprs

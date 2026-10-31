@@ -1,3 +1,136 @@
+2026-10-29  Jonathan Wakely  <jwakely@redhat.com>
+
+	PR libstdc++/128264
+	* src/c++17/memory_resource.cc (_Pool::replenish): Rethrow
+	exception.
+	(_Pool::vector::insert): Use named variables for new capacity.
+	For initial allocation only set capacity if allocation succeeds.
+	* testsuite/20_util/unsynchronized_pool_resource/128264.cc: New
+	test.
+
+2026-10-29  Jonathan Wakely  <jwakely@redhat.com>
+
+	* include/bits/stl_bvector.h (_M_check_and_initialize): New
+	function.
+	(vector(size_type, const bool&, const allocator_type&))
+	(vector(from_range_t, R&&, const Alloc&))
+	(_M_initialize_dispatch, _M_initialize_range): Use new function
+	instead of _M_initialize.
+	(_M_initialize): Add debug assertion.
+	* testsuite/23_containers/vector/bool/prX.cc: New test.
+
+2026-10-29  Jonathan Wakely  <jwakely@redhat.com>
+
+	* src/c++20/tzdb.cc (tzdb::locate_zone): Adjust exception text
+	to say "time zone".
+	* testsuite/std/time/tzdb/links.cc: Adjust expected exception
+	text.
+
+2026-10-29  Jonathan Wakely  <jwakely@redhat.com>
+
+	* include/parallel/search.h (__search_template): Increase array
+	size.
+
+2026-10-28  Tomasz Kamiński  <tkaminsk@redhat.com>
+
+	* include/std/inplace_vector (inplace_vector::_S_check_size)
+	(inplace_vector::_S_check_distance)
+	(inplace_vector::_S_distance_if_fits): Rename __used parameter
+	to __size.
+
+2026-10-28  Tomasz Kamiński  <tkaminsk@redhat.com>
+
+	* include/bits/stl_iterator_base_types.h (__any_sizeable_iterator):
+	Define.
+	* include/std/inplace_vector (inplace_vector::_S_reserve):
+	Replace with...
+	(inplace_vector::_S_check_size, inplace_vector::_S_check_distance):
+	Define.
+	(inplace_vector::_S_distance): Replace with..
+	(inplace_vector::_S_distance_if_fits): Rework _S_distance with
+	integrated bounds checking, and overloaded for rangs.
+	(inplace_vector::reserve, inplace_vector::resize): Replace
+	_S_reserve with _S_check_size.
+	(inplace_vector::inplace_vector, inplace_vector::assign): Replace
+	runtime check with if constexpr and use _S_distance_if_fits.
+	(inplace_vector::insert): Likewise, and skip rotate for insertion
+	at the end.
+	(inplace_vector::append_range): Use _S_distance_if_fits to compute
+	size.
+	* testsuite/23_containers/inplace_vector/modifiers/capacity_check.cc:
+	New test.
+
+2026-10-27  Jonathan Wakely  <jwakely@redhat.com>
+
+	PR libstdc++/127815
+	* src/c++20/tzdb.cc (time_zone::_M_get_sys_info): Clamp
+	parameter to start of first info. Use unsigned type for argument
+	to vector::reserve.
+	* testsuite/std/time/time_zone/127815.cc: New test.
+
+2026-10-27  Jonathan Wakely  <jwakely@redhat.com>
+	    Tomasz Kamiński  <tkaminsk@redhat.com>
+
+	* include/bits/chrono.h (floor, ceil, round): Change
+	preprocessor condition to __glibcxx_freestanding_chrono.
+	[!_GLIBCXX_HOSTED] (system_clock, steady_clock): Define.
+	[!_GLIBCXX_HOSTED] (__sys_t): Remove.
+	[!_GLIBCXX_HOSTED] (sys_time, sys_seconds, sys_days): Remove
+	freestanding definitions.
+	* include/bits/version.def (freestanding_chrono): Define
+	non-standard macro.
+	* include/bits/version.h: Regenerate.
+	* include/std/chrono [!_GLIBCXX_HOSTED] (utc_clock, tai_clock)
+	(gps_clock, zoned_time, hash<zoned_time<>>): Define.
+	(clock_time_conversion, clock_cast) [!_GLIBCXX_HOSTED]: Define
+	the same as for hosted.
+	* testsuite/20_util/system_clock/1.cc [!__STDC_HOSTED__]: Do not
+	test now, to_time_t and from_time_t for freestanding.
+	* testsuite/20_util/system_clock/99832.cc: Require hosted
+	effective target.
+	* testsuite/20_util/time_point/comparison_operators/three_way.cc
+	[!__cpp_lib_hosted]: Do not use system_clock::now() for
+	freestanding.
+	* testsuite/std/time/clock/file/members.cc: Require hosted
+	effective target.
+	* testsuite/std/time/clock/file/overview.cc [!__STDC_HOSTED__]:
+	Do not test now() for freestanding.
+	* testsuite/std/time/clock/gps/1.cc: Likewise.
+	* testsuite/std/time/clock/tai/1.cc: Likewise.
+	* testsuite/std/time/format/data_not_present_neg.cc: Require
+	hosted effective target.
+	* testsuite/std/time/format/pr120114.cc: Likewise.
+	* testsuite/std/time/format/pr120481.cc: Likewise.
+	* testsuite/std/time/format/precision.cc: Likewise.
+	* testsuite/std/time/format/whitespace.cc: Likewise.
+	* testsuite/std/time/syn_c++20.cc [!__STDC_HOSTED__]: Do not
+	test some components for freestanding.
+	* testsuite/std/time/time_zone/requirements.cc: Require hosted
+	effective target.
+	* testsuite/std/time/traits/is_clock.cc [!__STDC_HOSTED__]: Do
+	not test standard clocks for freestanding.
+	* testsuite/std/time/zoned_time/req_neg.cc: Likewise.
+	* testsuite/util/slow_clock.h [!_GLIBCXX_HOSTED]: Do not define
+	slow_clock::now() function for freestanding.
+	* testsuite/std/time/zoned_time/custom_freestanding.cc: New
+	test.
+
+2026-10-26  Pietro Monteiro  <pietro@sociotechnical.xyz>
+
+	* acinclude.m4 (GLIBCXX_CHECK_LINKER_FEATURES): Update AC_PROG_LD to LT_PATH_LD.
+	* configure: Regenerate.
+
+2026-10-24  Iain Sandoe  <iain@sandoe.co.uk>
+
+	* include/bits/simd_details.h: Use __GCC_IEC_559_COMPLEX to
+	determine IEC60559 complex support.
+
+2026-10-22  Zhongteng Gui  <dragon-archer@outlook.com>
+
+	PR middle-end/108300
+	* src/c++23/print.cc: Define `WIN32_LEAN_AND_MEAN` before
+	<windows.h>.
+
 2026-10-20  Jonathan Wakely  <jwakely@redhat.com>
 
 	PR libstdc++/127476

@@ -20,31 +20,12 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_TREE_SSANAMES_H
 #define GCC_TREE_SSANAMES_H
 
-/* Aliasing information for SSA_NAMEs representing pointer variables.  */
+/* Return NAME's points-to solution, or NULL if it has none.  Returns NULL
+   for a non pointer type.  */
+extern const pt_solution *ssa_name_pt_solution (const_tree name);
 
-struct GTY(()) ptr_info_def
-{
-  /* The points-to solution.  */
-  struct pt_solution pt;
-
-  /* Alignment and misalignment of the pointer in bytes.  Together
-     align and misalign specify low known bits of the pointer.
-     ptr & (align - 1) == misalign.  */
-
-  /* When known, this is the power-of-two byte alignment of the object this
-     pointer points into.  This is usually DECL_ALIGN_UNIT for decls and
-     MALLOC_ABI_ALIGNMENT for allocated storage.  When the alignment is not
-     known, it is zero.  Do not access directly but use functions
-     get_ptr_info_alignment, set_ptr_info_alignment,
-     mark_ptr_info_alignment_unknown and similar.  */
-  unsigned int align;
-
-  /* When alignment is known, the byte offset this pointer differs from the
-     above alignment.  Access only through the same helper functions as align
-     above.  */
-  unsigned int misalign;
-};
-
+/* Make PT the points-to solution for NAME, which must have pointer type.  */
+extern void set_ssa_name_pt_solution (tree name, const pt_solution &pt);
 
 #define SSANAMES(fun) (fun)->gimple_df->ssa_names
 #define DEFAULT_DEFS(fun) (fun)->gimple_df->default_defs
@@ -70,18 +51,16 @@ extern tree make_ssa_name_fn (struct function *, tree, gimple *,
 			      unsigned int version = 0);
 extern void init_ssa_name_imm_use (tree);
 extern void release_ssa_name_fn (struct function *, tree);
-extern bool get_ptr_info_alignment (struct ptr_info_def *, unsigned int *,
+extern bool get_ptr_info_alignment (const_tree, unsigned int *,
 				    unsigned int *);
-extern void mark_ptr_info_alignment_unknown (struct ptr_info_def *);
-extern void set_ptr_info_alignment (struct ptr_info_def *, unsigned int,
-				    unsigned int);
-extern void adjust_ptr_info_misalignment (struct ptr_info_def *, poly_uint64);
-extern struct ptr_info_def *get_ptr_info (tree);
+extern void mark_ptr_info_alignment_unknown (tree);
+extern void set_ptr_info_alignment (tree, unsigned int, unsigned int);
 extern void set_ptr_nonnull (tree);
 
 extern tree copy_ssa_name_fn (struct function *, tree, gimple *);
 extern tree duplicate_ssa_name_fn (struct function *, tree, gimple *);
-extern void duplicate_ssa_name_ptr_info (tree, struct ptr_info_def *);
+extern void duplicate_ssa_name_ptr_info (tree dest, const pt_solution *);
+extern void duplicate_ssa_name_ptr_info (tree dest, tree src);
 extern void duplicate_ssa_name_range_info (tree dest, tree src);
 extern void maybe_duplicate_ssa_info_at_copy (tree dest, tree src);
 extern void reset_flow_sensitive_info (tree);
@@ -153,11 +132,10 @@ private:
      -1 means a pointer type is saved.
      -2 means a pointer type is saved but no information was saved. */
   int state = 0;
-  /* The range info for non pointers */
+  /* The range info, which for a pointer also carries the bitmask and the
+     alignment, so those need no separate slot here.  */
   vrange_storage *range_info = nullptr;
-  /* Flow sensitive pointer information. */
-  unsigned int align = 0;
-  unsigned int misalign = 0;
+  /* Flow sensitive pointer information not held in the range.  */
   bool null = true;
 };
 

@@ -82,7 +82,7 @@
   [(set (match_operand:X 0 "register_operand")
 	(and:X (sign_extract:X (match_operand:X 1 "register_operand")
 			       (const_int 1)
-			       (match_operand 2 "immediate_operand"))
+			       (match_operand 2 "const_int_operand"))
 	       (match_operand:X 3 "register_operand")))
    (clobber (match_operand:X 4 "register_operand"))]
   "TARGET_ZICOND && !TARGET_ZBS && (UINTVAL (operands[2]) < 11)"
@@ -335,8 +335,9 @@
   [(set (match_dup 4) (if_then_else:X (ne:X (match_dup 1) (const_int 0))
 				      (match_dup 3)
 				      (const_int 0)))
-   (set (match_dup 0) (any_shift_rotate:X (match_dup 2) (subreg:QI (match_dup 4) 0)))]
-  "operands[3] = gen_lowpart (word_mode, operands[3]);")
+   (set (match_dup 0) (any_shift_rotate:X (match_dup 2) (match_dup 5)))]
+  "operands[3] = gen_lowpart (word_mode, operands[3]);
+   operands[5] = gen_lowpart (QImode, operands[4]);")
 
 ;; AND is special as the czero doesn't produce the neutral operand.  It
 ;; would be a natural 4->3 split, but combine doesn't support that, so

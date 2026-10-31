@@ -1036,7 +1036,7 @@ ccp_finalize (bool nonzero_p)
 	  tem = val->mask.to_uhwi ();
 	  align = least_bit_hwi (tem);
 	  if (align > 1)
-	    set_ptr_info_alignment (get_ptr_info (name), align,
+	    set_ptr_info_alignment (name, align,
 				    (TREE_INT_CST_LOW (val->value)
 				     & (align - 1)));
 	}
@@ -2717,11 +2717,11 @@ fold_builtin_alloca_with_align (gimple *stmt)
      as it might need to handle more than one instance being
      live at the same time.  Instead of trying to detect this case
      (using the first UID would be OK) just give up for now.  */
-  struct ptr_info_def *pi = SSA_NAME_PTR_INFO (lhs);
+  const pt_solution *pt = ssa_name_pt_solution (lhs);
   unsigned uid = 0;
-  if (pi != NULL
-      && !pi->pt.anything
-      && !pt_solution_singleton_or_null_p (&pi->pt, &uid))
+  if (pt != NULL
+      && !pt->anything
+      && !pt_solution_singleton_or_null_p (pt, &uid))
     return NULL_TREE;
 
   /* Declare array.  */
@@ -3049,6 +3049,10 @@ static unsigned int
 do_ssa_ccp (bool nonzero_p)
 {
   unsigned int todo = 0;
+
+  /* We want to minimize the number of latches to reduce iteration.  */
+  loop_optimizer_init (LOOPS_HAVE_SIMPLE_LATCHES);
+
   calculate_dominance_info (CDI_DOMINATORS);
 
   ccp_initialize ();
@@ -3063,6 +3067,9 @@ do_ssa_ccp (bool nonzero_p)
     }
 
   free_dominance_info (CDI_DOMINATORS);
+
+  loop_optimizer_finalize ();
+
   return todo;
 }
 

@@ -2395,6 +2395,31 @@ ipa_get_value_range (const vrange &tmp)
 static void
 ipa_set_jfunc_vr (ipa_jump_func *jf, const vrange &tmp)
 {
+  /* A points-to that names something only invariant within the caller --
+     the address of one of its locals, say -- must not travel to the callee.
+     Same restriction as ipa_record_return_value_range_1; see PR125857.
+     Drop just the points-to rather than the whole range, as the bounds and
+     the bitmask remain valid.  */
+  if (is_a <prange> (tmp))
+    {
+      const prange &pr = as_a <prange> (tmp);
+      tree t = pr.pt_invariant ();
+      if (!t)
+	t = pr.pt_invariant_away ();
+      if (t && !is_gimple_ip_invariant (t))
+	{
+	  if (dump_file && (dump_flags & TDF_DETAILS))
+	    {
+	      fprintf (dump_file, "Dropping non ipa invariant points-to from ");
+	      tmp.dump (dump_file);
+	      fprintf (dump_file, "\n");
+	    }
+	  prange stripped = pr;
+	  stripped.set_pt_unknown ();
+	  jf->m_vr = ipa_get_value_range (stripped);
+	  return;
+	}
+    }
   jf->m_vr = ipa_get_value_range (tmp);
 }
 
@@ -2492,7 +2517,8 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
   ipa_node_params *info = ipa_node_params_sum->get (cs->caller);
   ipa_edge_args *args = ipa_edge_args_sum->get_create (cs);
   gcall *call = cs->call_stmt;
-  int n, arg_num = gimple_call_num_args (call);
+  callback_info *ci = callback_info_sum->get (cs);
+  int n, arg_num = callback_call_num_args_summary (call, ci);
   bool useful_context = false;
 
   if (arg_num == 0 || args->jump_functions)
@@ -2508,7 +2534,17 @@ ipa_compute_jump_functions_for_edge (struct ipa_func_body_info *fbi,
   for (n = 0; n < arg_num; n++)
     {
       struct ipa_jump_func *jfunc = ipa_get_ith_jump_func (args, n);
-      tree arg = gimple_call_arg (call, n);
+      tree arg;
+      if (cs->callback)
+	{
+	  gcc_assert (cs->callee->assume_function);
+	  int remapped_idx = ci->arg_mapping[n];
+	  if (remapped_idx == ARG_MAPPING_UNKNOWN_IDX)
+	    continue;
+	  arg = gimple_call_arg (call, remapped_idx);
+	}
+      else
+	arg = gimple_call_arg (call, n);
       tree param_type = ipa_get_callee_param_type (cs, n);
       if (flag_devirtualize && POINTER_TYPE_P (TREE_TYPE (arg)))
 	{
@@ -3202,6 +3238,19 @@ static void
 ipa_analyze_call_uses (struct ipa_func_body_info *fbi, gcall *call)
 {
   tree target = gimple_call_fn (call);
+
+  /* Internal .ASSUME call.  Create a callback edge to its body, calculate its
+     jump functions and return.  This is done here as the main creation route in
+     ipa_compute_jump_functions_for_edge doesn't analyze call statements.  */
+  if (callback_ifn_assume_call_p (call))
+    {
+      tree callee_decl = TREE_OPERAND (gimple_call_arg (call, 0), 0);
+      cgraph_node *target = cgraph_node::get_create (callee_decl);
+      cgraph_edge *cbei
+	= cgraph_edge::make_callback_internal (fbi->node, target, call);
+      ipa_compute_jump_functions_for_edge (fbi, cbei);
+      return;
+    }
 
   if (!target
       || (TREE_CODE (target) != SSA_NAME
@@ -5990,6 +6039,8 @@ ipa_record_return_value_range_1 (cgraph_node *n, value_range val)
     {
       const prange &pr = as_a <prange> (val);
       tree t = pr.pt_invariant ();
+      if (!t)
+	t = pr.pt_invariant_away ();
       if (t && !is_gimple_ip_invariant (t))
         {
 	  if (dump_file && (dump_flags & TDF_DETAILS))
@@ -6423,7 +6474,8 @@ ipcp_modif_dom_walker::before_dom_children (basic_block bb)
 	continue;
 
       if (!ipa_load_from_parm_agg (m_fbi, m_descriptors, stmt, rhs, &index,
-				   &bit_offset, &size, &by_ref))
+				   &bit_offset, &size, &by_ref)
+	  || (bit_offset % BITS_PER_UNIT) != 0)
 	continue;
       unsigned unit_offset = bit_offset / BITS_PER_UNIT;
       ipa_argagg_value_list avl (m_ts);
@@ -6492,7 +6544,11 @@ ipcp_get_aggregate_const (struct function *func, tree parm, bool by_ref,
   cgraph_node *node = cgraph_node::get (func->decl);
   ipcp_transformation *ts = ipcp_get_transformation_summary (node);
 
-  if (!ts || !ts->m_agg_values)
+  if (!ts
+      || !ts->m_agg_values
+      || bit_offset < 0
+      || (bit_offset % BITS_PER_UNIT) != 0
+      || (HOST_WIDE_INT) (bit_offset / BITS_PER_UNIT) > UINT_MAX)
     return NULL_TREE;
 
   int index = ts->get_param_index (func->decl, parm);
@@ -6638,9 +6694,9 @@ ipcp_update_vr (struct cgraph_node *node, ipcp_transformation *ts)
 				 align, misalign);
 
 		      unsigned old_align, old_misalign;
-		      struct ptr_info_def *pi = get_ptr_info (ddef);
-		      bool old_known = get_ptr_info_alignment (pi, &old_align,
-							       &old_misalign);
+		      bool old_known
+			= get_ptr_info_alignment (ddef, &old_align,
+						  &old_misalign);
 
 		      if (old_known && old_align > align)
 			{
@@ -6666,7 +6722,7 @@ ipcp_update_vr (struct cgraph_node *node, ipcp_transformation *ts)
 				 "mismatch\n",
 				 old_misalign, misalign);
 
-		      set_ptr_info_alignment (pi, align, misalign);
+		      set_ptr_info_alignment (ddef, align, misalign);
 		    }
 		}
 	      else if (dump_file && INTEGRAL_TYPE_P (TREE_TYPE (parm)))

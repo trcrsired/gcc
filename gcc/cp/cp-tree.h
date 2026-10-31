@@ -9549,6 +9549,7 @@ extern void diagnose_failing_condition		(tree, location_t, bool,
 extern bool replace_decl			(tree *, tree, tree);
 extern tree cxa_allocate_and_throw_exception	(location_t, const constexpr_ctx *,
 						 tree);
+extern bool heap_var_p				(tree, bool = false);
 
 /* Whether our evaluation wants a prvalue (e.g. CONSTRUCTOR or _CST),
    a glvalue (e.g. VAR_DECL or _REF), or nothing.  */
@@ -9565,6 +9566,7 @@ extern bool cxx_constexpr_quiet_p		(const constexpr_ctx *);
 extern mce_value cxx_constexpr_manifestly_const_eval (const constexpr_ctx *);
 extern tree cxx_constexpr_caller		(const constexpr_ctx *);
 extern tree cxx_constexpr_consteval_block	(const constexpr_ctx *);
+extern bool cxx_constexpr_in_eval_lifetime_p	(const constexpr_ctx *, tree);
 
 /* An RAII sentinel used to restrict constexpr evaluation so that it
    doesn't do anything that causes extra DECL_UID generation.  */
@@ -9639,6 +9641,7 @@ extern bool dependent_splice_p (const_tree) ATTRIBUTE_PURE;
 extern tree reflection_mangle_prefix (tree, char [3]);
 extern bool reflection_function_template_p (const_tree) ATTRIBUTE_PURE;
 extern void dump_data_member_spec (pretty_printer *, tree);
+extern bool check_namespace_splice (cp_expr);
 
 /* Inline bodies.  */
 

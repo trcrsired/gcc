@@ -1195,6 +1195,18 @@ init_environment_variables (void)
 	stack_size = tmp;;
     }
 
+  /* When the stride between the stacks of consecutive threads is a multiple
+     of a large power of two, the same stack offset in every thread maps to
+     the same memory channel, which can considerably harm the performance of
+     kernels that use the stack heavily, such as vectorized reductions.  Round
+     the stack size up to an odd multiple of 4 kiB to avoid this.  */
+  if (stack_size > 0)
+    {
+      stack_size = (stack_size + 4095) & ~4095;
+      if ((stack_size & 4096) == 0)
+	stack_size += 4096;
+    }
+
   const char *lowlat = secure_getenv ("GOMP_GCN_LOWLAT_POOL");
   if (lowlat)
     lowlat_size = atoi (lowlat);
@@ -3007,10 +3019,22 @@ drain_queue (void *thread_arg)
 
       if (aq->queue_n > 0)
 	{
-	  pthread_mutex_unlock (&aq->mutex);
-	  execute_queue_entry (aq, aq->queue_first);
+	  int index = aq->queue_first;
 
-	  pthread_mutex_lock (&aq->mutex);
+	  /* Signal placeholders with the queue lock held, so that the signal
+	     and the dequeue appear atomic to any thread inspecting this queue.
+	     Otherwise, a thread waiting on the placeholder (and hence any host
+	     thread waiting on that thread's queue) can proceed while this queue
+	     still appears to be busy, and an acc_async_test on this queue will
+	     spuriously fail.  */
+	  bool unlock_p = aq->queue[index].type != ASYNC_PLACEHOLDER;
+
+	  if (unlock_p)
+	    pthread_mutex_unlock (&aq->mutex);
+	  execute_queue_entry (aq, index);
+	  if (unlock_p)
+	    pthread_mutex_lock (&aq->mutex);
+
 	  aq->queue_first = ((aq->queue_first + 1)
 			     % ASYNC_QUEUE_SIZE);
 	  aq->queue_n--;
@@ -3742,6 +3766,18 @@ GOMP_OFFLOAD_supported_threads_dim (int ord, int dim)
     return 1;
 
   return limit_worker_threads (__INT_MAX__);
+}
+
+/* The maximum amount of memory available in a groupprivate memory space,
+   inclusive of groupprivate variables and any groupprivate copy of an
+   instantiated dynamic groupprivate block. */
+
+size_t
+GOMP_OFFLOAD_get_gprivate_limit (int ord, omp_access_t access)
+{
+  if (access != omp_access_cgroup)
+    return 0;
+  return 0;  /* FIXME. dyn_groupprivate unsupported, but otherwise supported. */
 }
 
 /* Return the specific capabilities the HSA accelerator have.  */

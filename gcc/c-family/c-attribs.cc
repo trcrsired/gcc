@@ -6505,7 +6505,7 @@ has_attribute (location_t atloc, tree t, tree attr, tree (*convert)(tree))
 	    }
 	  else if (!strcmp ("pure", namestr))
 	    {
-	      if (expr && DECL_P (expr))
+	      if (expr && TREE_CODE (expr) == FUNCTION_DECL)
 		found_match = DECL_PURE_P (expr);
 	    }
 	  else if (!strcmp ("deprecated", namestr))

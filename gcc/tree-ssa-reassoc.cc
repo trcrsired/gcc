@@ -2270,12 +2270,12 @@ eliminate_redundant_comparison (enum tree_code opcode,
 	 two comparisons.  */
       tree type = TREE_TYPE (gimple_assign_lhs (def1));
       if (opcode == BIT_IOR_EXPR)
-	t = maybe_fold_or_comparisons (type,
+	t = maybe_fold_or_comparisons (type, TRUTH_OR_EXPR,
 				       lcode, op1, op2,
 				       rcode, gimple_assign_rhs1 (def2),
 				       gimple_assign_rhs2 (def2));
       else
-	t = maybe_fold_and_comparisons (type,
+	t = maybe_fold_and_comparisons (type, TRUTH_AND_EXPR,
 					lcode, op1, op2,
 					rcode, gimple_assign_rhs1 (def2),
 					gimple_assign_rhs2 (def2));
@@ -4271,10 +4271,12 @@ optimize_vec_cond_expr (tree_code opcode, vec<operand_entry *> *ops)
 
 	  tree comb;
 	  if (opcode == BIT_AND_EXPR)
-	    comb = maybe_fold_and_comparisons (type, cmp0, lhs0, rhs0,
+	    comb = maybe_fold_and_comparisons (type, TRUTH_AND_EXPR,
+					       cmp0, lhs0, rhs0,
 					       cmp1, lhs1, rhs1);
 	  else if (opcode == BIT_IOR_EXPR)
-	    comb = maybe_fold_or_comparisons (type, cmp0, lhs0, rhs0,
+	    comb = maybe_fold_or_comparisons (type, TRUTH_OR_EXPR,
+					      cmp0, lhs0, rhs0,
 					      cmp1, lhs1, rhs1);
 	  else
 	    gcc_unreachable ();
@@ -6150,7 +6152,9 @@ acceptable_pow_call (gcall *stmt, tree *base, HOST_WIDE_INT *exponent)
   /* Expanding negative exponents is generally unproductive, so we don't
      complicate matters with those.  Exponents of zero and one should
      have been handled by expression folding.  */
-  if (*exponent < 2 || TREE_CODE (*base) != SSA_NAME)
+  if (*exponent < 2
+      || TREE_CODE (*base) != SSA_NAME
+      || !can_reassociate_op_p (*base))
     return false;
 
   return true;
@@ -6191,6 +6195,8 @@ try_special_add_to_ops (vec<operand_entry *> *ops,
 	       || !DECIMAL_FLOAT_MODE_P (element_mode (op))))
     {
       tree rhs1 = gimple_assign_rhs1 (def_stmt);
+      if (!can_reassociate_op_p (rhs1))
+	return false;
       tree cst = build_minus_one_cst (TREE_TYPE (op));
       add_to_ops_vec (ops, rhs1);
       add_to_ops_vec (ops, cst);
@@ -6229,7 +6235,8 @@ linearize_expr_tree (vec<operand_entry *> *ops, gimple *stmt,
   if (TREE_CODE (binrhs) == SSA_NAME)
     {
       binrhsdef = SSA_NAME_DEF_STMT (binrhs);
-      binrhsisreassoc = (is_reassociable_op (binrhsdef, rhscode, loop)
+      binrhsisreassoc = (is_associative
+			 && is_reassociable_op (binrhsdef, rhscode, loop)
 			 && !stmt_could_throw_p (cfun, binrhsdef));
     }
 
@@ -6296,9 +6303,10 @@ linearize_expr_tree (vec<operand_entry *> *ops, gimple *stmt,
       binrhs = gimple_assign_rhs2 (stmt);
     }
 
-  gcc_assert (TREE_CODE (binrhs) != SSA_NAME
-	      || !is_reassociable_op (SSA_NAME_DEF_STMT (binrhs),
-				      rhscode, loop));
+  gcc_checking_assert (TREE_CODE (binrhs) != SSA_NAME
+		       || !is_associative
+		       || !is_reassociable_op (SSA_NAME_DEF_STMT (binrhs),
+					       rhscode, loop));
   linearize_expr_tree (ops, SSA_NAME_DEF_STMT (binlhs),
 		       is_associative, set_visited);
 

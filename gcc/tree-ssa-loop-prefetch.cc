@@ -1210,13 +1210,7 @@ issue_prefetch_ref (struct mem_ref *ref, unsigned unroll_factor, unsigned ahead)
       if (addr_base != addr
 	  && TREE_CODE (addr_base) == SSA_NAME
 	  && TREE_CODE (addr) == SSA_NAME)
-	{
-	  duplicate_ssa_name_ptr_info (addr, SSA_NAME_PTR_INFO (addr_base));
-	  /* As this isn't a plain copy we have to reset alignment
-	     information.  */
-	  if (SSA_NAME_PTR_INFO (addr))
-	    mark_ptr_info_alignment_unknown (SSA_NAME_PTR_INFO (addr));
-	}
+	duplicate_ssa_name_ptr_info (addr, addr_base);
 
       /* Create the prefetch instruction.  */
       prefetch = gimple_build_call (builtin_decl_explicit (BUILT_IN_PREFETCH),
@@ -1470,6 +1464,20 @@ volume_of_references (struct mem_ref_group *refs)
   return volume;
 }
 
+/* Return VOLUME * COUNT, saturating at the largest representable reuse
+   distance.  Distances above the L2 cache size are equivalent for
+   the reuse analysis, but wrapping them could make a streaming access look
+   cache-resident.  Check before multiplying so even a wide COUNT is safe.  */
+
+static unsigned
+saturating_mul (unsigned volume, unsigned HOST_WIDE_INT count)
+{
+  if (volume != 0 && count > UINT_MAX / volume)
+    return UINT_MAX;
+
+  return volume * count;
+}
+
 /* Returns the volume of memory references accessed across VEC iterations of
    loops, whose sizes are described in the LOOP_SIZES array.  N is the number
    of the loops in the nest (length of VEC and LOOP_SIZES vectors).  */
@@ -1490,7 +1498,7 @@ volume_of_dist_vector (lambda_vector vec, unsigned *loop_sizes, unsigned n)
 
   /* We ignore the parts of the distance vector in subloops, since usually
      the numbers of iterations are much smaller.  */
-  return loop_sizes[i] * vec[i];
+  return saturating_mul (loop_sizes[i], vec[i]);
 }
 
 /* Add the steps of ACCESS_FN multiplied by STRIDE to the array STRIDE
@@ -1655,7 +1663,7 @@ determine_loop_nest_reuse (class loop *loop, struct mem_ref_group *refs,
       vol = estimated_stmt_executions_int (aloop);
       if (vol == -1)
 	vol = expected_loop_iterations (aloop);
-      volume *= vol;
+      volume = saturating_mul (volume, vol);
     }
 
   /* Prepare the references in the form suitable for data dependence

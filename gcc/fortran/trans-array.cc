@@ -6554,47 +6554,47 @@ gfc_array_allocate (gfc_se * se, gfc_expr * expr, tree status, tree errmsg,
   if (!dimension)
     gcc_assert (coarray);
 
+  gfc_array_ref *ar;
   if (ref->u.ar.type == AR_FULL && expr3 != NULL)
     {
-      gfc_ref *old_ref = ref;
       /* F08:C633: Array shape from expr3.  */
-      ref = expr3->ref;
-
-      /* Find the last reference in the chain.  */
-      if (!retrieve_last_ref (&ref, &prev_ref))
+      ar = gfc_find_array_ref (expr3, true);
+      if (!ar)
 	{
 	  if (expr3->expr_type == EXPR_FUNCTION
 	      && gfc_expr_attr (expr3).dimension)
-	    ref = old_ref;
+	    ar = &ref->u.ar;
 	  else
 	    return false;
 	}
       alloc_w_e3_arr_spec = true;
     }
+  else
+    ar = &ref->u.ar;
 
   /* Figure out the size of the array.  */
-  switch (ref->u.ar.type)
+  switch (ar->type)
     {
     case AR_ELEMENT:
       if (!coarray)
 	{
 	  lower = NULL;
-	  upper = ref->u.ar.start;
+	  upper = ar->start;
 	  break;
 	}
       /* Fall through.  */
 
     case AR_SECTION:
-      lower = ref->u.ar.start;
-      upper = ref->u.ar.end;
+      lower = ar->start;
+      upper = ar->end;
       break;
 
     case AR_FULL:
-      gcc_assert (ref->u.ar.as->type == AS_EXPLICIT
+      gcc_assert (ar->as->type == AS_EXPLICIT
 		  || alloc_w_e3_arr_spec);
 
-      lower = ref->u.ar.as->lower;
-      upper = ref->u.ar.as->upper;
+      lower = ar->as->lower;
+      upper = ar->as->upper;
       break;
 
     default:
@@ -6617,8 +6617,8 @@ gfc_array_allocate (gfc_se * se, gfc_expr * expr, tree status, tree errmsg,
      later will mislead the generation of the array dimensions for allocatable/
      pointer components in derived types.  */
   size = gfc_array_init_size (se->expr, alloc_w_e3_arr_spec ? expr->rank
-							   : ref->u.ar.as->rank,
-			      coarray ? ref->u.ar.as->corank : 0,
+							   : ar->as->rank,
+			      coarray ? ar->as->corank : 0,
 			      &offset, lower, upper,
 			      &se->pre, &set_descriptor_block, &overflow,
 			      expr3_elem_size, expr3, e3_arr_desc,
@@ -8587,7 +8587,13 @@ gfc_conv_expr_descriptor (gfc_se *se, gfc_expr *expr)
 	     subobject for a subreference of the array.  */
 	  if (expr->ts.type == BT_CHARACTER
 	      || (subref_array_target && !se->direct_byref))
-	    parmtype = gfc_typenode_for_spec (&expr->ts);
+	    {
+	      gfc_typespec *ts = &expr->ts;
+	      if (ts->type == BT_CLASS
+		  && ts->u.derived->attr.is_class)
+		ts = &ts->u.derived->components->ts;
+	      parmtype = gfc_typenode_for_spec (ts);
+	    }
 	  else
 	    parmtype = gfc_get_element_type (TREE_TYPE (desc));
 

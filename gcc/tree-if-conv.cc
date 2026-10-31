@@ -477,8 +477,8 @@ fold_or_predicates (location_t loc, tree c1, tree c2)
 
   if (code1 != ERROR_MARK && code2 != ERROR_MARK)
     {
-      tree t = maybe_fold_or_comparisons (boolean_type_node, code1, op1a, op1b,
-					  code2, op2a, op2b);
+      tree t = maybe_fold_or_comparisons (boolean_type_node, TRUTH_OR_EXPR,
+					  code1, op1a, op1b, code2, op2a, op2b);
       if (t)
 	return t;
     }
@@ -2310,8 +2310,8 @@ again:
 
   /* Update the phi node too. */
   gimple_phi_set_result (phi, new_res);
-  gimple_phi_arg (phi, 0)->def = new_arg0;
-  gimple_phi_arg (phi, 1)->def = new_arg1;
+  SET_PHI_ARG_DEF (phi, 0, new_arg0);
+  SET_PHI_ARG_DEF (phi, 1, new_arg1);
   update_stmt (phi);
 
   repeated = true;
@@ -2754,7 +2754,7 @@ predicate_load_or_store (gimple_stmt_iterator *gsi, gassign *stmt, tree mask)
   tree ptr = build_int_cst (reference_alias_ptr_type (ref),
 			    get_object_alignment (ref));
   /* Copy points-to info if possible.  */
-  if (TREE_CODE (addr) == SSA_NAME && !SSA_NAME_PTR_INFO (addr))
+  if (TREE_CODE (addr) == SSA_NAME && !ssa_name_pt_solution (addr))
     copy_ref_info (build2 (MEM_REF, TREE_TYPE (ref), addr, ptr),
 		   ref);
   if (TREE_CODE (lhs) == SSA_NAME)

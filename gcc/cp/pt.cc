@@ -7559,11 +7559,11 @@ invalid_tparm_referent_p (tree type, tree expr, tsubst_flags_t complain)
 			"because %qD has no linkage", expr, type, decl);
 	    return true;
 	  }
-	/* For a constant template parameter of reference or pointer type,
-	   or for each non-static data member of reference or pointer type
-	   in a constant template parameter of class type or subobject thereof,
-	   the reference or pointer value shall not refer or point to
-	   (respectively):
+	/* [temp.arg.nontype]/6: For a constant template parameter of
+	   reference or pointer type, or for each non-static data member of
+	   reference or pointer type in a constant template parameter of class
+	   type or subobject thereof, the reference or pointer value shall not
+	   refer or point to (respectively):
 	   -- a temporary object,
 	   -- a string literal object,
 	   -- the result of a typeid expression,
@@ -7572,9 +7572,15 @@ invalid_tparm_referent_p (tree type, tree expr, tsubst_flags_t complain)
 	else if (VAR_P (decl) && DECL_ARTIFICIAL (decl)
 		 && !DECL_NTTP_OBJECT_P (decl))
 	  {
+	    /* The heap_var_p check doesn't cover any of the bullets above,
+	       but we can get here with an invalid reflect_constant arg.
+	       Heap vars are not constexpr-referenceable, so they're not valid
+	       here either.  */
 	    gcc_checking_assert (DECL_TINFO_P (decl)
 				 || DECL_FNAME_P (decl)
-				 || DECL_IGNORED_P (decl));
+				 || DECL_IGNORED_P (decl)
+				 || heap_var_p (decl,
+						/*include_deleted_p=*/true));
 	    if (complain & tf_error)
 	      error ("the address of %qD is not a valid template argument",
 		     decl);
@@ -22990,13 +22996,15 @@ tsubst_expr (tree t, tree args, tsubst_flags_t complain, tree in_decl)
 	    r = build_ptrmemfunc_access_expr (object, DECL_NAME (member));
 	    RETURN (r);
 	  }
-	else if (TREE_CODE (member) == FIELD_DECL)
+	/* For obj->[:^^A::m:], go down the finish_class_member_access_expr
+	   path because object's type may not be instantiated yet.  */
+	else if (TREE_CODE (member) == FIELD_DECL
+		 && !COMPONENT_REF_SPLICE_P (t))
 	  {
 	    /* Assume access of this FIELD_DECL has already been checked; we
 	       don't recheck it to avoid bogus access errors when substituting
 	       a reduced constant initializer (97740).  */
-	    gcc_checking_assert (TREE_CODE (TREE_OPERAND (t, 1)) == FIELD_DECL
-				 || dependent_splice_p (TREE_OPERAND (t, 1)));
+	    gcc_checking_assert (TREE_CODE (TREE_OPERAND (t, 1)) == FIELD_DECL);
 	    push_deferring_access_checks (dk_deferred);
 	    r = finish_non_static_data_member (member, object, NULL_TREE,
 					       complain);
@@ -30524,6 +30532,12 @@ type_dependent_expression_p (tree expression)
   if (identifier_p (expression)
       || TREE_CODE (expression) == USING_DECL)
     return true;
+
+  /* Most namespaces have void type and so wouldn't be considered
+     dependent, but some (::, std) have no type.  They are still not
+     dependent, though.  */
+  if (TREE_CODE (expression) == NAMESPACE_DECL)
+    return false;
 
   /* A lambda-expression in template context is dependent.  dependent_type_p is
      true for a lambda in the scope of a class or function template, but that

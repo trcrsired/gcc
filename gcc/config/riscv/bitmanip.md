@@ -41,20 +41,21 @@
 
 ; When using strength-reduction, we will reduce a multiplication to a
 ; sequence of shifts and adds.  If this is performed with 32-bit types
-; and followed by a division, the lack of w-form sh[123]add will make
-; combination impossible and lead to a slli + addw being generated.
-; Split the sequence with the knowledge that a w-form div will perform
-; implicit sign-extensions.
+; and followed by a division or remainder, the lack of w-form sh[123]add
+; will make combination impossible and lead to a slli + addw being
+; generated.  Split the sequence with the knowledge that word division
+; and remainder only use the low word of their inputs and sign-extend
+; their results, including for unsigned operations.
 (define_split
   [(set (match_operand:DI 0 "register_operand")
-	(sign_extend:DI (div:SI (plus:SI (ashift:SI (subreg:SI (match_operand:DI 1 "register_operand") 0)
+	(sign_extend:DI (any_div:SI (plus:SI (ashift:SI (subreg:SI (match_operand:DI 1 "register_operand") 0)
 						    (match_operand:QI 2 "imm123_operand"))
 					 (subreg:SI (match_operand:DI 3 "register_operand") 0))
 				(match_operand:SI 4 "register_operand"))))
    (clobber (match_operand:DI 5 "register_operand"))]
   "TARGET_64BIT && TARGET_ZBA"
    [(set (match_dup 5) (plus:DI (ashift:DI (match_dup 1) (match_dup 2)) (match_dup 3)))
-    (set (match_dup 0) (sign_extend:DI (div:SI (subreg:SI (match_dup 5) 0) (match_dup 4))))])
+    (set (match_dup 0) (sign_extend:DI (any_div:SI (subreg:SI (match_dup 5) 0) (match_dup 4))))])
 
 ; Zba does not provide W-forms of sh[123]add(.uw)?, which leads to an
 ; interesting irregularity: we can generate a signed 32-bit result
@@ -309,14 +310,15 @@
 ;; bit of extra help for combine (i.e., the below split), we end up emitting
 ;; not/srai/and instead of combining the not into an andn.
 (define_split
-  [(set (match_operand:DI 0 "register_operand")
-	(and:DI (neg:DI (ge:DI (match_operand:DI 1 "register_operand")
-			       (const_int 0)))
-		(match_operand:DI 2 "register_operand")))
-   (clobber (match_operand:DI 3 "register_operand"))]
+  [(set (match_operand:X 0 "register_operand")
+	(and:X (neg:X (ge:X (match_operand:DI 1 "register_operand")
+			    (const_int 0)))
+	       (match_operand:X 2 "register_operand")))
+   (clobber (match_operand:X 3 "register_operand"))]
   "TARGET_ZBB || TARGET_ZBKB"
-  [(set (match_dup 3) (ashiftrt:DI (match_dup 1) (const_int 63)))
-   (set (match_dup 0) (and:DI (not:DI (match_dup 3)) (match_dup 2)))])
+  [(set (match_dup 3) (ashiftrt:X (match_dup 1) (match_dup 4)))
+   (set (match_dup 0) (and:X (not:X (match_dup 3)) (match_dup 2)))]
+  { operands[4] = GEN_INT (BITS_PER_WORD - 1); })
 
 (define_insn "*xor_not<mode>"
   [(set (match_operand:X 0 "register_operand" "=r")
@@ -957,6 +959,21 @@
   "bclr\t%0,%1,%2"
   [(set_attr "type" "bitmanip")])
 
+;; BCLR uses only the low log2(XLEN) bits of the index, just like
+;; BSET and BINV, so an explicit XLEN - 1 mask is redundant.
+(define_insn "*bclr<mode>_mask"
+  [(set (match_operand:X 0 "register_operand" "=r")
+	(and:X
+	  (rotate:X
+	    (const_int -2)
+	    (subreg:QI
+	      (and:X (match_operand:X 2 "register_operand" "r")
+		     (match_operand 3 "<X:shiftm1>" "<X:shiftm1p>")) 0))
+	  (match_operand:X 1 "register_operand" "r")))]
+  "TARGET_ZBS"
+  "bclr\t%0,%1,%2"
+  [(set_attr "type" "bitmanip")])
+
 (define_insn "*bclri<mode>"
   [(set (match_operand:X 0 "register_operand" "=r")
 	(and:X (match_operand:X 1 "register_operand" "r")
@@ -1375,10 +1392,11 @@
      (E.g.  CRC64's quotient may need 65 bits,
      we can't keep it in 64 bit variable.)
      then use clmul instruction to implement the CRC.
-     We can also use clmulr for CRC-32 on RV32, requiring ZBC.  */
+     If we have the ZBC extension (ie, clmulr) 1 bit can be left
+     implicit, allowing CRC64 using a 64 bit variable.  */
   if (((TARGET_ZBKC || TARGET_ZBC || TARGET_ZVBC)
 	&& <ANYI:MODE>mode < word_mode)
-      || (!TARGET_64BIT && TARGET_ZBC && <ANYI:MODE>mode == word_mode))
+      || (TARGET_ZBC && <ANYI:MODE>mode == word_mode))
     expand_reversed_crc_using_clmul (<ANYI:MODE>mode, <ANYI1:MODE>mode,
 				     operands);
   else
@@ -1527,6 +1545,8 @@
    (clobber (match_operand:DI 3 "register_operand"))]
   "(TARGET_64BIT
     && TARGET_ZBB
+    && (nonzero_bits (operands[2], DImode)
+	& HOST_WIDE_INT_UC (0xffffffff00000000)) == 0
     && (REG_P (operands[2]) && SUBREG_P (operands[1])
 	 ? REGNO (operands[2]) == REGNO (SUBREG_REG (operands[1]))
 	 : REG_P (operands[1]) && SUBREG_P (operands[2])

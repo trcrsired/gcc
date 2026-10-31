@@ -638,6 +638,13 @@ prange_storage::alloc (vrange_internal_alloc &allocator, const prange &r,
 
 prange_storage::prange_storage (const prange &r) : vrange_storage (VR_PRANGE)
 {
+  // None of these is part of the range, so none is ever copied from one.
+  // Only the accessors in tree-ssanames.cc ever make them non-zero, and
+  // range_info_set_range carries them across a reallocation.
+  pt = NULL;
+  align = 0;
+  misalign = 0;
+
   unsigned num_words;
   enum prange_kind kind = prange_format (r, num_words);
   unsigned short prec = (kind == PR_UNDEFINED) ? 0 : TYPE_PRECISION (r.type ());

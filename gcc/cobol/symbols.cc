@@ -4707,7 +4707,9 @@ symbol_program_add( size_t program, cbl_label_t *input )
                         if( program == elem.program ) {
                           auto L = cbl_label_of(&elem);
                           if( ! L->prototype ) { // prototypes don't count
-                            return 0 == strcasecmp(name, L->name);
+                            if( L->type == LblProgram ) {
+                              return 0 == strcasecmp(name, L->name);
+                            }
                           }
                         }
                       }
@@ -5393,6 +5395,10 @@ symbol_program_callables( size_t program ) {
   symbolset_t callables = common_callables[program];
 
   auto self = cbl_label_of(symbol_at(program));
+  // A recursive program can call itself even when it is not COMMON.
+  if( self->recursive ) {
+    callables.insert(program);
+  }
   auto start_with = 0 < self->parent? self->parent : program;
 
   // Build a list of programs reachable by the current program.

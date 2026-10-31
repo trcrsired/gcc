@@ -462,7 +462,7 @@ barrier_cost (rtx_insn *insn)
      the moment, the basic block information seems to be corrupt by this
      stage of the compilation.  */
   int base_cost = 50;
-  rtx_insn *next = next_nonnote_insn (insn);
+  rtx_insn *next = next_nonnote_nondebug_insn (insn);
 
   if (next != NULL && LABEL_P (next))
     base_cost -= 20;
@@ -938,7 +938,12 @@ minipool::add_forward_ref (Mfix *fix, minipool_address loc)
      alignment.  */
   align = std::min (align, ARM_DOUBLEWORD_ALIGN ? 8u: 4u);
 
-  if (loc > m_max_address)
+  /* Check that inserting this value will still leave the pool reachable
+     for all existing entries.  We need to consider the case where
+     the new insertion will increase the alignment of the overall pool.  */
+  if (loc + std::max (get_alignment_size (),
+		      (HOST_WIDE_INT) align - m_insn_align)
+      > m_max_address)
     return NULL;
   std::list<subpool *>::iterator spi
     = find_subpool (align, fix, loc, get_alignment_size ());
@@ -1043,6 +1048,7 @@ minipool::dump (rtx_insn *scan)
   for (spi = m_subpools.begin (); spi != m_subpools.end (); ++spi)
     {
       scan = (*spi)->dump (scan);
+      (*spi)->~subpool ();
       free (*spi);
     }
 
@@ -1062,7 +1068,7 @@ minipool::create_fix_barrier (Mfix *fix, minipool_address max_address)
   rtx_barrier *barrier;
   rtx_insn *from = fix->insn;
   /* The instruction after which we will insert the jump.  */
-  rtx_insn *selected = NULL;
+  rtx_insn *selected = from;
   int selected_cost;
   /* The address at which the jump instruction will be placed.  */
   HOST_WIDE_INT selected_address;
@@ -1071,7 +1077,7 @@ minipool::create_fix_barrier (Mfix *fix, minipool_address max_address)
   rtx_code_label *label = gen_label_rtx ();
 
   selected_cost = barrier_cost (from);
-  selected_address = fix->address;
+  selected_address = fix->address + fix->insn_size;
 
   while (from && count < max_count)
     {
@@ -1099,8 +1105,7 @@ minipool::create_fix_barrier (Mfix *fix, minipool_address max_address)
 	     still put the pool after the table.  */
 	  new_cost = barrier_cost (from);
 
-	  if (count < max_count
-	      && (!selected || new_cost <= selected_cost))
+	  if (count <= max_count && new_cost <= selected_cost)
 	    {
 	      selected = tmp;
 	      selected_cost = new_cost;
@@ -1108,25 +1113,21 @@ minipool::create_fix_barrier (Mfix *fix, minipool_address max_address)
 	    }
 
 	  /* Continue after the dispatch table.  */
-	  from = NEXT_INSN (tmp);
+	  from = next_nonnote_nondebug_insn (tmp);
 	  continue;
 	}
 
       new_cost = barrier_cost (from);
 
-      if (count < max_count
-	  && (!selected || new_cost <= selected_cost))
+      if (count <= max_count && new_cost <= selected_cost)
 	{
 	  selected = from;
 	  selected_cost = new_cost;
 	  selected_address = fix->address + count;
 	}
 
-      from = NEXT_INSN (from);
+      from = next_nonnote_nondebug_insn (from);
     }
-
-  /* Make sure that we found a place to insert the jump.  */
-  gcc_assert (selected);
 
   /* Create a new JUMP_INSN that branches around a barrier.  */
   from = emit_jump_insn_after (gen_jump (label), selected);
@@ -1328,8 +1329,8 @@ place_minipools (void)
   gcc_assert (NOTE_P (insn));
 
   /* Scan all the insns and record the operands that will need fixing.  */
-  for (insn = next_nonnote_insn (insn); insn;
-       insn = next_nonnote_insn (insn))
+  for (insn = next_nonnote_nondebug_insn (insn); insn;
+       insn = next_nonnote_nondebug_insn (insn))
     {
       if (BARRIER_P (insn))
 	push_minipool_barrier (insn, address);
@@ -1435,15 +1436,14 @@ place_minipools (void)
 	     last_barrier being set.  */
 	  gcc_assert (ftmp);
 
-	  max_address = mpool.forwards ();
-	  /* Check that there isn't another fix that is in range that
-	     we couldn't fit into this pool because the pool was
-	     already too large: we need to put the pool before such an
-	     instruction.  The pool itself may come just after the
-	     fix because create_fix_barrier also allows space for a
-	     jump instruction.  */
+	  max_address = (mpool.forwards ()
+			 - (mpool.get_alignment_size () + pool_skip));
+	  gcc_assert (max_address
+		      >= last_added_fix->address + last_added_fix->insn_size);
+
+	  /* Ensure the pool comes before ftmp.  */
 	  if (ftmp->address < max_address)
-	    max_address = ftmp->address + 1;
+	    max_address = ftmp->address;
 
 	  last_barrier = mpool.create_fix_barrier (last_added_fix,
 						   max_address);

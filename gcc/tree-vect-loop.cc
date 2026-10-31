@@ -1378,27 +1378,16 @@ vect_compute_single_scalar_iteration_cost (loop_vec_info loop_vinfo)
 {
   class loop *loop = LOOP_VINFO_LOOP (loop_vinfo);
   basic_block *bbs = LOOP_VINFO_BBS (loop_vinfo);
-  int nbbs = loop->num_nodes, factor;
-  int innerloop_iters, i;
+  int nbbs = loop->num_nodes, i;
 
   DUMP_VECT_SCOPE ("vect_compute_single_scalar_iteration_cost");
 
   /* Gather costs for statements in the scalar loop.  */
 
-  /* FORNOW.  */
-  innerloop_iters = 1;
-  if (loop->inner)
-    innerloop_iters = LOOP_VINFO_INNER_LOOP_COST_FACTOR (loop_vinfo);
-
   for (i = 0; i < nbbs; i++)
     {
       gimple_stmt_iterator si;
       basic_block bb = bbs[i];
-
-      if (bb->loop_father == loop->inner)
-        factor = innerloop_iters;
-      else
-        factor = 1;
 
       for (si = gsi_start_bb (bb); !gsi_end_p (si); gsi_next (&si))
         {
@@ -1431,10 +1420,9 @@ vect_compute_single_scalar_iteration_cost (loop_vec_info loop_vinfo)
 	  else
             kind = scalar_stmt;
 
-	  /* We are using vect_prologue here to avoid scaling twice
-	     by the inner loop factor.  */
+	  /* The target cost model applies the inner-loop frequency.  */
 	  record_stmt_cost (&LOOP_VINFO_SCALAR_ITERATION_COST (loop_vinfo),
-			    factor, kind, stmt_info, 0, vect_body);
+			    1, kind, stmt_info, 0, vect_body);
         }
     }
 
@@ -2685,9 +2673,11 @@ start_over:
 	    niters_th += LOOP_VINFO_PEELING_FOR_ALIGNMENT (loop_vinfo);
 	}
 
-      /* Niters for at least one iteration of vectorized loop.  */
+      /* Niters for one vector iteration, excluding a header-only iteration.  */
       if (!LOOP_VINFO_USING_PARTIAL_VECTORS_P (loop_vinfo))
 	niters_th += LOOP_VINFO_VECT_FACTOR (loop_vinfo);
+      if (LOOP_VINFO_EARLY_BREAKS_VECT_PEELED (loop_vinfo))
+	niters_th += 1;
       /* One additional iteration because of peeling for gap.  */
       if (LOOP_VINFO_PEELING_FOR_GAPS (loop_vinfo))
 	niters_th += 1;
@@ -4046,6 +4036,19 @@ vect_get_known_peeling_cost (loop_vec_info loop_vinfo, int peel_iters_prologue)
   return retval;
 }
 
+/* Return the count for SI in PEEL_ITERS scalar iterations, including the
+   inner-loop frequency.  */
+
+static int
+vect_scalar_peeling_stmt_count (loop_vec_info loop_vinfo,
+				const stmt_info_for_cost &si, int peel_iters)
+{
+  int count = si.count;
+  if (si.stmt_info && stmt_in_inner_loop_p (loop_vinfo, si.stmt_info))
+    count *= LOOP_VINFO_INNER_LOOP_COST_FACTOR (loop_vinfo);
+  return count * peel_iters;
+}
+
 /* Function vect_estimate_min_profitable_iters
 
    Return the number of iterations required for the vector version of the
@@ -4251,8 +4254,9 @@ vect_estimate_min_profitable_iters (loop_vec_info loop_vinfo,
   if (peel_iters_prologue)
     FOR_EACH_VEC_ELT (LOOP_VINFO_SCALAR_ITERATION_COST (loop_vinfo), j, si)
       {
-	(void) add_stmt_cost (target_cost_data,
-			      si->count * peel_iters_prologue, si->kind,
+	int count = vect_scalar_peeling_stmt_count (loop_vinfo, *si,
+						    peel_iters_prologue);
+	(void) add_stmt_cost (target_cost_data, count, si->kind,
 			      si->stmt_info, si->node, si->vectype,
 			      si->misalign, vect_prologue);
       }
@@ -4261,8 +4265,9 @@ vect_estimate_min_profitable_iters (loop_vec_info loop_vinfo,
   if (peel_iters_epilogue)
     FOR_EACH_VEC_ELT (LOOP_VINFO_SCALAR_ITERATION_COST (loop_vinfo), j, si)
       {
-	(void) add_stmt_cost (target_cost_data,
-			      si->count * peel_iters_epilogue, si->kind,
+	int count = vect_scalar_peeling_stmt_count (loop_vinfo, *si,
+						    peel_iters_epilogue);
+	(void) add_stmt_cost (target_cost_data, count, si->kind,
 			      si->stmt_info, si->node, si->vectype,
 			      si->misalign, vect_epilogue);
       }
@@ -8304,7 +8309,8 @@ vect_transform_reduction (loop_vec_info loop_vinfo,
   for (unsigned i = 0; i < num; ++i)
     {
       gimple *new_stmt;
-      tree vop[3] = { vec_oprnds[0][i], vec_oprnds[1][i], NULL_TREE };
+      tree vop[3] = { vec_oprnds[0][i], vec_oprnds[1][i],
+		      op.num_ops >= 3 ? vec_oprnds[2][i] : NULL_TREE };
       if (!vop[0] || !vop[1])
 	{
 	  tree reduc_vop = vec_oprnds[reduc_index][i];
@@ -8331,23 +8337,25 @@ vect_transform_reduction (loop_vec_info loop_vinfo,
 	     yet.  */
 	  gcc_assert (!lane_reducing);
 
+	  auto_vec<tree> args (op.num_ops + (cond_fn_p ? 0 : 2));
 	  tree mask = vect_get_loop_mask (loop_vinfo, gsi, masks,
 					  vec_in_num, vectype_in,
 					  mask_index++);
-	  gcall *call;
-	  if (code.is_internal_fn () && cond_fn_p)
+	  if (cond_fn_p)
 	    {
-	      gcc_assert (op.num_ops >= 3
-			  && internal_fn_mask_index (internal_fn (code)) == 0);
-	      vop[2] = vec_oprnds[2][i];
+	      gcc_assert (internal_fn_mask_index (internal_fn (code)) == 0);
 	      mask = prepare_vec_mask (loop_vinfo, TREE_TYPE (mask),
 				       mask, vop[0], gsi);
-	      call = gimple_build_call_internal (cond_fn, 4, mask, vop[1],
-						 vop[2], vop[reduc_index]);
 	    }
-	  else
-	    call = gimple_build_call_internal (cond_fn, 4, mask, vop[0],
-					       vop[1], vop[reduc_index]);
+	  gcc_assert (internal_fn_mask_index (internal_fn (cond_fn)) == 0);
+	  args.quick_push (mask);
+	  for (unsigned j = cond_fn_p ? 1 : 0;
+	       j < op.num_ops - (cond_fn_p ? 1 : 0); ++j)
+	    args.quick_push (vop[j]);
+	  gcc_assert (internal_fn_else_index (internal_fn (cond_fn))
+		      == (int) args.length ());
+	  args.quick_push (vop[reduc_index]);
+	  gcall *call = gimple_build_call_internal_vec (cond_fn, args);
 	  new_temp = make_ssa_name (vec_dest, call);
 	  gimple_call_set_lhs (call, new_temp);
 	  gimple_call_set_nothrow (call, true);
@@ -8356,9 +8364,6 @@ vect_transform_reduction (loop_vec_info loop_vinfo,
 	}
       else
 	{
-	  if (op.num_ops >= 3)
-	    vop[2] = vec_oprnds[2][i];
-
 	  if (masked_loop_p && mask_by_cond_expr)
 	    {
 	      tree mask = vect_get_loop_mask (loop_vinfo, gsi, masks,
@@ -9151,15 +9156,12 @@ vect_peel_nonlinear_iv_init (gimple_seq* stmts, tree init_expr,
 
     case vect_step_op_shr:
     case vect_step_op_shl:
-      skip_niters = fold_build1 (NOP_EXPR, type, skip_niters);
-      step_expr = fold_build1 (NOP_EXPR, type, step_expr);
-      step_expr = fold_build2 (MULT_EXPR, type, step_expr, skip_niters);
-      /* When shift mount >= precision, need to avoid UD.
+      /* When shift count >= precision, need to avoid UD.
 	 In the original loop, there's no UD, and according to semantic,
 	 init_expr should be 0 for lshr, ashl, and >>= (prec - 1) for ashr.  */
-      if ((!tree_fits_uhwi_p (step_expr)
-	  || tree_to_uhwi (step_expr) >= prec)
-	  && !early_exit_p)
+      if (!early_exit_p
+	  && wi::mul (wi::to_widest (step_expr),
+		      wi::to_widest (skip_niters)) >= prec)
 	{
 	  if (induction_type == vect_step_op_shl
 	      || TYPE_UNSIGNED (type))
@@ -9171,8 +9173,15 @@ vect_peel_nonlinear_iv_init (gimple_seq* stmts, tree init_expr,
 	}
       else
 	{
+	  /* ???  For not constant skip_niters we'd have to treat the
+	     overflow case.  */
+	  gcc_assert (!early_exit_p);
+	  step_expr = fold_build2 (MULT_EXPR, TREE_TYPE (skip_niters),
+				   skip_niters,
+				   fold_convert (TREE_TYPE (skip_niters),
+						 step_expr));
 	  init_expr = fold_build2 ((induction_type == vect_step_op_shr
-					  ? RSHIFT_EXPR : LSHIFT_EXPR),
+				    ? RSHIFT_EXPR : LSHIFT_EXPR),
 				    type, init_expr, step_expr);
 	  init_expr = force_gimple_operand (init_expr, stmts, false, NULL);
 	}
@@ -9678,6 +9687,14 @@ vectorizable_induction (loop_vec_info loop_vinfo,
   /* Make sure it was recognized as induction computation.  */
   if (STMT_VINFO_DEF_TYPE (stmt_info) != vect_induction_def)
     return false;
+
+  for (auto phi_info : SLP_TREE_SCALAR_STMTS (slp_node))
+    if (phi_info)
+      {
+	gcc_assert (STMT_VINFO_DEF_TYPE (phi_info) == vect_induction_def);
+	if (STMT_VINFO_LOOP_PHI_EVOLUTION_TYPE (phi_info) != induction_type)
+	  return false;
+      }
 
   /* Handle nonlinear induction in a separate place.  */
   if (induction_type != vect_step_op_add)
@@ -10245,7 +10262,7 @@ vectorizable_live_operation_1 (loop_vec_info loop_vinfo, basic_block exit_bb,
     {
       /* Emit:
 
-	 SCALAR_RES = EXTRACT_LAST <VEC_LHS, MASK>
+	 SCALAR_RES = EXTRACT_LAST_ACTIVE <VEC_LHS, MASK>
 
 	 where VEC_LHS is the vectorized live-out result and MASK is
 	 the loop mask for the final iteration.  */
@@ -10259,7 +10276,7 @@ vectorizable_live_operation_1 (loop_vec_info loop_vinfo, basic_block exit_bb,
       tree scalar_res;
       gimple_seq_add_seq (&stmts, tem);
 
-      scalar_res = gimple_build (&stmts, CFN_EXTRACT_LAST, scalar_type,
+      scalar_res = gimple_build (&stmts, CFN_EXTRACT_LAST_ACTIVE, scalar_type,
 				 mask, vec_lhs_phi);
 
       /* Convert the extracted vector element to the scalar type.  */
@@ -10418,7 +10435,7 @@ vectorizable_live_operation (vec_info *vinfo, stmt_vec_info stmt_info,
 	    }
 	  else
 	    {
-	      if (direct_internal_fn_supported_p (IFN_EXTRACT_LAST, vectype,
+	      if (direct_internal_fn_supported_p (IFN_EXTRACT_LAST_ACTIVE, vectype,
 						  OPTIMIZE_FOR_SPEED))
 		vect_record_loop_mask (loop_vinfo,
 				       &LOOP_VINFO_MASKS (loop_vinfo),
@@ -11644,7 +11661,9 @@ vect_transform_loop (loop_vec_info loop_vinfo, gimple *loop_vectorized_call)
 		   && !STMT_VINFO_RELEVANT_P (stmt_info)
 		   && !STMT_VINFO_LIVE_P (stmt_info))
 	    {
-	      gcc_assert (!gimple_call_lhs (stmt_info->stmt));
+	      /* With -fno-tree-{dce,dse} we can end up with dead
+		 .MASK_CALL without side-effects and thus with a (dead)
+		 LHS.  So we cannot assert there is no LHS.  */
 	      loop_vinfo->remove_stmt (stmt_info);
 	    }
 	}

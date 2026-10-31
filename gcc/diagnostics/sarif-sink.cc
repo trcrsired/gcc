@@ -1092,7 +1092,7 @@ sarif_invocation::add_notification_for_ice (const diagnostic_info &diagnostic,
 
   /* Support for related locations within a notification was added
      in SARIF 2.2; see https://github.com/oasis-tcs/sarif-spec/issues/540  */
-  if (builder.get_version () >= sarif_version::v2_2_prerelease_2024_08_08)
+  if (builder.get_version () >= sarif_version::v2_2_prerelease_csd01)
     notification->process_worklist (builder);
 
   m_notifications_arr->append<sarif_ice_notification>
@@ -1552,7 +1552,7 @@ add_related_location (std::unique_ptr<sarif_location> location_obj,
 {
   /* Support for related locations within a notification was added
      in SARIF 2.2; see https://github.com/oasis-tcs/sarif-spec/issues/540  */
-  if (builder.get_version () >= sarif_version::v2_2_prerelease_2024_08_08)
+  if (builder.get_version () >= sarif_version::v2_2_prerelease_csd01)
     sarif_location_manager::add_related_location (std::move (location_obj),
 						  builder);
   /* Otherwise implicitly discard LOCATION_OBJ.  */
@@ -2971,7 +2971,7 @@ make_sarif_node (const digraphs::node &n,
   auto result = std::make_unique<sarif_node> ();
 
   // 3.40.2 id property
-  result->set_string ("id", n.get_id ().c_str ());
+  result->set_string ("id", n.get_id ());
 
   copy_any_property_bag (n, *result);
 
@@ -3019,7 +3019,7 @@ make_sarif_edge (const digraphs::edge &e,
   auto result = std::make_unique<sarif_edge> ();
 
   // 3.41.2 id property
-  result->set_string ("id", e.get_id ().c_str ());
+  result->set_string ("id", e.get_id ());
 
   copy_any_property_bag (e, *result);
 
@@ -3030,10 +3030,10 @@ make_sarif_edge (const digraphs::edge &e,
 				  builder->make_message_object (label));
 
   // 3.41.4 sourceNodeId property
-  result->set_string ("sourceNodeId", e.get_src_node ().get_id ().c_str ());
+  result->set_string ("sourceNodeId", e.get_src_node ().get_id ());
 
   // 3.41.5 targetNodeId property
-  result->set_string ("targetNodeId", e.get_dst_node ().get_id ().c_str ());
+  result->set_string ("targetNodeId", e.get_dst_node ().get_id ());
 
   return result;
 }
@@ -3316,7 +3316,7 @@ set_string_property_escaping_braces (json::object &obj,
 				     const char *value)
 {
   std::string escaped (escape_braces (value));
-  obj.set_string (property_name, escaped.c_str ());
+  obj.set_string (property_name, escaped);
 }
 
 /* Make a "message" object (SARIF v2.1.0 section 3.11) for MSG.  */
@@ -3392,8 +3392,8 @@ sarif_version_to_url (enum sarif_version version)
       gcc_unreachable ();
     case sarif_version::v2_1_0:
       return "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json";
-    case sarif_version::v2_2_prerelease_2024_08_08:
-      return "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/refs/tags/2.2-prerelease-2024-08-08/sarif-2.2/schema/sarif-2-2.schema.json";
+    case sarif_version::v2_2_prerelease_csd01:
+      return "https://docs.oasis-open.org/sarif/sarif/v2.2/csd01/schema/sarif.json";
     }
 }
 
@@ -3409,9 +3409,8 @@ sarif_version_to_property (enum sarif_version version)
       gcc_unreachable ();
     case sarif_version::v2_1_0:
       return "2.1.0";
-    case sarif_version::v2_2_prerelease_2024_08_08:
-      /* I would have used "2.2-prerelease-2024-08-08",
-	 but the schema only accepts "2.2".  */
+    case sarif_version::v2_2_prerelease_csd01:
+      /* The schema only accepts "2.2".  */
       return "2.2";
     }
 }
@@ -4608,8 +4607,8 @@ get_dump_string_for_sarif_version (enum sarif_version version)
       gcc_unreachable ();
     case sarif_version::v2_1_0:
       return "v2_1_0";
-    case sarif_version::v2_2_prerelease_2024_08_08:
-      return "v2_2_prerelease_2024_08_08";
+    case sarif_version::v2_2_prerelease_csd01:
+      return "v2_2_prerelease_csd01";
     }
 }
 
