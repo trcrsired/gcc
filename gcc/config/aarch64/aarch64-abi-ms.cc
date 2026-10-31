@@ -375,6 +375,82 @@ seh_aarch64_emit_expr (FILE *out_file, struct seh_frame_state *seh, rtx pat)
     }
 }
 
+/* Return true if REGNO is a register that the callee must preserve.  */
+
+static bool
+seh_aarch64_nonvolatile_reg_p (unsigned int regno)
+{
+  if (GP_REGNUM_P (regno))
+    return regno >= R19_REGNUM && regno <= R28_REGNUM;
+  if (FP_REGNUM_P (regno))
+    return regno >= V0_REGNUM + 8 && regno <= V0_REGNUM + 15;
+  return false;
+}
+
+/* Return true if PAT describes only saves of nonvolatile registers into
+   stack slots.  GCC may place such saves after the end of the prologue,
+   but the frame they set up still has to be described by unwind codes:
+   without them, unwinding out of the function restores x19-x28 and
+   d8-d15 from the values the function itself left in those registers.  */
+
+static bool
+seh_aarch64_saves_nonvolatile_p (rtx pat)
+{
+  if (pat == NULL_RTX)
+    return false;
+
+  if (GET_CODE (pat) == PARALLEL || GET_CODE (pat) == SEQUENCE)
+    {
+      bool any = false;
+      int i, n = XVECLEN (pat, 0);
+
+      for (i = 0; i < n; ++i)
+	{
+	  rtx ele = XVECEXP (pat, 0, i);
+	  if (GET_CODE (ele) == SET || GET_CODE (ele) == PARALLEL
+	      || GET_CODE (ele) == SEQUENCE)
+	    {
+	      if (!seh_aarch64_saves_nonvolatile_p (ele))
+		return false;
+	      any = true;
+	    }
+	  else if (GET_CODE (ele) != UNSPEC && GET_CODE (ele) != NOTE)
+	    return false;
+	}
+      return any;
+    }
+
+  if (GET_CODE (pat) != SET)
+    return false;
+
+  if (!MEM_P (SET_DEST (pat)))
+    return false;
+
+  rtx src = SET_SRC (pat);
+  if (REG_P (src))
+    return seh_aarch64_nonvolatile_reg_p (REGNO (src));
+
+  /* stp pair: (set (mem:V2x8QI addr) (unspec [(reg) (reg)] UNSPEC_STP)).  */
+  if (GET_CODE (src) == UNSPEC)
+    {
+      bool any = false;
+      int i, n = XVECLEN (src, 0);
+
+      for (i = 0; i < n; ++i)
+	{
+	  rtx op = XVECEXP (src, 0, i);
+	  if (!REG_P (op))
+	    continue;
+	  if (!seh_aarch64_nonvolatile_reg_p (REGNO (op)))
+	    return false;
+	  any = true;
+	}
+      return any;
+    }
+
+  return false;
+}
+
 void
 aarch64_pe_seh_unwind_emit (FILE *out_file, rtx_insn *insn)
 {
@@ -397,8 +473,27 @@ aarch64_pe_seh_unwind_emit (FILE *out_file, rtx_insn *insn)
   if (NOTE_P (insn) || !RTX_FRAME_RELATED_P (insn))
     return;
 
+  /* Callee-saved registers that GCC saved after the prologue still need
+     unwind codes; everything else past the prologue is an epilogue
+     restore, which the codes already describe.  */
   if (seh->after_prologue)
-    return;
+    {
+      rtx pat = NULL_RTX;
+
+      for (note = REG_NOTES (insn); note; note = XEXP (note, 1))
+	if (REG_NOTE_KIND (note) == REG_FRAME_RELATED_EXPR
+	    || REG_NOTE_KIND (note) == REG_CFA_OFFSET)
+	  {
+	    pat = XEXP (note, 0);
+	    break;
+	  }
+
+      if (pat == NULL_RTX)
+	pat = PATTERN (insn);
+
+      if (!seh_aarch64_saves_nonvolatile_p (pat))
+	return;
+    }
 
   for (note = REG_NOTES (insn); note; note = XEXP (note, 1))
     {
