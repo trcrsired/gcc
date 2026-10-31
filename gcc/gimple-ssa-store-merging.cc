@@ -5806,8 +5806,22 @@ fold_value_with_zero_tail (basic_block bb)
 	  continue;
 	}
 
-      tree addr = (TREE_CODE (base) == SSA_NAME && POINTER_TYPE_P (TREE_TYPE (base)))
-		  ? base : build_fold_addr_expr (base);
+      /* The address operand of a MEM_REF is a pointer SSA name or an
+	 ADDR_EXPR; a cast produced by folding &MEM[...] is not one.  */
+      tree addr;
+      if (TREE_CODE (base) == SSA_NAME && POINTER_TYPE_P (TREE_TYPE (base)))
+	addr = base;
+      else
+	{
+	  addr = build_fold_addr_expr (base);
+	  if (TREE_CODE (addr) != ADDR_EXPR
+	      && !(TREE_CODE (addr) == SSA_NAME
+		   && POINTER_TYPE_P (TREE_TYPE (addr))))
+	    {
+	      gsi_next (&gsi);
+	      continue;
+	    }
+	}
       tree ptype = TREE_TYPE (addr);
       gimple_stmt_iterator gsi_ins = gsi;
       location_t loc = gimple_location (run[0].stmt);
