@@ -166,6 +166,8 @@
 #include "gimplify-me.h"
 #include "rtl.h"
 #include "expr.h"	/* For get_bit_range.  */
+#include "langhooks.h"
+#include "tree-ssanames.h"
 #include "optabs-tree.h"
 #include "dbgcnt.h"
 #include "selftest.h"
@@ -5604,6 +5606,271 @@ get_status_for_store_merging (basic_block bb)
    by stmt_terminates_chain_p) process the recorded stores and emit the widened
    variants.  */
 
+/* Return the object that BASE, as returned by get_inner_reference, refers
+   to, looking through pointer casts and address-of expressions, so that the
+   bases of stores that access the same object compare equal.  */
+
+static tree
+strip_base_to_object (tree base)
+{
+  while (true)
+    {
+      if (TREE_CODE (base) == SSA_NAME)
+	return base;
+      if (CONVERT_EXPR_P (base) || TREE_CODE (base) == ADDR_EXPR)
+	{
+	  base = TREE_OPERAND (base, 0);
+	  continue;
+	}
+      break;
+    }
+  return base;
+}
+
+/* If LHS is a memory reference, store the base object, the byte offset and
+   the byte size it accesses into *BASE, *OFF and *SIZE and return true.  */
+
+static bool
+store_mem_ref_base_and_extent (tree lhs, tree *base, HOST_WIDE_INT *off,
+			       HOST_WIDE_INT *size)
+{
+  if (!handled_component_p (lhs) && TREE_CODE (lhs) != MEM_REF)
+    return false;
+
+  poly_int64 bitsize, bitpos;
+  tree offset;
+  machine_mode mode;
+  int unsignedp = 0, reversep = 0, volatilep = 0;
+  *base = get_inner_reference (lhs, &bitsize, &bitpos, &offset, &mode,
+			       &unsignedp, &reversep, &volatilep);
+
+  HOST_WIDE_INT bitsize_hwi, bitpos_hwi;
+  if (volatilep
+      || !bitsize.is_constant (&bitsize_hwi)
+      || !bitpos.is_constant (&bitpos_hwi)
+      || bitsize_hwi <= 0
+      || bitsize_hwi % BITS_PER_UNIT != 0
+      || bitpos_hwi % BITS_PER_UNIT != 0)
+    return false;
+
+  HOST_WIDE_INT o = bitpos_hwi / BITS_PER_UNIT;
+  if (offset)
+    {
+      if (!tree_fits_shwi_p (offset))
+	return false;
+      o += tree_to_shwi (offset);
+    }
+
+  *off = o;
+  *size = bitsize_hwi / BITS_PER_UNIT;
+  *base = strip_base_to_object (*base);
+  return true;
+}
+
+/* Information about one store taking part in a run of stores that write
+   consecutive bytes of the same object.  */
+
+struct store_run_elt
+{
+  gimple *stmt;
+  HOST_WIDE_INT off;
+  HOST_WIDE_INT size;
+};
+
+/* Targets such as x86 can only forward a load from a single store that fully
+   contains it.  When a value narrower than a word is written to memory and
+   the bytes that follow are cleared by separate stores, a word-sized load of
+   that word straddles two stores and cannot be forwarded.  For aggregates
+   returned in memory, whose bytes are therefore copied out of the return
+   slot once per call, that costs several cycles per copy.
+
+   Rewrite
+
+     MEM[base + off] = V;			(size < word)
+     MEM[base + off + size] = 0;		(covering [off + size, end))
+
+   into
+
+     MEM[base + off] = (word)(unsigned)V;
+     MEM[base + off + word] = 0;		(covering [off + word, end))
+
+   so that every word of the object is written by a single store.  The upper
+   bytes of the widened store hold zeros, which is exactly what the stores it
+   replaces wrote there.  */
+
+static bool
+fold_value_with_zero_tail (basic_block bb)
+{
+  const HOST_WIDE_INT word = UNITS_PER_WORD;
+  bool changed = false;
+  gimple_stmt_iterator gsi = gsi_start_bb (bb);
+
+  /* The value is widened by zero-extending it, which only keeps the bytes it
+     writes where the stores being replaced put them on little-endian
+     targets.  */
+  if (STRICT_ALIGNMENT || WORDS_BIG_ENDIAN || word > 8 || word < 4)
+    return false;
+
+  while (!gsi_end_p (gsi))
+    {
+      gimple *stmt = gsi_stmt (gsi);
+      tree base, lhs;
+      HOST_WIDE_INT off, size;
+      auto_vec<store_run_elt, 8> run;
+      store_run_elt elt;
+      gimple_stmt_iterator gsi2;
+      HOST_WIDE_INT end;
+
+      if (!is_gimple_assign (stmt)
+	  || gimple_has_volatile_ops (stmt)
+	  || gimple_clobber_p (stmt)
+	  || (lhs = gimple_assign_lhs (stmt)) == NULL_TREE
+	  || TREE_CODE (lhs) == SSA_NAME
+	  || !store_mem_ref_base_and_extent (lhs, &base, &off, &size))
+	{
+	  gsi_next (&gsi);
+	  continue;
+	}
+
+      /* Collect the maximal run of consecutive stores to the same object
+	 that write consecutive bytes.  */
+      elt.stmt = stmt;
+      elt.off = off;
+      elt.size = size;
+      run.safe_push (elt);
+      end = off + size;
+      for (gsi2 = gsi;;)
+	{
+	  gimple *stmt2;
+	  tree base2, lhs2;
+	  HOST_WIDE_INT off2, size2;
+
+	  gsi_next (&gsi2);
+	  if (gsi_end_p (gsi2))
+	    break;
+	  stmt2 = gsi_stmt (gsi2);
+	  if (!is_gimple_assign (stmt2)
+	      || gimple_has_volatile_ops (stmt2)
+	      || gimple_clobber_p (stmt2)
+	      || (lhs2 = gimple_assign_lhs (stmt2)) == NULL_TREE
+	      || TREE_CODE (lhs2) == SSA_NAME
+	      || !store_mem_ref_base_and_extent (lhs2, &base2, &off2, &size2)
+	      || !operand_equal_p (base, base2, 0)
+	      || off2 != end)
+	    break;
+	  elt.stmt = stmt2;
+	  elt.off = off2;
+	  elt.size = size2;
+	  run.safe_push (elt);
+	  end = off2 + size2;
+	}
+
+      if (run.length () < 2 || run[0].size >= word)
+	{
+	  gsi_next (&gsi);
+	  continue;
+	}
+
+      /* The first store must provide the value and all the others must
+	 clear bytes, and the first word must be covered.  */
+      tree val = gimple_assign_rhs1 (run[0].stmt);
+      tree vtype = TREE_TYPE (val);
+      unsigned i;
+      store_run_elt *relt;
+
+      if (!INTEGRAL_TYPE_P (vtype)
+	  || !type_has_mode_precision_p (vtype)
+	  || TYPE_PRECISION (vtype) != run[0].size * BITS_PER_UNIT
+	  || run[0].off + word > end
+	  || (run[0].off % word) != 0)
+	{
+	  gsi_next (&gsi);
+	  continue;
+	}
+      FOR_EACH_VEC_ELT_FROM (run, i, relt, 1)
+	if (!integer_zerop (gimple_assign_rhs1 (relt->stmt)))
+	  break;
+      if (i != run.length ())
+	{
+	  gsi_next (&gsi);
+	  continue;
+	}
+
+      tree wtype = lang_hooks.types.type_for_size (word * BITS_PER_UNIT, 1);
+      tree utype = unsigned_type_for (vtype);
+      if (wtype == NULL_TREE
+	  || !INTEGRAL_TYPE_P (wtype)
+	  || utype == NULL_TREE)
+	{
+	  gsi_next (&gsi);
+	  continue;
+	}
+
+      tree addr = (TREE_CODE (base) == SSA_NAME && POINTER_TYPE_P (TREE_TYPE (base)))
+		  ? base : build_fold_addr_expr (base);
+      tree ptype = TREE_TYPE (addr);
+      gimple_stmt_iterator gsi_ins = gsi;
+      location_t loc = gimple_location (run[0].stmt);
+
+      /* The widened value is the value zero-extended: convert to the
+	 unsigned counterpart first when it is signed, so that the bits above
+	 the value are zero, as they are in the stores being replaced.  */
+      if (utype != vtype)
+	{
+	  tree tmp = make_ssa_name (utype);
+	  gimple *conv = gimple_build_assign (tmp, NOP_EXPR, val);
+	  gimple_set_location (conv, loc);
+	  SSA_NAME_DEF_STMT (tmp) = conv;
+	  gsi_insert_before (&gsi_ins, conv, GSI_SAME_STMT);
+	  val = tmp;
+	}
+      tree wval = make_ssa_name (wtype);
+      gimple *conv = gimple_build_assign (wval, NOP_EXPR, val);
+      gimple_set_location (conv, loc);
+      SSA_NAME_DEF_STMT (wval) = conv;
+      gsi_insert_before (&gsi_ins, conv, GSI_SAME_STMT);
+
+      tree wlhs = build2 (MEM_REF, wtype, addr,
+			  build_int_cst (ptype, run[0].off));
+      gimple *wstore = gimple_build_assign (wlhs, wval);
+      gimple_set_location (wstore, loc);
+      gsi_insert_before (&gsi_ins, wstore, GSI_SAME_STMT);
+
+      /* Re-emit the remaining zero bytes.  */
+      HOST_WIDE_INT pos = run[0].off + word;
+      while (pos < end)
+	{
+	  HOST_WIDE_INT left = end - pos;
+	  HOST_WIDE_INT chunk = left >= 8 ? 8 : left >= 4 ? 4 : left >= 2 ? 2 : 1;
+	  tree ztype = lang_hooks.types.type_for_size (chunk * BITS_PER_UNIT, 1);
+
+	  if (ztype == NULL_TREE || !INTEGRAL_TYPE_P (ztype))
+	    break;
+	  tree zlhs = build2 (MEM_REF, ztype, addr, build_int_cst (ptype, pos));
+	  gimple *zstore = gimple_build_assign (zlhs, build_int_cst (ztype, 0));
+	  gimple_set_location (zstore, gimple_location (run[0].stmt));
+	  gsi_insert_before (&gsi_ins, zstore, GSI_SAME_STMT);
+	  pos += chunk;
+	}
+      gcc_assert (pos == end);
+
+      for (i = 0; i < run.length (); ++i)
+	{
+	  gcc_assert (gsi_stmt (gsi_ins) == run[i].stmt);
+	  gsi_remove (&gsi_ins, true);
+	}
+
+      if (dump_file && (dump_flags & TDF_DETAILS))
+	fprintf (dump_file, "Widened store of %wd bytes at offset %wd to %wd "
+		 "bytes\n", run[0].size, run[0].off, word);
+
+      changed = true;
+      gsi = gsi_ins;
+    }
+
+  return changed;
+}
+
 unsigned int
 pass_store_merging::execute (function *fun)
 {
@@ -5686,6 +5953,13 @@ pass_store_merging::execute (function *fun)
       free_dominance_info (CDI_DOMINATORS);
       return TODO_cleanup_cfg;
     }
+
+  /* Merge a value with the zero bytes that follow it so that a word of the
+     object is always written by a single store (see the comment on
+     fold_value_with_zero_tail).  Done last, so that the stores it creates are
+     not merged again by the machinery above.  */
+  FOR_EACH_BB_FN (bb, fun)
+    changed |= fold_value_with_zero_tail (bb);
 
   return 0;
 }
