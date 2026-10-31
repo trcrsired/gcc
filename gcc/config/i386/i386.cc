@@ -8412,12 +8412,15 @@ static GTY(()) rtx queued_cfa_restores;
    manipulation insn.  The value is on the stack at CFA - CFA_OFFSET.
    Don't add the note if the previously saved value will be left untouched
    within stack red-zone till return, as unwinders can find the same value
-   in the register and on the stack.  */
+   in the register and on the stack.  This doesn't apply to DRAP frames,
+   where registers are saved using frame-pointer-relative expression rules
+   that become invalid once the frame pointer is restored.  */
 
 static void
 ix86_add_cfa_restore_note (rtx_insn *insn, rtx reg, HOST_WIDE_INT cfa_offset)
 {
   if (!crtl->shrink_wrapped
+      && !stack_realign_drap
       && cfa_offset <= cfun->machine->fs.red_zone_offset)
     return;
 
@@ -28038,7 +28041,7 @@ ix86_vector_costs::add_stmt_cost (int count, vect_cost_for_stmt kind,
 
 		  /* Vectorizer lane_reducing_op_p supports DOT_PROX_EXPR,
 		     WIDEN_SUM_EXPR and SAD_EXPR, x86 backend only supports
-		     SAD_EXPR (usad{v16qi,v32qi,v64qi}) and DOT_PROD_EXPR.  */
+		     SAD_EXPR (usad{v4siv16qi,v8siv32qi,v16siv64qi}) and DOT_PROD_EXPR.  */
 		case DOT_PROD_EXPR:
 		  rhs1 = gimple_assign_rhs1 (stmt_info->stmt);
 		  mode_rhs = TYPE_MODE (TREE_TYPE (rhs1));
