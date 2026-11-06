@@ -144,6 +144,7 @@
 #include "backend.h"
 #include "tree.h"
 #include "gimple.h"
+#include "gimple-expr.h"
 #include "builtins.h"
 #include "fold-const.h"
 #include "tree-pass.h"
@@ -5798,22 +5799,48 @@ fold_value_with_zero_tail (basic_block bb)
 	  continue;
 	}
 
-      /* The address operand of a MEM_REF is a pointer SSA name or an
-	 ADDR_EXPR; a cast produced by folding &MEM[...] is not one.  */
+      /* The address operand of a MEM_REF has to satisfy
+	 is_gimple_mem_ref_addr, which accepts registers, invariant constants
+	 and the address of a declaration.  build_fold_addr_expr of an
+	 aggregate memory reference folds &MEM[(T *)_4 + N] to a cast of _4
+	 when N is zero, and to &MEM[(T *)_4 + N] otherwise; neither is one of
+	 the accepted forms, so build the address and test it with the very
+	 predicate the verifier uses.  */
       tree addr;
       if (TREE_CODE (base) == SSA_NAME && POINTER_TYPE_P (TREE_TYPE (base)))
 	addr = base;
       else
+	addr = build_fold_addr_expr (base);
+      if (!is_gimple_mem_ref_addr (addr))
 	{
-	  addr = build_fold_addr_expr (base);
-	  if (TREE_CODE (addr) != ADDR_EXPR
-	      && !(TREE_CODE (addr) == SSA_NAME
-		   && POINTER_TYPE_P (TREE_TYPE (addr))))
-	    {
-	      gsi_next (&gsi);
-	      continue;
-	    }
+	  gsi_next (&gsi);
+	  continue;
 	}
+
+      /* Work out the stores that re-emit the zero bytes above the widened
+	 value before emitting any statement, so that a target without an
+	 integer mode for one of the chunk sizes leaves the run alone instead
+	 of rewriting it partially.  */
+      HOST_WIDE_INT pos = run[0].off + word;
+      auto_vec<tree, 4> ztypes;
+
+      while (pos < end)
+	{
+	  HOST_WIDE_INT left = end - pos;
+	  HOST_WIDE_INT chunk = left >= 8 ? 8 : left >= 4 ? 4 : left >= 2 ? 2 : 1;
+	  tree ztype = lang_hooks.types.type_for_size (chunk * BITS_PER_UNIT, 1);
+
+	  if (ztype == NULL_TREE || !INTEGRAL_TYPE_P (ztype))
+	    break;
+	  ztypes.safe_push (ztype);
+	  pos += chunk;
+	}
+      if (pos != end)
+	{
+	  gsi_next (&gsi);
+	  continue;
+	}
+
       gimple_stmt_iterator gsi_ins = gsi;
       location_t loc = gimple_location (run[0].stmt);
       /* The offset operand of a MEM_REF is an integer constant whose type
@@ -5845,20 +5872,16 @@ fold_value_with_zero_tail (basic_block bb)
       gsi_insert_before (&gsi_ins, wstore, GSI_SAME_STMT);
 
       /* Re-emit the remaining zero bytes.  */
-      HOST_WIDE_INT pos = run[0].off + word;
-      while (pos < end)
+      pos = run[0].off + word;
+      unsigned zi;
+      tree ztype;
+      FOR_EACH_VEC_ELT (ztypes, zi, ztype)
 	{
-	  HOST_WIDE_INT left = end - pos;
-	  HOST_WIDE_INT chunk = left >= 8 ? 8 : left >= 4 ? 4 : left >= 2 ? 2 : 1;
-	  tree ztype = lang_hooks.types.type_for_size (chunk * BITS_PER_UNIT, 1);
-
-	  if (ztype == NULL_TREE || !INTEGRAL_TYPE_P (ztype))
-	    break;
 	  tree zlhs = build2 (MEM_REF, ztype, addr, build_int_cst (ptype, pos));
 	  gimple *zstore = gimple_build_assign (zlhs, build_int_cst (ztype, 0));
-	  gimple_set_location (zstore, gimple_location (run[0].stmt));
+	  gimple_set_location (zstore, loc);
 	  gsi_insert_before (&gsi_ins, zstore, GSI_SAME_STMT);
-	  pos += chunk;
+	  pos += TYPE_PRECISION (ztype) / BITS_PER_UNIT;
 	}
       gcc_assert (pos == end);
 
@@ -5869,8 +5892,10 @@ fold_value_with_zero_tail (basic_block bb)
 	}
 
       if (dump_file && (dump_flags & TDF_DETAILS))
-	fprintf (dump_file, "Widened store of %wd bytes at offset %wd to %wd "
-		 "bytes\n", run[0].size, run[0].off, word);
+	fprintf (dump_file, "Widened store of " HOST_WIDE_INT_PRINT_DEC
+		 " bytes at offset " HOST_WIDE_INT_PRINT_DEC " to "
+		 HOST_WIDE_INT_PRINT_DEC " bytes\n",
+		 run[0].size, run[0].off, (HOST_WIDE_INT) word);
 
       changed = true;
       gsi = gsi_ins;
