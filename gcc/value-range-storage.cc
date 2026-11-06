@@ -158,21 +158,18 @@ vrange_storage::alloc (vrange_internal_alloc &allocator, const vrange &r,
 void
 vrange_storage::set_vrange (const vrange &r)
 {
-  if (is_a <irange> (r))
+  if (irange_storage *s = dyn_irange ())
     {
-      irange_storage *s = static_cast <irange_storage *> (this);
       gcc_checking_assert (s->fits_p (as_a <irange> (r)));
       s->set_irange (as_a <irange> (r));
     }
-  else if (is_a <prange> (r))
+  else if (prange_storage *s = dyn_prange ())
     {
-      prange_storage *s = static_cast <prange_storage *> (this);
       gcc_checking_assert (s->fits_p (as_a <prange> (r)));
       s->set_prange (as_a <prange> (r));
     }
-  else if (is_a <frange> (r))
+  else if (frange_storage *s = dyn_frange ())
     {
-      frange_storage *s = static_cast <frange_storage *> (this);
       gcc_checking_assert (s->fits_p (as_a <frange> (r)));
       s->set_frange (as_a <frange> (r));
     }
@@ -198,21 +195,12 @@ vrange_storage::set_vrange (const vrange &r)
 void
 vrange_storage::get_vrange (vrange &r, tree type) const
 {
-  if (is_a <irange> (r))
-    {
-      const irange_storage *s = static_cast <const irange_storage *> (this);
-      s->get_irange (as_a <irange> (r), type);
-    }
-  else if (is_a <prange> (r))
-    {
-      const prange_storage *s = static_cast <const prange_storage *> (this);
-      s->get_prange (as_a <prange> (r), type);
-    }
-  else if (is_a <frange> (r))
-    {
-      const frange_storage *s = static_cast <const frange_storage *> (this);
-      s->get_frange (as_a <frange> (r), type);
-    }
+  if (const irange_storage *s = dyn_irange ())
+    s->get_irange (as_a <irange> (r), type);
+  else if (const prange_storage *s = dyn_prange ())
+    s->get_prange (as_a <prange> (r), type);
+  else if (const frange_storage *s = dyn_frange ())
+    s->get_frange (as_a <frange> (r), type);
   else
     gcc_unreachable ();
 }
@@ -222,23 +210,13 @@ vrange_storage::get_vrange (vrange &r, tree type) const
 bool
 vrange_storage::fits_p (const vrange &r) const
 {
-  if (is_a <irange> (r))
-    {
-      const irange_storage *s = static_cast <const irange_storage *> (this);
-      return s->fits_p (as_a <irange> (r));
-    }
-  if (is_a <prange> (r))
-    {
-      const prange_storage *s = static_cast <const prange_storage *> (this);
-      return s->fits_p (as_a <prange> (r));
-    }
-  if (is_a <frange> (r))
-    {
-      const frange_storage *s = static_cast <const frange_storage *> (this);
-      return s->fits_p (as_a <frange> (r));
-    }
+  if (const irange_storage *s = dyn_irange ())
+    return s->fits_p (as_a <irange> (r));
+  if (const prange_storage *s = dyn_prange ())
+    return s->fits_p (as_a <prange> (r));
+  if (const frange_storage *s = dyn_frange ())
+    return s->fits_p (as_a <frange> (r));
   gcc_unreachable ();
-  return false;
 }
 
 // Return TRUE if the range in storage is equal to R.  It is the
@@ -248,21 +226,12 @@ vrange_storage::fits_p (const vrange &r) const
 bool
 vrange_storage::equal_p (const vrange &r) const
 {
-  if (is_a <irange> (r))
-    {
-      const irange_storage *s = static_cast <const irange_storage *> (this);
-      return s->equal_p (as_a <irange> (r));
-    }
-  if (is_a <prange> (r))
-    {
-      const prange_storage *s = static_cast <const prange_storage *> (this);
-      return s->equal_p (as_a <prange> (r));
-    }
-  if (is_a <frange> (r))
-    {
-      const frange_storage *s = static_cast <const frange_storage *> (this);
-      return s->equal_p (as_a <frange> (r));
-    }
+  if (const irange_storage *s = dyn_irange ())
+    return s->equal_p (as_a <irange> (r));
+  if (const prange_storage *s = dyn_prange ())
+    return s->equal_p (as_a <prange> (r));
+  if (const frange_storage *s = dyn_frange ())
+    return s->equal_p (as_a <frange> (r));
   gcc_unreachable ();
 }
 
@@ -628,8 +597,8 @@ prange_storage::alloc (vrange_internal_alloc &allocator, const prange &r,
   size_t size = sizeof (prange_storage) + extra_size;
   prange_storage *p = static_cast <prange_storage *> (allocator.alloc (size));
   new (p) prange_storage (r);
-  if (p->m_pt && !shared_p)
-    p->m_pt = unshare_expr_without_location (p->m_pt);
+  if (p->m_addr && !shared_p)
+    p->m_addr = unshare_expr_without_location (p->m_addr);
 
   return p;
 }
@@ -657,7 +626,7 @@ prange_storage::prange_storage (const prange &r) : vrange_storage (VR_PRANGE)
 //
 // Compare the bounds against a fresh set_nonzero () rather than using
 // prange::operator==, because operator== also compares the bitmask and
-// points-to info, which are stored separately here, so a non-null pointer that
+// address info, which are stored separately here, so a non-null pointer that
 // also carries e.g. an alignment bitmask still belongs in PR_NONZERO.
 
 static inline bool
@@ -705,9 +674,9 @@ prange_storage::prange_format (const prange &r, unsigned &num_words)
   if (!r.get_bitmask ().unknown_p ())
     num_words += 2;
 
-  // PR_FULL must have a bitmask or points to, or it should be PR_VARYING.
+  // PR_FULL must have a bitmask or an address, or it should be PR_VARYING.
   gcc_checking_assert (kind != PR_FULL || !r.get_bitmask ().unknown_p ()
-		       || r.m_pt != NULL_TREE);
+		       || r.m_addr != NULL_TREE);
   return kind;
 }
 
@@ -717,8 +686,8 @@ prange_storage::set_prange (const prange &r)
   unsigned num_words;
   m_kind = prange_format (r, num_words);
   m_has_bitmask = false;
-  m_points_to_p = false;
-  m_pt = r.m_pt;
+  m_known_p = false;
+  m_addr = r.m_addr;
 
   unsigned index = 0;
 
@@ -740,7 +709,7 @@ prange_storage::set_prange (const prange &r)
     }
 
   m_has_bitmask = !r.get_bitmask ().unknown_p ();
-  m_points_to_p = r.m_points_to_p;
+  m_known_p = r.m_known_p;
 
   if (m_has_bitmask)
     {
@@ -806,8 +775,8 @@ prange_storage::get_prange (prange &r, tree type) const
   else
     r.m_bitmask.set_unknown (TYPE_PRECISION (type));
 
-  r.m_points_to_p = m_points_to_p;
-  r.m_pt = m_pt;
+  r.m_known_p = m_known_p;
+  r.m_addr = m_addr;
 
   if (flag_checking)
     r.verify_range ();
@@ -861,10 +830,10 @@ prange_storage::equal_p (const prange &r) const
     if (!r.m_bitmask.unknown_p ())
       return false;
 
-  if (m_pt != r.m_pt)
+  if (m_addr != r.m_addr)
     return false;
   // Storage objects are only equal If they point to the same memory.
-  if (m_points_to_p != r.m_points_to_p)
+  if (m_known_p != r.m_known_p)
     return false;
 
   return true;
@@ -913,7 +882,7 @@ prange_storage::set_nonnull (tree type)
 	else
 	  {
 	    // This is very uncoomon, and rather than trying to cover
-	    // the edge cases (ie, bitmask present, points to)
+	    // the edge cases (ie, bitmask present, address present)
 	    // simply load the range, remove zero, and resave it.
 	    prange pr;
 	    this->get_vrange (pr, type);

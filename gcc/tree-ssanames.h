@@ -20,16 +20,34 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_TREE_SSANAMES_H
 #define GCC_TREE_SSANAMES_H
 
+inline irange_storage *
+ssa_name_irange_info (const_tree name)
+{
+  vrange_storage *s = SSA_NAME_RANGE_INFO (name);
+  return s ? s->dyn_irange () : NULL;
+}
+
+inline prange_storage *
+ssa_name_prange_info (const_tree name)
+{
+  vrange_storage *s = SSA_NAME_RANGE_INFO (name);
+  return s ? s->dyn_prange () : NULL;
+}
+
+inline frange_storage *
+ssa_name_frange_info (const_tree name)
+{
+  vrange_storage *s = SSA_NAME_RANGE_INFO (name);
+  return s ? s->dyn_frange () : NULL;
+}
+
 /* Return NAME's points-to solution, or NULL if it has none.  Returns NULL
    for a non pointer type.  */
 inline const pt_solution *
 ssa_name_pt_solution (const_tree name)
 {
-  vrange_storage *mem = SSA_NAME_RANGE_INFO (name);
-  if (!mem || mem->m_discriminator != VR_PRANGE)
-    return NULL;
-  prange_storage *s = static_cast <prange_storage *> (mem);
-  return s->pt;
+  prange_storage *s = ssa_name_prange_info (name);
+  return s ? s->pt : NULL;
 }
 
 /* Make PT the points-to solution for NAME, which must have pointer type.  */
@@ -68,8 +86,8 @@ extern bool ptr_nonnull_p (tree);
 
 extern tree copy_ssa_name_fn (struct function *, tree, gimple *);
 extern tree duplicate_ssa_name_fn (struct function *, tree, gimple *);
-extern void duplicate_ssa_name_ptr_info (tree dest, const pt_solution *);
-extern void duplicate_ssa_name_ptr_info (tree dest, tree src);
+extern void duplicate_ssa_name_pt_solution (tree dest, const pt_solution *);
+extern void duplicate_ssa_name_pt_solution (tree dest, tree src);
 extern void duplicate_ssa_name_range_info (tree dest, tree src);
 extern void maybe_duplicate_ssa_info_at_copy (tree dest, tree src);
 extern void reset_flow_sensitive_info (tree);
