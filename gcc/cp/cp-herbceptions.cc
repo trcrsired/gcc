@@ -398,6 +398,132 @@ hb_to_error (tree target, tree expr, location_t loc)
   return hb_fabricate_error (target, expr, loc);
 }
 
+/* The destructors of the subobjects already constructed in the function
+   being parsed, newest first: a TREE_LIST of (flag, dtor) pairs, where FLAG
+   is a local boolean that is true once the subobject exists.  The C++
+   front end registers these as exception-only cleanups, which legacy
+   unwinding reaches through the EH region tree.  A herbception failure
+   return is not an unwind, so it would leave the region without running
+   them; hb_emit_route runs this list instead, before returning the error.
+
+   The list is rebuilt per function: it is filled while the mem-initializers
+   are parsed and consumed when the body is lowered.  */
+
+static GTY(()) tree hb_subobject_cleanups;
+
+/* Record the destructor DTOR of a subobject that has just been constructed,
+   guarded by FLAG, which the caller has set to true and which
+   genericize_herbceptions_body will initialize to false at function entry.
+   A null FLAG means the subobject is certainly constructed whenever the
+   cleanup is live (a delegating constructor's target object).
+
+   Entries are per function, keyed on the FUNCTION_DECL, because a local
+   class inside a body records its own subobjects while the enclosing
+   function is still being parsed.  */
+
+void
+hb_record_subobject_cleanup (tree flag, tree dtor)
+{
+  if (!flag_herbceptions || dtor == NULL_TREE || dtor == error_mark_node
+      || current_function_decl == NULL_TREE)
+    return;
+  if (!type_herbceptions_p (TREE_TYPE (current_function_decl)))
+    return;
+
+  /* The cleanup tree also stays in the function's EH region, so the failure
+     path needs a copy of its own: statement lists are chained through the
+     nodes themselves, never shared.  */
+  tree entry = make_tree_vec (3);
+  TREE_VEC_ELT (entry, 0) = current_function_decl;
+  TREE_VEC_ELT (entry, 1) = flag;
+  TREE_VEC_ELT (entry, 2) = unshare_expr (dtor);
+
+  /* Prepend: the list is walked newest first, which is the order of
+     destruction.  */
+  hb_subobject_cleanups = tree_cons (NULL_TREE, entry, hb_subobject_cleanups);
+}
+
+/* Note the destructor DTOR of a subobject that has just been constructed, for
+   the herbception failure path.  A failure return does not unwind, so it
+   never reaches the exception-only cleanup the caller also registers; it runs
+   this list instead.  FLAG is a DECL that is true once the subobject exists;
+   with a null FLAG a fresh one is allocated and set here.  */
+
+void
+hb_note_subobject_cleanup (tree flag, tree dtor)
+{
+  if (!flag_herbceptions || dtor == NULL_TREE || dtor == error_mark_node
+      || current_function_decl == NULL_TREE)
+    return;
+  if (!type_herbceptions_p (TREE_TYPE (current_function_decl)))
+    return;
+
+  if (flag == NULL_TREE)
+    {
+      flag = create_temporary_var (boolean_type_node);
+      finish_expr_stmt (cp_build_modify_expr (input_location, flag, NOP_EXPR,
+					      boolean_true_node,
+					      tf_warning_or_error));
+    }
+
+  hb_record_subobject_cleanup (flag, dtor);
+}
+
+/* Emit the subobject cleanups of FNDECL recorded so far into LIST, newest
+   first.  */
+
+static void
+hb_emit_subobject_cleanups (tree list, tree fndecl, location_t loc)
+{
+  for (tree c = hb_subobject_cleanups; c != NULL_TREE; c = TREE_CHAIN (c))
+    {
+      tree entry = TREE_VALUE (c);
+      if (TREE_VEC_ELT (entry, 0) != fndecl)
+	continue;
+      tree dtor = unshare_expr (TREE_VEC_ELT (entry, 2));
+      tree guard = TREE_VEC_ELT (entry, 1);
+      if (guard)
+	dtor = fold_build3_loc (loc, COND_EXPR, void_type_node, guard, dtor,
+				integer_zero_node);
+      append_to_statement_list (build_stmt (loc, EXPR_STMT, dtor), &list);
+    }
+}
+
+/* Emit `flag = false;' for every recorded subobject of FNDECL into LIST, so
+   that a failure exit reached before a subobject exists does not destroy
+   it.  */
+
+static void
+hb_emit_subobject_flag_resets (tree list, tree fndecl, location_t loc,
+			       tree *vars)
+{
+  for (tree c = hb_subobject_cleanups; c != NULL_TREE; c = TREE_CHAIN (c))
+    {
+      tree entry = TREE_VALUE (c);
+      tree flag = TREE_VEC_ELT (entry, 1);
+      if (TREE_VEC_ELT (entry, 0) != fndecl || flag == NULL_TREE)
+	continue;
+      /* The flag has to be declared in the function's BIND_EXPR, or the
+	 gimplifier rejects the references below it.  */
+      *vars = chainon (*vars, flag);
+      append_to_statement_list (build_stmt (loc, DECL_EXPR, flag), &list);
+      append_to_statement_list (hb_assign (loc, flag, boolean_false_node),
+				&list);
+    }
+}
+
+/* Drop the entries recorded for FNDECL now that its body is lowered.  */
+
+static void
+hb_forget_subobject_cleanups (tree fndecl)
+{
+  tree kept = NULL_TREE;
+  for (tree c = hb_subobject_cleanups; c != NULL_TREE; c = TREE_CHAIN (c))
+    if (TREE_VEC_ELT (TREE_VALUE (c), 0) != fndecl)
+      kept = tree_cons (NULL_TREE, TREE_VALUE (c), kept);
+  hb_subobject_cleanups = kept;
+}
+
 /* Emit `{ init?; __hb_failed = 0; return; }' — a plain success
    return.  INIT is the value write (or NULL).  */
 
@@ -493,6 +619,9 @@ hb_emit_route (tree list, hb_ctx *ctx, tree e, location_t loc,
     (hb_assign (loc, hb_error_view (ctx->result_var, ctx->error_type), e),
      &list);
   hb_set_failed (list, ctx, 1, loc);
+  /* Leaving the function abandons every subobject constructed so far: this
+     return is not an unwind, so nothing else runs their destructors.  */
+  hb_emit_subobject_cleanups (list, ctx->fndecl, loc);
   tree r = build_stmt (loc, RETURN_EXPR, NULL_TREE);
   TREE_NO_WARNING (r) = 1;
   append_to_statement_list (r, &list);
@@ -2035,7 +2164,31 @@ genericize_herbceptions_body (tree fndecl)
 	}
     }
 
+  /* The subobject flags start false: a failure exit that happens before a
+     subobject is built must not destroy it.  */
+  if (hb_subobject_cleanups)
+    {
+      location_t loc = DECL_SOURCE_LOCATION (fndecl);
+      tree init = alloc_stmt_list ();
+      tree flags = NULL_TREE;
+      hb_emit_subobject_flag_resets (init, fndecl, loc, &flags);
+      tree body = DECL_SAVED_TREE (fndecl);
+      if (TREE_CODE (body) == BIND_EXPR)
+	{
+	  BIND_EXPR_VARS (body) = chainon (BIND_EXPR_VARS (body), flags);
+	  append_to_statement_list_force (BIND_EXPR_BODY (body), &init);
+	  BIND_EXPR_BODY (body) = init;
+	}
+      else
+	{
+	  append_to_statement_list_force (body, &init);
+	  DECL_SAVED_TREE (fndecl)
+	    = build3 (BIND_EXPR, void_type_node, flags, init, NULL_TREE);
+	}
+    }
+
   hb_lower_stmt (&DECL_SAVED_TREE (fndecl), &ctx);
+  hb_forget_subobject_cleanups (fndecl);
   if (ctx.pre)
     {
       tree l = alloc_stmt_list ();

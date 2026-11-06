@@ -9317,6 +9317,12 @@ extern int cp_gimplify_expr			(tree *, gimple_seq *,
 						 gimple_seq *);
 extern void cp_genericize			(tree);
 extern void genericize_herbceptions_body		(tree);
+/* In cp/cp-herbceptions.cc.  Record the destructor of a subobject that has
+   just been constructed, so that a herbception failure exit can run it.
+   FLAG is a DECL that is true once the subobject exists, or NULL_TREE to
+   allocate one and set it here.  */
+extern void hb_note_subobject_cleanup		(tree, tree);
+extern void hb_record_subobject_cleanup		(tree, tree);
 extern bool cxx_omp_const_qual_no_mutable	(tree);
 extern enum omp_clause_default_kind cxx_omp_predetermined_sharing_1 (tree);
 extern enum omp_clause_default_kind cxx_omp_predetermined_sharing (tree);

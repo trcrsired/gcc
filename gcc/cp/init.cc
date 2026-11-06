@@ -583,7 +583,12 @@ perform_target_ctor (tree init)
 	}
       if (expr != error_mark_node
 	  && TYPE_HAS_NONTRIVIAL_DESTRUCTOR (type))
-	finish_eh_cleanup (expr);
+	{
+	  /* The exception-only cleanup below is unreachable from a
+	     herbception failure return, which does not unwind.  */
+	  hb_note_subobject_cleanup (NULL_TREE, expr);
+	  finish_eh_cleanup (expr);
+	}
     }
   return init;
 }
@@ -1241,7 +1246,12 @@ perform_member_init (tree member, tree init, hash_set<tree> &uninitialized)
 
       if (expr != error_mark_node
 	  && TYPE_HAS_NONTRIVIAL_DESTRUCTOR (type))
-	finish_eh_cleanup (expr);
+	{
+	  /* The exception-only cleanup below is unreachable from a
+	     herbception failure return, which does not unwind.  */
+	  hb_note_subobject_cleanup (NULL_TREE, expr);
+	  finish_eh_cleanup (expr);
+	}
     }
 }
 
@@ -1756,6 +1766,10 @@ expand_cleanup_for_base (tree binfo, tree flag)
 
   if (TYPE_HAS_TRIVIAL_DESTRUCTOR (BINFO_TYPE (binfo)))
     return;
+
+  /* A herbception failure return does not unwind, so it never reaches the
+     exception-only cleanup below; record the destructor for it as well.  */
+  hb_note_subobject_cleanup (flag, expr);
 
   if (flag)
     expr = fold_build3_loc (input_location,
