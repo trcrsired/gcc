@@ -1216,25 +1216,6 @@ costs::better_main_loop_than_p (const vector_costs *uncast_other) const
 	  return other_prefer_unrolled;
 	}
     }
-  else if (riscv_vla_mode_p (other_loop_vinfo->vector_mode))
-    {
-      /* We don't want modes that would span more scalar iterations than
-	 we actually have.
-	 ??? We might want to revisit this in the light of VLMAX-dependent
-	 vs VL-dependent latency.  */
-      if (LOOP_VINFO_NITERS_KNOWN_P (other_loop_vinfo))
-	{
-	  if (maybe_gt (LOOP_VINFO_INT_NITERS (this_loop_vinfo),
-			LOOP_VINFO_VECT_FACTOR (this_loop_vinfo)))
-	    {
-	      if (dump_enabled_p ())
-		dump_printf_loc (MSG_NOTE, vect_location,
-				 "Keep current LMUL loop because"
-				 " known NITERS exceed the new VF\n");
-	      return false;
-	    }
-	}
-    }
 
   /* Fall back to generic costing if either iteration count is unknown.  For
      known iteration counts, include loop overhead when comparing different
@@ -1523,12 +1504,23 @@ costs::adjust_stmt_cost (enum vect_cost_for_stmt kind, loop_vec_info loop,
 
   /* Apply LMUL cost scaling uniformly to all vector operations.
      Larger LMUL values have higher latency and register pressure,
-     which affects performance regardless of loop structure.  */
+     which affects performance regardless of loop structure.
+     Permutes use dedicated per-LMUL cost tables instead of linear
+     scaling.  */
   if (VECTOR_TYPE_P (vectype))
     {
-      unsigned lmul_factor = get_lmul_cost_scaling (TYPE_MODE (vectype));
-      if (lmul_factor > 1)
-	stmt_cost *= lmul_factor;
+      machine_mode mode = TYPE_MODE (vectype);
+      if (kind == vec_perm)
+	{
+	  enum vlmul_type vlmul
+	    = is_frac_vlmul_p (mode) ? LMUL_1 : get_vlmul (mode);
+	  if (riscv_vla_mode_p (mode))
+	    stmt_cost = costs->vla->permute_cost[vlmul];
+	  else
+	    stmt_cost = costs->vls->permute_cost[vlmul];
+	}
+      else
+	stmt_cost *= get_lmul_cost_scaling (mode);
     }
 
   return stmt_cost;

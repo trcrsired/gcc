@@ -43,8 +43,26 @@
 #include "aarch64-neon-builtins-base.h"
 #include "aarch64-neon-builtins-functions.h"
 #include "gimple-fold.h"
+#include "ssa.h"
 
 namespace aarch64_acle {
+/* Build an asm volatile statement that prevents VALUE from being optimized
+   away, even if it is not used.
+   Equivalent to the following C code:
+   asm volatile ("" : : "w" (VALUE));  */
+gimple *
+build_optimization_barrier (tree value)
+{
+  vec<tree, va_gc> *inputs = nullptr;
+  vec_safe_push (inputs,
+		 build_tree_list (build_tree_list (NULL_TREE,
+						   build_string (1, "w")),
+				  value));
+  auto stmt = gimple_build_asm_vec ("", inputs, nullptr, nullptr, nullptr);
+  gimple_asm_set_volatile (stmt, true);
+  return stmt;
+}
+
 /* Build a cast expression, `(TYPE)EXPR`, if necessary to make an expression
    with type TYPE.  */
 tree
@@ -162,8 +180,24 @@ one_element_vector_type_p (tree type)
    At least one of `expand` or `fold` must be overriden by derived classes.  */
 class gimple_function_base : public function_base
 {
+public:
   rtx expand (function_expander &) const override { gcc_unreachable (); }
   gimple *fold (gimple_folder &) const override { gcc_unreachable (); }
+
+  /* If the expression can raise an FP exception, use an optimization barrier
+     to prevent it being removed even if the resulting value is not used.
+     FIXME (Karl Meakin): This shouldn't be necessary, but not all
+     optimizations obey `-ftrapping-math` at the moment.  */
+  gimple *maybe_optimization_barrier (gimple_folder &f, tree ret) const
+  {
+    if (f.call_properties () & CP_RAISE_FP_EXCEPTIONS)
+      {
+	f.assign (f.lhs, ret);
+	return build_optimization_barrier (f.lhs);
+      }
+    else
+      return gimple_build_assign (f.lhs, ret);
+  }
 };
 
 template <insn_code insn> struct gimple_exact_insn : gimple_function_base
@@ -220,6 +254,93 @@ public:
       }
   }
 };
+
+enum class arith_kind
+{
+  normal,
+  dup,
+  lane
+};
+
+/* Like gimple_expr above, but converts signed inputs to unsigned first, to
+   avoid undefined behaviour on overflow.  */
+template <arith_kind kind>
+class gimple_arith_base : public gimple_function_base
+{
+  tree_code m_int_code;
+  tree_code m_float_code;
+  tree_code m_poly_code;
+
+public:
+  constexpr gimple_arith_base (tree_code code)
+    : m_int_code (code), m_float_code (code), m_poly_code (code)
+  {}
+
+  constexpr gimple_arith_base (tree_code int_code, tree_code float_code,
+			       tree_code poly_code)
+    : m_int_code (int_code), m_float_code (float_code), m_poly_code (poly_code)
+  {}
+
+  gimple *fold (gimple_folder &f) const override
+  {
+    auto nargs = gimple_call_num_args (f.call);
+    auto arg0 = nargs >= 1 ? gimple_call_arg (f.call, 0) : nullptr;
+    auto arg1 = nargs >= 2 ? gimple_call_arg (f.call, 1) : nullptr;
+
+    if (kind == arith_kind::dup)
+      arg1 = f.force_val (build_vec_dup (TREE_TYPE (arg0), arg1));
+
+    if (kind == arith_kind::lane)
+      {
+	auto lane_idx = gimple_call_arg (f.call, 2);
+	arg1 = f.force_val (build_lane_get (arg1, lane_idx));
+	if (VECTOR_TYPE_P (TREE_TYPE (arg0)))
+	  arg1 = f.force_val (build_vec_dup (TREE_TYPE (arg0), arg1));
+      }
+
+    auto build = [&] (auto code, auto type) {
+      auto ret = nargs == 1 ? fold_build1 (code, type, arg0)
+			    : fold_build2 (code, type, arg0, arg1);
+      return f.force_val (ret);
+    };
+
+    tree ret;
+    auto type_class = f.type_suffix (0).tclass;
+    switch (type_class)
+      {
+      case TYPE_signed:
+	{
+	  auto signed_type = TREE_TYPE (arg0);
+	  auto unsigned_type = unsigned_type_for (signed_type);
+	  auto to_unsigned = [&] (auto arg) {
+	    return arg ? f.force_val (build_cast (unsigned_type, arg))
+		       : nullptr;
+	  };
+	  arg0 = to_unsigned (arg0);
+	  arg1 = to_unsigned (arg1);
+	  ret = build (m_int_code, unsigned_type);
+	  ret = build_cast (signed_type, f.force_val (ret));
+	  break;
+	}
+      case TYPE_unsigned:
+	ret = build (m_int_code, TREE_TYPE (arg0));
+	break;
+      case TYPE_float:
+	ret = build (m_float_code, TREE_TYPE (arg0));
+	break;
+      case TYPE_poly:
+	ret = build (m_poly_code, TREE_TYPE (arg0));
+	break;
+      default:
+	gcc_unreachable ();
+      }
+
+    return this->maybe_optimization_barrier (f, ret);
+  }
+};
+using gimple_arith = gimple_arith_base<arith_kind::normal>;
+using gimple_arith_dup = gimple_arith_base<arith_kind::dup>;
+using gimple_arith_lane = gimple_arith_base<arith_kind::lane>;
 
 struct gimple_create : public gimple_function_base
 {
@@ -764,6 +885,62 @@ struct gimple_reinterpret : public gimple_function_base
   }
 };
 
+struct gimple_abs : public gimple_function_base
+{
+  gimple *fold (gimple_folder &f) const override
+  {
+    auto arg = gimple_call_arg (f.call, 0);
+    auto arg_type = TREE_TYPE (arg);
+
+    if (!FLOAT_TYPE_P (arg_type))
+      return gimple_build_assign (
+	f.lhs, build_cast (arg_type,
+			   f.force_val (fold_build1 (
+			     ABSU_EXPR, unsigned_type_for (arg_type), arg))));
+
+    auto ret = fold_build1 (ABS_EXPR, arg_type, arg);
+    return this->maybe_optimization_barrier (f, ret);
+  }
+};
+
+/* Build a tree representing the absolute difference between LHS and RHS.
+   For floating-point types, this is just `ABS (LHS - RHS)`.
+   For integer types, it is `.ABD (LHS, RHS)`.  */
+tree
+build_abs_diff (gimple_folder &f, tree lhs, tree rhs)
+{
+  auto type = TREE_TYPE (lhs);
+
+  if (FLOAT_TYPE_P (type))
+    return fold_build1 (ABS_EXPR, type,
+			f.force_val (fold_build2 (MINUS_EXPR, type, lhs, rhs)));
+
+  auto ret
+    = is_gimple_reg_type (type) ? make_ssa_name (type) : create_tmp_var (type);
+  auto call = gimple_build_call_internal (IFN_ABD, 2, lhs, rhs);
+  gimple_seq_add_stmt_without_update (&f.stmts, call);
+  gimple_call_set_lhs (call, ret);
+  return ret;
+}
+
+template<bool accumulate>
+struct gimple_abs_diff : public gimple_function_base
+{
+  gimple *fold (gimple_folder &f) const override
+  {
+    auto lhs = gimple_call_arg (f.call, accumulate ? 1 : 0);
+    auto rhs = gimple_call_arg (f.call, accumulate ? 2 : 1);
+    auto ret = build_abs_diff (f, lhs, rhs);
+    if (accumulate)
+      {
+	auto acc = gimple_call_arg (f.call, 0);
+	ret = fold_build2 (PLUS_EXPR, TREE_TYPE (acc), acc, ret);
+      }
+
+    return this->maybe_optimization_barrier (f, ret);
+  }
+};
+
 // Reinterpret
 NEON_FUNCTION (vreinterpret, vreinterpretq, gimple_reinterpret,)
 
@@ -778,9 +955,21 @@ NEON_FUNCTION (vdupb_lane, vdupb_laneq, vduph_lane,   vduph_laneq,
 	       vdups_lane, vdups_laneq, vdupd_lane,   vdupd_laneq, gimple_get_lane,)
 
 // Lanewise arithmetic
-NEON_FUNCTION (vaddd, gimple_expr, (PLUS_EXPR))
-NEON_FUNCTION (vadd,  gimple_expr, (PLUS_EXPR, PLUS_EXPR, BIT_XOR_EXPR))
-NEON_FUNCTION (vaddq, gimple_expr, (PLUS_EXPR, PLUS_EXPR, BIT_XOR_EXPR))
+NEON_FUNCTION (vadd, vaddq, vaddd, gimple_arith, (PLUS_EXPR, PLUS_EXPR, BIT_XOR_EXPR))
+NEON_FUNCTION (vsub, vsubq, vsubd, gimple_arith, (MINUS_EXPR))
+NEON_FUNCTION (vdiv, vdivq,	   gimple_arith, (RDIV_EXPR))
+NEON_FUNCTION (vneg, vnegq, vnegd, gimple_arith, (NEGATE_EXPR))
+NEON_FUNCTION (vabs, vabsq,	   vabsd, gimple_abs,)
+NEON_FUNCTION (vabd, vabdq, vabds, vabdd, gimple_abs_diff<false>,)
+NEON_FUNCTION (vaba, vabaq,		  gimple_abs_diff<true>,)
+
+NEON_FUNCTION (vmul, vmulq,		gimple_arith, (MULT_EXPR))
+NEON_FUNCTION (vmul_n, vmulq_n,		gimple_arith_dup, (MULT_EXPR))
+NEON_FUNCTION (vmul_lane, vmul_laneq,
+	       vmulq_lane, vmulq_laneq,
+	       vmulh_lane, vmulh_laneq,
+	       vmuls_lane, vmuls_laneq,
+	       vmuld_lane, vmuld_laneq, gimple_arith_lane, (MULT_EXPR))
 
 // Saturating arithmetic
 NEON_FUNCTION (vqaddb, vqaddh, vqadds, vqaddd, vqadd, vqaddq, gimple_ifn, (IFN_SAT_ADD))

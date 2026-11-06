@@ -2258,9 +2258,7 @@ vect_recog_popcount_clz_ctz_ffs_pattern (vec_info *vinfo,
 	  return NULL;
 	break;
       case IFN_CLZ:
-	/* clzll (x) == clz (x) + 32 for unsigned x != 0, so ok
-	   if it is undefined at zero or if it matches also for the
-	   defined value there.  */
+	/* clzll (x) == clz (x) + 32 for unsigned x != 0.  */
 	if (!TYPE_UNSIGNED (unprom_diff.type))
 	  return NULL;
 	if (!type_has_mode_precision_p (lhs_type)
@@ -2268,31 +2266,9 @@ vect_recog_popcount_clz_ctz_ffs_pattern (vec_info *vinfo,
 	  return NULL;
 	addend = (TYPE_PRECISION (TREE_TYPE (rhs_oprnd))
 		  - TYPE_PRECISION (lhs_type));
-	if (gimple_call_internal_p (call_stmt)
-	    && gimple_call_num_args (call_stmt) == 2)
-	  {
-	    int val1, val2;
-	    val1 = tree_to_shwi (gimple_call_arg (call_stmt, 1));
-	    int d2
-	      = CLZ_DEFINED_VALUE_AT_ZERO (TYPE_MODE (vec_type), val2);
-	    if (d2 != 2 || val1 != val2 + addend)
-	      return NULL;
-	  }
 	break;
       case IFN_CTZ:
-	/* ctzll (x) == ctz (x) for unsigned or signed x != 0, so ok
-	   if it is undefined at zero or if it matches also for the
-	   defined value there.  */
-	if (gimple_call_internal_p (call_stmt)
-	    && gimple_call_num_args (call_stmt) == 2)
-	  {
-	    int val1, val2;
-	    val1 = tree_to_shwi (gimple_call_arg (call_stmt, 1));
-	    int d2
-	      = CTZ_DEFINED_VALUE_AT_ZERO (TYPE_MODE (vec_type), val2);
-	    if (d2 != 2 || val1 != val2)
-	      return NULL;
-	  }
+	/* ctzll (x) == ctz (x) for unsigned or signed x != 0.  */
 	break;
       case IFN_FFS:
 	/* ffsll (x) == ffs (x) for unsigned or signed x.  */
@@ -2300,6 +2276,22 @@ vect_recog_popcount_clz_ctz_ffs_pattern (vec_info *vinfo,
       default:
 	gcc_unreachable ();
       }
+
+  /* For zero the pattern gives the value of the target for VEC_TYPE plus
+     ADDEND.  If the call has another value at zero, select it.  */
+  tree zero_val = NULL_TREE;
+  if ((ifn == IFN_CLZ || ifn == IFN_CTZ)
+      && gimple_call_internal_p (call_stmt)
+      && gimple_call_num_args (call_stmt) == 2)
+    {
+      int val;
+      int d = (ifn == IFN_CLZ
+	       ? CLZ_DEFINED_VALUE_AT_ZERO (TYPE_MODE (vec_type), val)
+	       : CTZ_DEFINED_VALUE_AT_ZERO (TYPE_MODE (vec_type), val));
+      if (d != 2
+	  || tree_to_shwi (gimple_call_arg (call_stmt, 1)) != val + addend)
+	zero_val = gimple_call_arg (call_stmt, 1);
+    }
 
   /* Do it only if the backend has popcount<vector_mode>2 etc. pattern.  */
   bool supported
@@ -2361,6 +2353,12 @@ vect_recog_popcount_clz_ctz_ffs_pattern (vec_info *vinfo,
 	   && CTZ_DEFINED_VALUE_AT_ZERO (TYPE_MODE (vec_type),
 					 val) == 2)
     arg2 = build_int_cst (integer_type_node, val);
+  /* vect_recog_ctz_ffs_pattern selects the value at zero itself.  */
+  if (zero_val && !supported)
+    {
+      arg2 = zero_val;
+      zero_val = NULL_TREE;
+    }
   if (arg2)
     pattern_stmt = gimple_build_call_internal (ifn, 2, unprom_diff.op, arg2);
   else
@@ -2399,6 +2397,21 @@ vect_recog_popcount_clz_ctz_ffs_pattern (vec_info *vinfo,
     }
   else if (cast_stmt)
     append_pattern_def_seq (vinfo, stmt_vinfo, cast_stmt, vec_type);
+
+  if (zero_val)
+    {
+      append_pattern_def_seq (vinfo, stmt_vinfo, pattern_stmt, vec_type);
+      tree op = unprom_diff.op;
+      tree cmp = vect_recog_temp_ssa_var (boolean_type_node, NULL);
+      gimple *cmp_stmt = gimple_build_assign (cmp, NE_EXPR, op,
+					      build_zero_cst (TREE_TYPE (op)));
+      append_pattern_def_seq (vinfo, stmt_vinfo, cmp_stmt,
+			      truth_type_for (vec_type), TREE_TYPE (op));
+      tree ret_var = vect_recog_temp_ssa_var (lhs_type, NULL);
+      pattern_stmt = gimple_build_assign (ret_var, COND_EXPR, cmp,
+				  gimple_get_lhs (pattern_stmt),
+				  fold_convert (lhs_type, zero_val));
+    }
 
   if (cast_stmt)
     {

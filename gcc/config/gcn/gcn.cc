@@ -3240,7 +3240,7 @@ move_callee_saved_registers (rtx sp, machine_function *offsets,
 	saved_scalars++;
       }
 
-  rtx move_scalars = end_sequence ();
+  rtx_insn *move_scalars = end_sequence ();
   start_sequence ();
 
   /* Ensure that all vector lanes are moved.  */
@@ -3290,9 +3290,10 @@ move_callee_saved_registers (rtx sp, machine_function *offsets,
 
 	if (prologue)
 	  {
-	    rtx insn = emit_insn (gen_movv64si_exec (vspmem, reg,
-						     gcn_gen_undef (V64SImode),
-						     exec));
+	    rtx_insn *insn
+	      = emit_insn (gen_movv64si_exec (vspmem, reg,
+					      gcn_gen_undef (V64SImode),
+					      exec));
 
 	    /* Add CFI metadata.  */
 	    rtx note;
@@ -3377,7 +3378,7 @@ move_callee_saved_registers (rtx sp, machine_function *offsets,
 	offset += size;
       }
 
-  rtx move_vectors = end_sequence ();
+  rtx_insn *move_vectors = end_sequence ();
 
   if (prologue)
     {
@@ -3466,8 +3467,9 @@ gcn_expand_prologue ()
 	     the note.  */
 	  rtx scc = gen_rtx_REG (BImode, SCC_REG);
 	  rtx adjustment = gen_int_mode (sp_adjust, SImode);
-	  rtx insn = emit_insn (gen_addsi3_scalar_carry (sp_lo, sp_lo,
-							 adjustment, scc));
+	  rtx_insn *insn = emit_insn (gen_addsi3_scalar_carry (sp_lo, sp_lo,
+							       adjustment,
+							       scc));
 	  if (!offsets->need_frame_pointer)
 	    {
 	      RTX_FRAME_RELATED_P (insn) = 1;
@@ -3487,8 +3489,9 @@ gcn_expand_prologue ()
 	  rtx scc = gen_rtx_REG (BImode, SCC_REG);
 	  int fp_adjust = -(offsets->local_vars + offsets->outgoing_args_size);
 	  rtx adjustment = gen_int_mode (fp_adjust, SImode);
-	  rtx insn = emit_insn (gen_addsi3_scalar_carry(fp_lo, sp_lo,
-							adjustment, scc));
+	  rtx_insn *insn = emit_insn (gen_addsi3_scalar_carry (fp_lo, sp_lo,
+							       adjustment,
+							       scc));
 	  emit_insn (gen_addcsi3_scalar (fp_hi, sp_hi,
 					 (fp_adjust < 0 ? GEN_INT (-1)
 					  : const0_rtx),
@@ -3556,6 +3559,11 @@ gcn_expand_prologue ()
       set_mem_addr_space (stack_size_mem, ADDR_SPACE_SCALAR_FLAT);
       emit_move_insn (wave_offset, stack_size_mem);
 
+      /* The total stack size may exceed 4 GiB, so the wave offset needs
+	 64 bits.  NUM_WAVES is dead now, so reuse it for the high part.  */
+      rtx wave_offset_hi = num_waves;
+      emit_insn (gen_umulsi3_highpart_reg (wave_offset_hi, wave_offset,
+					   thread_id));
       emit_insn (gen_mulsi3 (wave_offset, wave_offset, thread_id));
 
       /* The FLAT_SCRATCH_INIT is not usually needed, but can be enabled
@@ -3604,7 +3612,7 @@ gcn_expand_prologue ()
       emit_move_insn (fp, stack_addr_mem);
       rtx scc = gen_rtx_REG (BImode, SCC_REG);
       emit_insn (gen_addsi3_scalar_carry (fp_lo, fp_lo, wave_offset, scc));
-      emit_insn (gen_addcsi3_scalar_zero (fp_hi, fp_hi, scc));
+      emit_insn (gen_addcsi3_scalar (fp_hi, fp_hi, wave_offset_hi, scc, scc));
 
       /* Adding RTX_FRAME_RELATED_P effectively disables splitting, so we use
 	 split add explicitly, and specify the DImode add in the note.
@@ -3613,7 +3621,7 @@ gcn_expand_prologue ()
          make a notional adjustment to the DWARF frame offset here.  */
       rtx dbg_adjustment = gen_int_mode (sp_adjust + offsets->callee_saves,
 					 DImode);
-      rtx insn;
+      rtx_insn *insn;
       if (sp_adjust > 0)
 	{
 	  rtx scc = gen_rtx_REG (BImode, SCC_REG);
@@ -4977,7 +4985,7 @@ gcn_expand_builtin_1 (tree exp, rtx target, rtx /*subtarget */ ,
 					  SImode, EXPAND_NORMAL));
 	rtx wavefront = gcn_oacc_dim_pos (1);
 	rtx cond = gen_rtx_NE (VOIDmode, wavefront, const0_rtx);
-	rtx not_zero = gen_label_rtx ();
+	rtx_code_label *not_zero = gen_label_rtx ();
 	emit_insn (gen_cbranchsi4 (cond, wavefront, const0_rtx, not_zero));
 	emit_move_insn (blk, const0_rtx);
 	emit_label (not_zero);
@@ -5027,18 +5035,14 @@ gcn_expand_builtin_1 (tree exp, rtx target, rtx /*subtarget */ ,
 	    rtx stack_size = gen_reg_rtx (SImode);
 	    emit_move_insn (stack_size, stack_size_mem);
 
-	    rtx wave_offset = gen_reg_rtx (SImode);
-	    emit_insn (gen_mulsi3 (wave_offset, stack_size, thread_id));
-
-	    rtx stack_limit_offset = gen_reg_rtx (SImode);
-	    emit_insn (gen_addsi3 (stack_limit_offset, wave_offset,
-				   stack_size));
+	    /* The stack limit is at the end of this wave's stack, at
+	       (thread_id + 1) * stack_size, which may exceed 4 GiB.  */
+	    rtx next_thread_id = gen_reg_rtx (SImode);
+	    emit_insn (gen_addsi3 (next_thread_id, thread_id, const1_rtx));
 
 	    rtx stack_limit_offset_di = gen_reg_rtx (DImode);
-	    emit_move_insn (gen_rtx_SUBREG (SImode, stack_limit_offset_di, 4),
-			    const0_rtx);
-	    emit_move_insn (gen_rtx_SUBREG (SImode, stack_limit_offset_di, 0),
-			    stack_limit_offset);
+	    emit_insn (gen_umulsidi3 (stack_limit_offset_di, stack_size,
+				      next_thread_id));
 
 	    rtx stack_addr_mem = gen_rtx_MEM (DImode,
 					      gen_rtx_PLUS (DImode,
@@ -5091,7 +5095,7 @@ gcn_expand_builtin_1 (tree exp, rtx target, rtx /*subtarget */ ,
 	emit_move_insn (result, const0_rtx);
 	if (cfun->machine->args.reg[QUEUE_PTR_ARG] >= 0)
 	  {
-	    rtx not_first = gen_label_rtx ();
+	    rtx_code_label *not_first = gen_label_rtx ();
 	    rtx reg = gen_rtx_REG (DImode,
 			cfun->machine->args.reg[QUEUE_PTR_ARG]);
 	    reg = gcn_operand_part (DImode, reg, 1);
@@ -5573,16 +5577,12 @@ gcn_preferred_vector_alignment (const_tree type)
 static bool
 gcn_vectorize_support_vector_misalignment (machine_mode ARG_UNUSED (mode),
 					   int ARG_UNUSED (misalignment),
-					   bool is_packed,
+					   bool ARG_UNUSED (is_packed),
 					   bool ARG_UNUSED (is_gather_scatter))
 {
   /* All Flat and Global load instructions support arbitrary alignment, so
      the types and such are irrelevant (Buffer instructions are not used).  */
-
-  /* Disallow packed accesses because expand attempts to take scalar subregs of
-     vector registers, which is nonsense.
-     Testcase: gfortran.dg/recursive_alloc_comp_4.f08   */
-  return !is_packed;
+  return true;
 }
 
 /* Implement TARGET_VECTORIZE_VECTOR_ALIGNMENT_REACHABLE.

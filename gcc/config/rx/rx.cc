@@ -1662,17 +1662,17 @@ gen_rx_store_vector (unsigned int low, unsigned int high)
    then mark each element as being frame related as well.  */
 
 static void
-mark_frame_related (rtx insn)
+mark_frame_related (rtx_insn *insn)
 {
   RTX_FRAME_RELATED_P (insn) = 1;
-  insn = PATTERN (insn);
+  rtx body = PATTERN (insn);
 
-  if (GET_CODE (insn) == PARALLEL)
+  if (GET_CODE (body) == PARALLEL)
     {
       unsigned int i;
 
-      for (i = 0; i < (unsigned) XVECLEN (insn, 0); i++)
-	RTX_FRAME_RELATED_P (XVECEXP (insn, 0, i)) = 1;
+      for (i = 0; i < (unsigned) XVECLEN (body, 0); i++)
+	RTX_FRAME_RELATED_P (XVECEXP (body, 0, i)) = 1;
     }
 }
 
@@ -1715,7 +1715,7 @@ ok_for_max_constant (HOST_WIDE_INT val)
 static void
 gen_safe_add (rtx dest, rtx src, rtx val, bool is_frame_related)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   if (val == NULL_RTX || INTVAL (val) == 0)
     {
@@ -1748,7 +1748,7 @@ gen_safe_add (rtx dest, rtx src, rtx val, bool is_frame_related)
 static void
 push_regs (unsigned int high, unsigned int low)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   if (low == high)
     insn = emit_insn (gen_stack_push (gen_rtx_REG (SImode, low)));
@@ -2367,6 +2367,15 @@ rx_select_section (tree decl,
       }
 
   return default_elf_select_section (decl, reloc, align);
+}
+
+/* Implement TARGET_CAN_SHARE_JUMP_TABLE_P.  The entries of a PID or PIC
+   table are relative to a local label that the dispatch defines.  */
+
+static bool
+rx_can_share_jump_table_p (rtx_insn *)
+{
+  return !TARGET_PID && !flag_pic;
 }
 
 enum rx_builtin
@@ -3308,7 +3317,7 @@ rx_split_cbranch (machine_mode cc_mode, enum rtx_code cmp1,
 /* A helper function for matching parallels that set the flags.  */
 
 bool
-rx_match_ccmode (rtx insn, machine_mode cc_mode)
+rx_match_ccmode (rtx_insn *insn, machine_mode cc_mode)
 {
   rtx op1, flags;
   machine_mode flags_mode;
@@ -3758,6 +3767,9 @@ rx_relax_double_operands(rtx * operands, machine_mode mode)
 
 #undef	TARGET_ASM_SELECT_SECTION
 #define	TARGET_ASM_SELECT_SECTION	rx_select_section
+
+#undef	TARGET_CAN_SHARE_JUMP_TABLE_P
+#define	TARGET_CAN_SHARE_JUMP_TABLE_P	rx_can_share_jump_table_p
 
 #undef  TARGET_INIT_BUILTINS
 #define TARGET_INIT_BUILTINS		rx_init_builtins

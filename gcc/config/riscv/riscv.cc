@@ -406,7 +406,7 @@ static const common_vector_cost rvv_vls_vector_cost = {
   1, /* segment_permute (8) */
   1, /* vec_to_scalar_cost  */
   1, /* scalar_to_vec_cost  */
-  1, /* permute_cost  */
+  {1, 4, 16, 64}, /* permute_cost.  */
   1, /* align_load_cost  */
   1, /* align_store_cost  */
   2, /* unalign_load_cost  */
@@ -439,7 +439,7 @@ static const scalable_vector_cost rvv_vla_vector_cost = {
     1, /* segment_permute (8) */
     1, /* vec_to_scalar_cost  */
     1, /* scalar_to_vec_cost  */
-    1, /* permute_cost  */
+    {1, 4, 16, 64}, /* permute_cost.  */
     1, /* align_load_cost  */
     1, /* align_store_cost  */
     2, /* unalign_load_cost  */
@@ -751,7 +751,7 @@ static const common_vector_cost xt_c9501_vls_vector_cost = {
   12, /* segment_permute (8) */
   2, /* vec_to_scalar_cost  */
   2, /* scalar_to_vec_cost  */
-  4, /* permute_cost  */
+  {4, 16, 64, 256}, /* permute_cost.  */
   6, /* align_load_cost  */
   1, /* align_store_cost  */
   8, /* unalign_load_cost  */
@@ -3149,7 +3149,7 @@ riscv_load_store_insns (rtx mem, rtx_insn *insn)
    how to force Pmode objects into the constant pool even when the
    constant pool address is not itself legitimate.  */
 
-rtx
+rtx_insn *
 riscv_emit_move (rtx dest, rtx src)
 {
   return (can_create_pseudo_p ()
@@ -8199,17 +8199,29 @@ riscv_get_vls_cc_attr (const_tree args, bool check_only = false)
 	abi_vlen = TREE_INT_CST_LOW (vlen_arg);
     }
 
-  if (!riscv_valid_abi_vlen_vls_cc_p (abi_vlen) && !check_only)
+  if (!riscv_valid_abi_vlen_vls_cc_p (abi_vlen))
     {
-      error_at (input_location,
-		"unsupported %<ABI_VLEN%> value %d for %qs attribute; "
-		"%<ABI_VLEN%> must be in the range [32, 16384] and must be "
-		"a power of 2",
-		abi_vlen, "riscv_vls_cc");
+      if (!check_only)
+	error_at (input_location,
+		  "unsupported %<ABI_VLEN%> value %d for %qs attribute; "
+		  "%<ABI_VLEN%> must be in the range [32, 16384] and must be "
+		  "a power of 2",
+		  abi_vlen, "riscv_vls_cc");
       return RISCV_CC_UNKNOWN;
     }
 
   return riscv_get_riscv_cc_by_abi_vlen (abi_vlen);
+}
+
+/* Return the vls_cc attribute in ATTRS, either spelling, or NULL_TREE.  */
+
+static tree
+riscv_lookup_vls_cc_attribute (tree attrs)
+{
+  tree attr = lookup_attribute ("vls_cc", attrs);
+  if (!attr)
+    attr = lookup_attribute ("riscv_vls_cc", attrs);
+  return attr;
 }
 
 /* Return true if FUNC is a riscv_vector_cc function.
@@ -8218,11 +8230,9 @@ riscv_get_vls_cc_attr (const_tree args, bool check_only = false)
 static riscv_cc
 riscv_vls_cc_function_abi (const_tree fntype, bool check_only)
 {
-  tree attr = TYPE_ATTRIBUTES (fntype);
-  bool vls_cc_p = lookup_attribute ("vls_cc", attr) != NULL_TREE
-		  || lookup_attribute ("riscv_vls_cc", attr) != NULL_TREE;
+  tree attr = riscv_lookup_vls_cc_attribute (TYPE_ATTRIBUTES (fntype));
 
-  if (!vls_cc_p)
+  if (!attr)
     return RISCV_CC_UNKNOWN;
 
   if (!TARGET_VECTOR && !check_only)
@@ -8231,7 +8241,80 @@ riscv_vls_cc_function_abi (const_tree fntype, bool check_only)
 	      "riscv_vls_cc");
 
   tree args = TREE_VALUE (attr);
-  return riscv_get_vls_cc_attr (args);
+  return riscv_get_vls_cc_attr (args, check_only);
+}
+
+/* Return true if ATTRS already carries the ABI tag TAG.  */
+
+static bool
+riscv_abi_tag_present_p (tree attrs, const char *tag)
+{
+  for (tree a = lookup_attribute ("abi_tag", attrs); a;
+       a = lookup_attribute ("abi_tag", TREE_CHAIN (a)))
+    for (tree v = TREE_VALUE (a); v; v = TREE_CHAIN (v))
+      {
+	tree s = TREE_VALUE (v);
+	if (s && TREE_CODE (s) == STRING_CST
+	    && strcmp (TREE_STRING_POINTER (s), tag) == 0)
+	  return true;
+      }
+  return false;
+}
+
+/* Implement TARGET_INSERT_ATTRIBUTES.  The psABI tags a function using the
+   fixed-length vector calling convention with riscv_vls_cc_<ABI_VLEN>.  The
+   hook runs from decl_attributes before ATTRIBUTES is applied, so the
+   convention is looked for there as well as on the type and on the decl.  */
+
+static void
+riscv_insert_attributes (tree node, tree *attributes)
+{
+  if (!lang_GNU_CXX () || TREE_CODE (node) != FUNCTION_DECL)
+    return;
+
+  tree attr = riscv_lookup_vls_cc_attribute (*attributes);
+  if (!attr && TREE_TYPE (node))
+    attr = riscv_lookup_vls_cc_attribute (TYPE_ATTRIBUTES (TREE_TYPE (node)));
+  if (!attr)
+    attr = riscv_lookup_vls_cc_attribute (DECL_ATTRIBUTES (node));
+  if (!attr)
+    return;
+
+  riscv_cc cc = riscv_get_vls_cc_attr (TREE_VALUE (attr),
+				       /* check_only */ true);
+  if (!riscv_vls_cc_p (cc))
+    return;
+
+  char tag[sizeof ("riscv_vls_cc_") + 3 * sizeof (unsigned int)];
+  int len = snprintf (tag, sizeof (tag), "riscv_vls_cc_%u",
+		      riscv_get_cc_abi_vlen (cc));
+
+  if (riscv_abi_tag_present_p (*attributes, tag)
+      || riscv_abi_tag_present_p (DECL_ATTRIBUTES (node), tag))
+    return;
+
+  tree str = build_string (len + 1, tag);
+  /* check_abi_tag_args insists on a real narrow string literal type.  */
+  TREE_TYPE (str) = build_array_type (char_type_node,
+				      build_index_type (size_int (len)));
+
+  tree existing = lookup_attribute ("abi_tag", *attributes);
+  if (existing)
+    {
+      /* The list may be shared with other decls, so copy before touching it.  */
+      tree copy = copy_list (*attributes);
+      tree slot = lookup_attribute ("abi_tag", copy);
+      TREE_VALUE (slot) = chainon (copy_list (TREE_VALUE (slot)),
+				   build_tree_list (NULL_TREE, str));
+      *attributes = copy;
+    }
+  else
+    /* Attach it directly instead of through ATTRIBUTES: decl_attributes would
+       run handle_abi_tag_attribute, which rejects an extern "C" declaration,
+       and riscv_vls_cc on one is valid today.  */
+    DECL_ATTRIBUTES (node) = tree_cons (get_identifier ("abi_tag"),
+					build_tree_list (NULL_TREE, str),
+					DECL_ATTRIBUTES (node));
 }
 
 /* Implementation of TARGET_FNTYPE_ABI, but one extra parameter `check_only`
@@ -9228,13 +9311,9 @@ riscv_elf_select_rtx_section (machine_mode mode, rtx x,
 static void
 riscv_set_frame_expr (rtx frame_pattern)
 {
-  rtx insn;
-
-  insn = get_last_insn ();
+  rtx_insn *insn = get_last_insn ();
   RTX_FRAME_RELATED_P (insn) = 1;
-  REG_NOTES (insn) = alloc_EXPR_LIST (REG_FRAME_RELATED_EXPR,
-				      frame_pattern,
-				      REG_NOTES (insn));
+  add_reg_note (insn, REG_FRAME_RELATED_EXPR, frame_pattern);
 }
 
 /* Return a frame-related rtx that stores REG at MEM.
@@ -9815,7 +9894,7 @@ riscv_save_reg (rtx reg, rtx mem)
 static void
 riscv_restore_reg (rtx reg, rtx mem)
 {
-  rtx insn = riscv_emit_move (reg, mem);
+  rtx_insn *insn = riscv_emit_move (reg, mem);
   rtx dwarf = NULL_RTX;
   dwarf = alloc_reg_note (REG_CFA_RESTORE, reg, dwarf);
 
@@ -10030,7 +10109,7 @@ riscv_for_each_saved_v_reg (poly_int64 &remaining_size,
       else
 	{
 	  vlen = RISCV_PROLOGUE_TEMP (Pmode);
-	  rtx insn
+	  rtx_insn *insn
 	    = emit_move_insn (vlen, gen_int_mode (UNITS_PER_V_REG, Pmode));
 	  RTX_FRAME_RELATED_P (insn) = 1;
 	}
@@ -10049,7 +10128,7 @@ riscv_for_each_saved_v_reg (poly_int64 &remaining_size,
 	    bool handle_reg = !cfun->machine->reg_is_wrapped_separately[regno];
 	    if (handle_reg)
 	      {
-		rtx insn = NULL_RTX;
+		rtx_insn *insn = nullptr;
 		if (CONST_INT_P (vlen))
 		  {
 		    gcc_assert (SMALL_OPERAND (-INTVAL (vlen)));
@@ -10078,7 +10157,7 @@ riscv_for_each_saved_v_reg (poly_int64 &remaining_size,
 	    if (handle_reg)
 	      {
 		riscv_save_restore_reg (m1_mode, regno, 0, fn);
-		rtx insn = emit_insn (
+		rtx_insn *insn = emit_insn (
 		  gen_add3_insn (stack_pointer_rtx, stack_pointer_rtx, vlen));
 		gcc_assert (insn != NULL_RTX);
 		RTX_FRAME_RELATED_P (insn) = 1;
@@ -10278,7 +10357,7 @@ riscv_allocate_and_probe_stack_loop (rtx tmp, enum rtx_code code,
   tmp = riscv_force_temporary (tmp, gen_int_mode (offset, Pmode));
 
   /* Loop.  */
-  rtx label = gen_label_rtx ();
+  rtx_code_label *label = gen_label_rtx ();
   emit_label (label);
 
   /* Allocate and probe stack.  */
@@ -10305,7 +10384,8 @@ riscv_v_adjust_scalable_frame (rtx target, poly_int64 offset, bool epilogue)
 {
   rtx tmp = RISCV_PROLOGUE_TEMP (Pmode);
   rtx adjust_size = RISCV_PROLOGUE_TEMP2 (Pmode);
-  rtx insn, dwarf, adjust_frame_rtx;
+  rtx dwarf, adjust_frame_rtx;
+  rtx_insn *insn;
 
   riscv_legitimize_poly_move (Pmode, adjust_size, tmp,
 			      gen_int_mode (offset, Pmode));
@@ -10366,12 +10446,13 @@ riscv_v_adjust_scalable_frame (rtx target, poly_int64 offset, bool epilogue)
       return;
     }
 
+  rtx pat;
   if (epilogue)
-    insn = gen_add3_insn (target, target, adjust_size);
+    pat = gen_add3_insn (target, target, adjust_size);
   else
-    insn = gen_sub3_insn (target, target, adjust_size);
+    pat = gen_sub3_insn (target, target, adjust_size);
 
-  insn = emit_insn (insn);
+  insn = emit_insn (pat);
 
   RTX_FRAME_RELATED_P (insn) = 1;
 
@@ -10515,7 +10596,8 @@ riscv_allocate_and_probe_stack_space (rtx temp1, HOST_WIDE_INT size)
       /* Compute the ending address.  */
       rtx temp2 = gen_rtx_REG (Pmode, RISCV_PROLOGUE_TEMP2_REGNUM);
       temp2 = riscv_force_temporary (temp2, gen_int_mode (rounded_size, Pmode));
-      insn = emit_insn (gen_sub3_insn (temp2, stack_pointer_rtx, temp2));
+      rtx_insn *insn
+	= emit_insn (gen_sub3_insn (temp2, stack_pointer_rtx, temp2));
 
       /* The size does not represent actual stack pointer address shift
 	 from the top of the frame, as it might be lowered before.
@@ -10816,7 +10898,7 @@ static void
 riscv_gen_multi_pop_insn (bool use_popret, unsigned mask,
 			  unsigned multipop_size)
 {
-  rtx insn;
+  rtx_insn *insn;
   unsigned regs_count = riscv_multi_push_regs_count (mask);
 
   if (!use_popret)
@@ -10863,7 +10945,7 @@ riscv_expand_epilogue (int style)
   rtx ra = gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM);
   rtx t0 = gen_rtx_REG (Pmode, RISCV_PROLOGUE_TEMP_REGNUM);
   unsigned th_int_mask = 0;
-  rtx insn;
+  rtx_insn *insn;
 
   /* Avoid referencing an unused frame pointer.  */
   rtx stack_tie_reg = frame_pointer_needed
@@ -14584,7 +14666,7 @@ riscv_builtin_vectorization_cost (enum vect_cost_for_stmt type_of_cost,
       return costs->cond_not_taken_branch_cost;
 
     case vec_perm:
-      return common_costs->permute_cost;
+      return common_costs->permute_cost[LMUL_1];
 
     case vec_promote_demote:
       return fp ? common_costs->fp_stmt_cost : common_costs->int_stmt_cost;
@@ -15056,23 +15138,39 @@ riscv_expand_ustrunc (rtx dest, rtx src)
   gcc_assert (precision < 64);
 
   uint64_t max = ((uint64_t)1u << precision) - 1u;
-  rtx xmode_src = riscv_extend_to_xmode_reg (src, GET_MODE (src), ZERO_EXTEND);
   rtx xmode_dest = gen_reg_rtx (Xmode);
-  rtx xmode_lt = gen_reg_rtx (Xmode);
 
   /* Step-1: max = half truncated max  */
   emit_move_insn (xmode_max, gen_int_mode (max, Xmode));
 
-  /* Step-2: lt = src < max  */
-  riscv_emit_binary (LTU, xmode_lt, xmode_src, xmode_max);
+  /* When possible, emit UMIN based sequence.  It's inherently smaller and more
+     and by being smaller may allow combine to work better as a bonus.  */
+  if (TARGET_ZBB)
+    {
+      machine_mode smode = GET_MODE (src);
+      rtx xmode_src
+	= riscv_extend_to_xmode_reg (src, smode,
+				     (smode == SImode
+				      ? SIGN_EXTEND
+				      : ZERO_EXTEND));
+      riscv_emit_binary (UMIN, xmode_dest, xmode_src, xmode_max);
+    }
+  else
+    {
+      rtx xmode_src = riscv_extend_to_xmode_reg (src, GET_MODE (src), ZERO_EXTEND);
+      rtx xmode_lt = gen_reg_rtx (Xmode);
 
-  /* Step-3: lt = lt - 1  */
-  riscv_emit_binary (PLUS, xmode_lt, xmode_lt, CONSTM1_RTX (Xmode));
+      /* Step-2: lt = src < max  */
+      riscv_emit_binary (LTU, xmode_lt, xmode_src, xmode_max);
 
-  /* Step-4: xmode_dest = lt | src  */
-  riscv_emit_binary (IOR, xmode_dest, xmode_lt, xmode_src);
+      /* Step-3: lt = lt - 1  */
+      riscv_emit_binary (PLUS, xmode_lt, xmode_lt, CONSTM1_RTX (Xmode));
 
-  /* Step-5: dest = xmode_dest  */
+      /* Step-4: xmode_dest = lt | src  */
+      riscv_emit_binary (IOR, xmode_dest, xmode_lt, xmode_src);
+    }
+
+  /* Final: dest = xmode_dest  */
   emit_move_insn (dest, gen_lowpart (mode, xmode_dest));
 }
 
@@ -16790,7 +16888,7 @@ synthesize_add (rtx operands[3])
 	  shcount = 3;
 	}
 
-      if (shcount != 0)
+      if (shcount != 0 && can_create_pseudo_p ())
 	{
 	  rtx x = force_reg (word_mode, GEN_INT (sext_hwi (ival >> shcount, 32)));
 	  x = gen_rtx_ASHIFT (word_mode, x, GEN_INT (shcount));
@@ -16814,7 +16912,8 @@ synthesize_add (rtx operands[3])
 	   || ((ival % 4) == 0 && budget1
 	       > riscv_integer_cost (ival >> 2, true))
 	   || ((ival % 8) == 0 && budget1
-	       > riscv_integer_cost (ival >> 3, true))))
+	       > riscv_integer_cost (ival >> 3, true)))
+      && can_create_pseudo_p ())
     {
       // Load the shifted constant into a temporary
       int shct = ctz_hwi (ival);
@@ -16840,7 +16939,8 @@ synthesize_add (rtx operands[3])
      then synthesize C' and use add.uw.  */
   if ((TARGET_64BIT && TARGET_ZBA)
       && (ival & HOST_WIDE_INT_UC (0xffffffff00000000)) == 0
-      && riscv_integer_cost (sext_hwi (ival, 32), true) < budget1)
+      && riscv_integer_cost (sext_hwi (ival, 32), true) < budget1
+      && can_create_pseudo_p ())
     {
       /* Load the sign extended constant into a temporary.  */
       rtx tempreg = force_reg (word_mode, GEN_INT (sext_hwi (ival, 32)));
@@ -16855,7 +16955,7 @@ synthesize_add (rtx operands[3])
 
   /* If the negated constant is cheaper than the original, then negate
      the constant and use sub.  */
-  if (budget2 < budget1)
+  if (budget2 < budget1 && can_create_pseudo_p ())
     {
       // load -INTVAL (operands[2]) into a temporary
       rtx tmp = force_reg (word_mode, GEN_INT (-INTVAL (operands[2])));
@@ -16867,11 +16967,33 @@ synthesize_add (rtx operands[3])
     }
 
   /* No add synthesis was found.  Synthesize the constant into
-     a temporary and use that.  */
-  rtx x = force_reg (word_mode, operands[2]);
-  x = gen_rtx_PLUS (word_mode, operands[1], x);
-  emit_insn (gen_rtx_SET (operands[0], x));
-  return true;
+     a temporary and use that.  Reassociate so that the addi can
+     trivially merge into a subsequent memory reference.  This will
+     spoil fusion, but the merge seems more valuable.  */
+  if (can_create_pseudo_p ())
+    {
+      /* The full offset.  */
+      HOST_WIDE_INT offset = INTVAL (operands[2]);
+
+      /* Get the upper bits into a temporary register and add that
+	 to operands[1], storing the result in another temporary. */
+      rtx temp1 = gen_reg_rtx (word_mode);
+      rtx high = gen_int_mode (CONST_HIGH_PART (offset), word_mode);
+      high = riscv_force_temporary (temp1, high);
+
+      /* Now add the temporary to operands[1], storing the result in
+	 a new temporary.  */
+      rtx temp2 = gen_reg_rtx (word_mode);
+      rtx x = gen_rtx_PLUS (word_mode, operands[1], high);
+      emit_insn (gen_rtx_SET (temp2, x));
+
+      /* And finally add the low bits as the last step.  This combines
+	 trivially with memory references.  */
+      x = plus_constant (word_mode, temp2, CONST_LOW_PART (offset));
+      emit_insn (gen_rtx_SET (operands[0], x));
+      return true;
+    }
+  return false;
 }
 
 /*  Synthesize OPERANDS[0] = OPERANDS[1] + OPERANDS[2].
@@ -17009,6 +17131,38 @@ riscv_can_tag_addresses ()
 				   || TARGET_SSPM
 				   || TARGET_SUPM;
   return TARGET_64BIT && target_has_pointer_masking_p;
+}
+
+/* Implement TARGET_UNSPEC_MAY_TRAP_P.  */
+
+static int
+riscv_unspec_may_trap_p (const_rtx x, unsigned flags)
+{
+  /* The default implementation catches things with an FP mode on the UNSPEC.
+     Thus we don't need to list all those.  We can focus on cases where the
+     UNSPEC has no mode or an integer/vector mode.  */
+  switch (XINT (x, 1))
+    {
+    case UNSPEC_LRINT:
+    case UNSPEC_ROUND:
+    case UNSPEC_FLOOR:
+    case UNSPEC_CEIL:
+    case UNSPEC_BTRUNC:
+    case UNSPEC_ROUNDEVEN:
+    case UNSPEC_NEARBYINT:
+    case UNSPEC_FLT_QUIET:
+    case UNSPEC_FLE_QUIET:
+    case UNSPEC_VFCVT:
+    case UNSPEC_UNSIGNED_VFCVT:
+      /* If FLAG_TRAPPING_MATH is active, then these potentially trap, otherwise
+	 fall into the default case.  */
+      if (flag_trapping_math)
+	return 1;
+    default:
+      break;
+    }
+
+  return default_unspec_may_trap_p (x, flags);
 }
 
 
@@ -17301,6 +17455,9 @@ riscv_memtag_tag_bitsize ()
 #undef TARGET_MANGLE_TYPE
 #define TARGET_MANGLE_TYPE riscv_mangle_type
 
+#undef TARGET_INSERT_ATTRIBUTES
+#define TARGET_INSERT_ATTRIBUTES riscv_insert_attributes
+
 #undef TARGET_SCALAR_MODE_SUPPORTED_P
 #define TARGET_SCALAR_MODE_SUPPORTED_P riscv_scalar_mode_supported_p
 
@@ -17466,6 +17623,9 @@ riscv_memtag_tag_bitsize ()
 
 #undef TARGET_MEMTAG_TAG_BITSIZE
 #define TARGET_MEMTAG_TAG_BITSIZE riscv_memtag_tag_bitsize
+
+#undef TARGET_UNSPEC_MAY_TRAP_P
+#define TARGET_UNSPEC_MAY_TRAP_P riscv_unspec_may_trap_p
 
 #undef TARGET_DOCUMENTATION_NAME
 #define TARGET_DOCUMENTATION_NAME "RISC-V"

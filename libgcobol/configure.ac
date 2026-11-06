@@ -24,7 +24,7 @@
 
 AC_INIT(package-unused, version-unused,,libgcobol)
 AC_CONFIG_SRCDIR(Makefile.am)
-AC_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS([config.h])
 
 AC_CONFIG_MACRO_DIRS([m4])
 
@@ -76,9 +76,7 @@ AC_CHECK_TOOL(RANLIB, ranlib, ranlib-not-found-in-path-error)
 AC_PROG_MAKE_SET
 AC_PROG_INSTALL
 
-LT_INIT
-
-AC_LIBTOOL_DLOPEN
+LT_INIT([dlopen])
 LT_LIB_M
 
 AM_CONDITIONAL([ENABLE_DARWIN_AT_RPATH], [test x$enable_darwin_at_rpath = xyes])

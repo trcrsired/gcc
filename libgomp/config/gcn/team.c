@@ -80,7 +80,7 @@ gomp_gcn_enter_kernel (void)
       struct kernargs_abi *kernargs =
 	(struct kernargs_abi*) __builtin_gcn_kernarg_ptr ();
       void *team_arena = ((void*)kernargs->arena_ptr
-			  + kernargs->arena_size_per_team * teamid);
+			  + (size_t) kernargs->arena_size_per_team * teamid);
       void * __lds *arena_start = (void * __lds *)TEAM_ARENA_START;
       void * __lds *arena_free = (void * __lds *)TEAM_ARENA_FREE;
       void * __lds *arena_end = (void * __lds *)TEAM_ARENA_END;
@@ -110,6 +110,7 @@ gomp_gcn_enter_kernel (void)
       pool->threads_used = numthreads;
       pool->threads_busy = 1;
       pool->last_team = NULL;
+      pool->prev_barrier = NULL;
       gomp_simple_barrier_init (&pool->threads_dock, numthreads);
       thrs->thread_pool = pool;
 
@@ -205,7 +206,7 @@ gomp_thread_start (struct gomp_thread_pool *pool)
       thr->fn = NULL;
 
       struct gomp_task *task = thr->task;
-      gomp_team_barrier_wait_final (&thr->ts.team->barrier);
+      gomp_team_barrier_wait_final (&thr->ts.team->barrier, thr->ts.team_id);
       gomp_finish_task (task);
     }
   while (1);

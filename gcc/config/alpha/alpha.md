@@ -4589,7 +4589,7 @@
     emit_move_insn (areg, addr);
   emit_move_insn (aligned_addr, gen_rtx_AND (DImode, areg, GEN_INT (-8)));
 
-  rtx label = gen_label_rtx ();
+  rtx_code_label *label = gen_label_rtx ();
   emit_label (label);
   LABEL_NUSES (label) = 1;
 
@@ -4601,7 +4601,7 @@
 
   rtx label_ref = gen_rtx_LABEL_REF (DImode, label);
   rtx cond = gen_rtx_EQ (DImode, status, const0_rtx);
-  rtx jump = alpha_emit_unlikely_jump (cond, label_ref);
+  rtx_insn *jump = alpha_emit_unlikely_jump (cond, label_ref);
   JUMP_LABEL (jump) = label;
 
   cfun->split_basic_blocks_after_reload = 1;
@@ -4643,7 +4643,7 @@
   get_aligned_mem (operands[0], &aligned_mem, &bitnum);
   if (TARGET_SAFE_BWA)
     {
-      rtx label = gen_label_rtx ();
+      rtx_code_label *label = gen_label_rtx ();
       emit_label (label);
       LABEL_NUSES (label) = 1;
 
@@ -4655,7 +4655,7 @@
       rtx label_ref = gen_rtx_LABEL_REF (DImode, label);
       rtx cond = gen_rtx_EQ (DImode, gen_rtx_SUBREG (DImode, status, 0),
 			     const0_rtx);
-      rtx jump = alpha_emit_unlikely_jump (cond, label_ref);
+      rtx_insn *jump = alpha_emit_unlikely_jump (cond, label_ref);
       JUMP_LABEL (jump) = label;
 
       cfun->split_basic_blocks_after_reload = 1;

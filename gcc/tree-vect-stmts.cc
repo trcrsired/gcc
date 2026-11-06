@@ -4051,8 +4051,8 @@ vect_simd_lane_linear (tree op, class loop *loop,
 	  arginfo->linear_step = linear_step;
 	  arginfo->op = base;
 	  arginfo->simd_lane_linear = true;
-	  return;
 	}
+      return;
     }
 }
 
@@ -4741,7 +4741,7 @@ vectorizable_simd_clone_call (vec_info *vinfo, stmt_vec_info stmt_info,
 			      tree loop_mask
 				= vect_get_loop_mask (loop_vinfo, gsi,
 						      loop_masks, ncopies_in,
-						      vectype, j);
+						      vectype, m);
 			      vec_oprnd0
 				= prepare_vec_mask (loop_vinfo,
 						    TREE_TYPE (loop_mask),
@@ -4802,7 +4802,7 @@ vectorizable_simd_clone_call (vec_info *vinfo, stmt_vec_info stmt_info,
 			      tree loop_mask
 				= vect_get_loop_mask (loop_vinfo, gsi,
 						      loop_masks, ncopies_in,
-						      vectype, j);
+						      vectype, m);
 			      vec_oprnd0
 				= prepare_vec_mask (loop_vinfo,
 						    TREE_TYPE (loop_mask),
@@ -8552,9 +8552,7 @@ vectorizable_store (vec_info *vinfo,
 	  if (!VECTOR_MODE_P (TYPE_MODE (vectype))
 	      || !related_vector_mode (TYPE_MODE (vectype), elmode,
 				       n).exists (&vmode)
-	      || (convert_optab_handler (vec_extract_optab,
-					 TYPE_MODE (vectype), vmode)
-		  == CODE_FOR_nothing)
+	      || can_vec_extract (TYPE_MODE (vectype), vmode) != vmode
 	      || !(dr_align == dr_aligned
 		   || dr_align == dr_unaligned_supported))
 	    {
@@ -8572,9 +8570,7 @@ vectorizable_store (vec_info *vinfo,
 		  && VECTOR_MODE_P (TYPE_MODE (vectype))
 		  && related_vector_mode (TYPE_MODE (vectype), elmode,
 					  lnunits).exists (&vmode)
-		  && (convert_optab_handler (vec_extract_optab,
-					     vmode, elmode)
-		      != CODE_FOR_nothing))
+		  && can_vec_extract (vmode, elmode).exists ())
 		{
 		  nstores = lnunits;
 		  lnel = n;

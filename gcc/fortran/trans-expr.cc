@@ -1966,7 +1966,10 @@ trans_scalar_class_assign (stmtblock_t *block, gfc_se *lse, gfc_se *rse)
   if (!GFC_CLASS_TYPE_P (TREE_TYPE (rse->expr))
       || not_call_expr)
     {
-      tmp = gfc_get_class_from_expr (rse->expr);
+      if (rse->class_container != NULL_TREE)
+	tmp = rse->class_container;
+      else
+	tmp = gfc_get_class_from_expr (rse->expr);
       if (tmp == NULL_TREE)
 	return false;
       rse_expr = gfc_evaluate_now (tmp, block);
@@ -1982,11 +1985,6 @@ trans_scalar_class_assign (stmtblock_t *block, gfc_se *lse, gfc_se *rse)
     class_data = gfc_conv_descriptor_data_get (class_data);
   class_data = gfc_evaluate_now (class_data, block);
 
-  zero = build_int_cst (TREE_TYPE (class_data), 0);
-  cond = fold_build2_loc (input_location, NE_EXPR,
-			  logical_type_node,
-			  class_data, zero);
-
   /* Copy the rhs to the lhs.  */
   fcn = gfc_vptr_copy_get (gfc_class_vptr_get (rse_expr));
   fcn = build_fold_indirect_ref_loc (input_location, fcn);
@@ -1999,6 +1997,11 @@ trans_scalar_class_assign (stmtblock_t *block, gfc_se *lse, gfc_se *rse)
   /* Only elemental function results need to be finalised and freed.  */
   if (not_call_expr)
     return true;
+
+  zero = build_int_cst (TREE_TYPE (class_data), 0);
+  cond = fold_build2_loc (input_location, NE_EXPR,
+			  logical_type_node,
+			  class_data, zero);
 
   /* Finalize the class data if needed.  */
   gfc_init_block (&inner_block);
@@ -3187,6 +3190,7 @@ gfc_conv_variable (gfc_se * se, gfc_expr * expr)
 		    && ref->u.ar.type != AR_ELEMENT);
       else
 	gfc_conv_tmp_array_ref (se);
+      se->class_container = ss_info->class_container;
     }
   else
     {

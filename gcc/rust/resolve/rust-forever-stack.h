@@ -406,8 +406,9 @@ class ResolutionPath
 {
 public:
   template <typename T>
-  ResolutionPath (const std::vector<T> &segments_in, NodeId node_id)
-    : node_id (node_id)
+  ResolutionPath (const std::vector<T> &segments_in,
+		  bool opening_scope_resolution, NodeId node_id)
+    : opening_scope_resolution (opening_scope_resolution), node_id (node_id)
   {
     segments.clear ();
     segments.reserve (segments_in.size ());
@@ -431,7 +432,8 @@ public:
       }
   }
 
-  ResolutionPath () : node_id (UNKNOWN_NODEID) {}
+  ResolutionPath () : opening_scope_resolution (false), node_id (UNKNOWN_NODEID)
+  {}
 
   struct Segment
   {
@@ -452,21 +454,34 @@ public:
 
   const std::vector<Segment> &get_segments () const { return segments; }
 
+  bool has_opening_scope_resolution () const
+  {
+    return opening_scope_resolution;
+  }
+
   NodeId get_node_id () const { return node_id; }
 
   std::string as_string () const
   {
     std::string ret;
+    auto it = segments.cbegin ();
     if (lang_prefix)
-      ret = "#[lang]::";
-    for (auto &seg : segments)
-      ret += "::" + seg.name;
+      ret = "#[lang]";
+    else
+      {
+	ret += it->name;
+	it++;
+      }
+
+    for (; it != segments.cend (); it++)
+      ret += "::" + it->name;
     return ret;
   }
 
 private:
   tl::optional<std::pair<LangItem::Kind, NodeId>> lang_prefix;
   std::vector<Segment> segments;
+  bool opening_scope_resolution;
   NodeId node_id;
 };
 
@@ -771,7 +786,7 @@ public:
   Node &find_closest_module (Node &starting_point);
 
   tl::optional<SegIterator>
-  find_starting_point (const std::vector<ResolutionPath::Segment> &segments,
+  find_starting_point (const UtilPath<ResolutionPath::Segment> &path,
 		       std::reference_wrapper<Node> &starting_point,
 		       std::function<void (Usage, Definition, Namespace)>
 			 insert_segment_resolution,

@@ -3187,10 +3187,10 @@ ix86_expand_fp_spaceship (rtx dest, rtx op0, rtx op1, rtx op2)
       && GET_MODE (dest) == SImode)
     zero = force_reg (SImode, const0_rtx);
   rtx gt = ix86_expand_fp_compare (GT, op0, op1);
-  rtx l0 = op2 == const0_rtx ? gen_label_rtx () : NULL_RTX;
-  rtx l1 = op2 == const0_rtx ? gen_label_rtx () : NULL_RTX;
-  rtx l2 = TARGET_IEEE_FP ? gen_label_rtx () : NULL_RTX;
-  rtx lend = gen_label_rtx ();
+  rtx_code_label *l0 = op2 == const0_rtx ? gen_label_rtx () : nullptr;
+  rtx_code_label *l1 = op2 == const0_rtx ? gen_label_rtx () : nullptr;
+  rtx_code_label *l2 = TARGET_IEEE_FP ? gen_label_rtx () : nullptr;
+  rtx_code_label *lend = gen_label_rtx ();
   rtx tmp;
   rtx_insn *jmp;
   if (l2)
@@ -4765,6 +4765,43 @@ ix86_expand_fp_movcc (rtx operands[])
 						operands[2], operands[3])));
 
   return true;
+}
+
+/* Expand a conditional fma: operands[0] = operands[1]
+   ? fma (operands[2], operands[3], operands[4]) : operands[5].  */
+
+void
+ix86_expand_cond_fma (rtx operands[], bool neg_mult, bool neg_add)
+{
+  machine_mode mode = GET_MODE (operands[0]);
+  rtx mask = operands[1];
+  rtx op1 = operands[2], op2 = operands[3], op3 = operands[4];
+  rtx op4 = operands[5];
+  rtx tmp, fma;
+
+  /* The multiplication is commutative, so an else value equal to the
+     second operand for mult can be merged just like first operand
+     after swapping.  */
+  if (rtx_equal_p (op4, op2))
+    std::swap (op1, op2);
+
+  fma = gen_rtx_FMA (mode, neg_mult ? gen_rtx_NEG (mode, op1) : op1,
+		     op2, neg_add ? gen_rtx_NEG (mode, op3) : op3);
+
+  /* Do not emit an extra move.  */
+  if (rtx_equal_p (op4, op1)
+      || rtx_equal_p (op4, op3)
+      || op4 == CONST0_RTX (mode))
+    {
+      emit_insn (gen_rtx_SET (operands[0],
+			      gen_rtx_VEC_MERGE (mode, fma, op4, mask)));
+      return;
+    }
+
+  tmp = gen_reg_rtx (mode);
+  emit_insn (gen_rtx_SET (tmp, gen_rtx_VEC_MERGE (mode, fma,
+						  CONST0_RTX (mode), mask)));
+  emit_move_insn (operands[0], gen_rtx_VEC_MERGE (mode, tmp, op4, mask));
 }
 
 /* Helper for ix86_cmp_code_to_pcmp_immediate for int modes.  */
@@ -15002,8 +15039,8 @@ ix86_check_builtin_isa_match (unsigned int fcode,
      (OPTION_MASK_ISA_AVX512VL | OPTION_MASK_ISA2_AVX512BF16) or
        OPTION_MASK_ISA2_AVXNECONVERT
      OPTION_MASK_ISA_AES or (OPTION_MASK_ISA_AVX512VL | OPTION_MASK_ISA2_VAES)
-     OPTION_MASK_ISA2_AVX10_2 or OPTION_MASK_ISA2_AVXVNNIINT8
-     OPTION_MASK_ISA2_AVX10_2 or OPTION_MASK_ISA2_AVXVNNIINT16
+     OPTION_MASK_ISA2_AVX10V1AUX or OPTION_MASK_ISA2_AVXVNNIINT8
+     OPTION_MASK_ISA2_AVX10V1AUX or OPTION_MASK_ISA2_AVXVNNIINT16
      OPTION_MASK_ISA2_AMX_TILE or OPTION_MASK_ISA2_ACEV1
      where for each such pair it is sufficient if either of the ISAs is
      enabled, plus if it is ored with other options also those others.
@@ -15031,9 +15068,9 @@ ix86_check_builtin_isa_match (unsigned int fcode,
   SHARE_BUILTIN (OPTION_MASK_ISA_AES, 0, OPTION_MASK_ISA_AVX512VL,
 		 OPTION_MASK_ISA2_VAES);
   SHARE_BUILTIN (0, OPTION_MASK_ISA2_AVXVNNIINT8, 0,
-		 OPTION_MASK_ISA2_AVX10_2);
+		 OPTION_MASK_ISA2_AVX10V1AUX);
   SHARE_BUILTIN (0, OPTION_MASK_ISA2_AVXVNNIINT16, 0,
-		 OPTION_MASK_ISA2_AVX10_2);
+		 OPTION_MASK_ISA2_AVX10V1AUX);
   SHARE_BUILTIN (0, OPTION_MASK_ISA2_AMX_TILE, 0, OPTION_MASK_ISA2_ACEV1);
   isa = tmp_isa;
   isa2 = tmp_isa2;
@@ -30524,10 +30561,10 @@ ix86_expand_vector_bf2sf_with_vec_perm (rtx dest, rtx src)
   emit_move_insn (dest, lowpart_subreg (GET_MODE (dest), target, vperm_mode));
 }
 
-/* Implement bitreverse<mode>2 using gf2p8affineqb.  */
+/* Implement bitreverse<mode>2 using vbitrevb or gf2p8affineqb.  */
 
 void
-ix86_expand_gfni_bitreverse (rtx dest, rtx src)
+ix86_expand_bitreverse (rtx dest, rtx src)
 {
   machine_mode mode = GET_MODE (dest);
   rtx temp;
@@ -30574,18 +30611,24 @@ ix86_expand_gfni_bitreverse (rtx dest, rtx src)
     }
   src = temp;
   temp = gen_reg_rtx (V16QImode);
-  rtx src2 = gen_rtx_CONST_VECTOR (V16QImode,
-				   gen_rtvec (16, GEN_INT (1), GEN_INT (2),
-					      GEN_INT (4), GEN_INT (8),
-					      GEN_INT (16), GEN_INT (32),
-					      GEN_INT (64), GEN_INT (-128),
-					      GEN_INT (1), GEN_INT (2),
-					      GEN_INT (4), GEN_INT (8),
-					      GEN_INT (16), GEN_INT (32),
-					      GEN_INT (64), GEN_INT (-128)));
-  src2 = validize_mem (force_const_mem (V16QImode, src2));
   src = lowpart_subreg (V16QImode, src, GET_MODE (src));
-  emit_insn (gen_vgf2p8affineqb_v16qi (temp, src, src2, const0_rtx));
+  if (TARGET_AVX512BMM && TARGET_AVX512VL)
+    emit_insn (gen_avx512bmm_vbitrevb_v16qi (temp, src));
+  else if (TARGET_GFNI)
+    {
+      rtx src2 = gen_rtx_CONST_VECTOR (V16QImode,
+				       gen_rtvec (16, GEN_INT (1), GEN_INT (2),
+						  GEN_INT (4), GEN_INT (8),
+						  GEN_INT (16), GEN_INT (32),
+						  GEN_INT (64), GEN_INT (-128),
+						  GEN_INT (1), GEN_INT (2),
+						  GEN_INT (4), GEN_INT (8),
+						  GEN_INT (16), GEN_INT (32),
+						  GEN_INT (64),
+						  GEN_INT (-128)));
+      src2 = validize_mem (force_const_mem (V16QImode, src2));
+      emit_insn (gen_vgf2p8affineqb_v16qi (temp, src, src2, const0_rtx));
+    }
   if (mode == QImode)
     {
       rtx temp1 = gen_reg_rtx (SImode);

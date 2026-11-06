@@ -2949,7 +2949,7 @@ int
 avr_jump_mode (rtx x, rtx_insn *insn, int extra)
 {
   int dest_addr = INSN_ADDRESSES (INSN_UID (GET_CODE (x) == LABEL_REF
-					    ? XEXP (x, 0) : x));
+					    ? label_ref_label (x) : x));
   int cur_addr = INSN_ADDRESSES (INSN_UID (insn));
   int jump_distance = cur_addr - dest_addr;
 
@@ -14564,7 +14564,7 @@ bool
 jump_over_one_insn_p (rtx_insn *insn, rtx dest)
 {
   int uid = INSN_UID (GET_CODE (dest) == LABEL_REF
-		      ? XEXP (dest, 0)
+		      ? label_ref_label (dest)
 		      : dest);
   int jump_addr = INSN_ADDRESSES (INSN_UID (insn));
   int dest_addr = INSN_ADDRESSES (uid);
@@ -15175,7 +15175,7 @@ avr_emit_skip_pixop (rtx_code pix, rtx dest, rtx op0, rtx op1,
   emit_move_insn (dest, op0);
 
   // Skip if bits.bitno <eqne> bitno.
-  rtx xlabel = gen_label_rtx ();
+  rtx_code_label *xlabel = gen_label_rtx ();
   rtx zerox = gen_rtx_ZERO_EXTRACT (QImode, bits, const1_rtx, GEN_INT (bitno));
   rtx cond = gen_rtx_fmt_ee (eqne, VOIDmode, zerox, const0_rtx);
   emit (gen_sbrx_branchqi_split (cond, bits, const0_rtx, xlabel));
@@ -15220,7 +15220,7 @@ avr_emit_skip_clear (rtx dest, rtx src, rtx_code eqne, rtx bits, int bitno)
   emit_move_insn (dest, src);
 
   // Skip if bits.bitno <eqne> bitno.
-  rtx xlabel = gen_label_rtx ();
+  rtx_code_label *xlabel = gen_label_rtx ();
   rtx zerox = gen_rtx_ZERO_EXTRACT (QImode, bits, const1_rtx, GEN_INT (bitno));
   rtx cond = gen_rtx_fmt_ee (eqne, VOIDmode, zerox, const0_rtx);
   emit (gen_sbrx_branchqi_split (cond, bits, const0_rtx, xlabel));

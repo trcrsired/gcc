@@ -347,6 +347,7 @@ struct GTY((desc("0"), tag("0"),
      1 in a CONCAT is VAL_EXPR_IS_CLOBBERED in var-tracking.cc.
      1 in a preserved VALUE is PRESERVED_VALUE_P in cselib.cc.
      1 in a clobber temporarily created for LRA.
+     1 in an ADDR_VEC or ADDR_DIFF_VEC for a shared jump table.
      Dumped as "/u" in RTL dumps.  */
   unsigned int unchanging : 1;
   /* 1 in a MEM or ASM_OPERANDS expression if the memory reference is volatile.
@@ -2749,6 +2750,14 @@ do {								        \
 #define LABEL_PRESERVE_P(RTX)						\
   (RTL_FLAG_CHECK2 ("LABEL_PRESERVE_P", (RTX), CODE_LABEL, NOTE)->in_struct)
 
+/* 1 if RTX is the pattern of a jump table that has been shared by two jump
+   instructions.  The flag is sticky even if one is later removed.  The table
+   entries must not be edited in place: redirecting one dispatch would
+   silently redirect all the others.  */
+#define JUMP_TABLE_SHARED_P(RTX)					\
+  (RTL_FLAG_CHECK2 ("JUMP_TABLE_SHARED_P", (RTX), ADDR_VEC,		\
+		    ADDR_DIFF_VEC)->unchanging)
+
 /* During sched, 1 if RTX is an insn that must be scheduled together
    with the preceding insn.  */
 #define SCHED_GROUP_P(RTX)						\
@@ -3450,7 +3459,7 @@ extern rtx_insn *emit_clobber (rtx);
 extern rtx_insn *gen_use (rtx);
 extern rtx_insn *emit_use (rtx);
 extern rtx_insn *make_insn_raw (rtx);
-extern void add_function_usage_to (rtx, rtx);
+extern void add_function_usage_to (rtx_insn *, rtx);
 extern rtx_call_insn *last_call_insn (void);
 extern rtx_insn *previous_insn (rtx_insn *);
 extern rtx_insn *next_insn (rtx_insn *);
@@ -3753,14 +3762,14 @@ extern void note_stores (const rtx_insn *,
 extern void note_uses (rtx *, void (*) (rtx *, void *), void *);
 extern bool dead_or_set_p (const rtx_insn *, const_rtx);
 extern bool dead_or_set_regno_p (const rtx_insn *, unsigned int);
-extern rtx find_reg_note (const_rtx, enum reg_note, const_rtx);
-extern rtx find_regno_note (const_rtx, enum reg_note, unsigned int);
-extern rtx find_reg_equal_equiv_note (const_rtx);
+extern rtx find_reg_note (const rtx_insn *, enum reg_note, const_rtx);
+extern rtx find_regno_note (const rtx_insn *, enum reg_note, unsigned int);
+extern rtx find_reg_equal_equiv_note (const rtx_insn *);
 extern rtx find_constant_src (const rtx_insn *);
-extern bool find_reg_fusage (const_rtx, enum rtx_code, const_rtx);
-extern bool find_regno_fusage (const_rtx, enum rtx_code, unsigned int);
+extern bool find_reg_fusage (const rtx_insn *, enum rtx_code, const_rtx);
+extern bool find_regno_fusage (const rtx_insn *, enum rtx_code, unsigned int);
 extern rtx alloc_reg_note (enum reg_note, rtx, rtx);
-extern void add_reg_note (rtx, enum reg_note, rtx);
+extern void add_reg_note (rtx_insn *, enum reg_note, rtx);
 extern void add_int_reg_note (rtx_insn *, enum reg_note, int);
 extern void add_args_size_note (rtx_insn *, poly_int64);
 extern void add_shallow_copy_of_reg_note (rtx_insn *, rtx);
@@ -3774,18 +3783,21 @@ extern bool volatile_insn_p (const_rtx);
 extern bool may_trap_p_1 (const_rtx, unsigned);
 extern bool may_trap_p (const_rtx);
 extern bool may_trap_or_fault_p (const_rtx);
-extern bool can_throw_internal (const_rtx);
-extern bool can_throw_external (const_rtx);
-extern bool insn_could_throw_p (const_rtx);
-extern bool insn_nothrow_p (const_rtx);
+extern bool can_throw_internal (const rtx_insn *);
+extern bool can_throw_external (const rtx_insn *);
+extern bool insn_could_throw_p (const rtx_insn *);
+extern bool insn_nothrow_p (const rtx_insn *);
 extern bool can_nonlocal_goto (const rtx_insn *);
-extern void copy_reg_eh_region_note_forward (rtx, rtx_insn *, rtx);
-extern void copy_reg_eh_region_note_backward (rtx, rtx_insn *, rtx);
+extern void copy_reg_eh_region_note_forward (rtx, rtx_insn *, rtx_insn *);
+extern void copy_reg_eh_region_note_backward (rtx, rtx_insn *, rtx_insn *);
 extern rtx replace_rtx (rtx, rtx, rtx, bool = false);
 extern void replace_label (rtx *, rtx_insn *, rtx_insn *, bool);
 extern void replace_label_in_insn (rtx_insn *, rtx_insn *, rtx_insn *, bool);
 extern bool rtx_referenced_p (const_rtx, const_rtx);
 extern bool tablejump_p (const rtx_insn *, rtx_insn **, rtx_jump_table_data **);
+extern bool shared_tablejump_p (const rtx_insn *, rtx_insn **,
+				rtx_jump_table_data **);
+extern void verify_jump_tables (void);
 extern rtx tablejump_casesi_pattern (const rtx_insn *insn);
 extern bool computed_jump_p (const rtx_insn *);
 extern bool tls_referenced_p (const_rtx);
@@ -4696,7 +4708,8 @@ extern location_t curr_insn_location (void);
 extern void set_insn_locations (rtx_insn *, location_t);
 
 /* rtl-error.cc */
-extern void _fatal_insn_not_found (const_rtx, const char *, int, const char *)
+extern void _fatal_insn_not_found (const rtx_insn *, const char *, int,
+				   const char *)
      ATTRIBUTE_NORETURN ATTRIBUTE_COLD;
 extern void _fatal_insn (const char *, const_rtx, const char *, int, const char *)
      ATTRIBUTE_NORETURN ATTRIBUTE_COLD;

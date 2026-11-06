@@ -291,9 +291,9 @@ nds32_pic_tls_group (rtx_insn *def_insn,
 }
 
 static int
-nds32_pic_tls_symbol_type (rtx x)
+nds32_pic_tls_symbol_type (rtx_insn *insn)
 {
-  x = XEXP (SET_SRC (PATTERN (x)), 1);
+  rtx x = XEXP (SET_SRC (PATTERN (insn)), 1);
 
   if (GET_CODE (x) == CONST)
     {
@@ -389,7 +389,7 @@ nds32_group_insns (rtx_insn *sethi)
 /* Convert relax group id in rtl.  */
 
 static void
-nds32_group_tls_insn (rtx insn)
+nds32_group_tls_insn (rtx_insn *insn)
 {
   rtx pat = PATTERN (insn);
   rtx unspec_relax_group = XEXP (XVECEXP (pat, 0, 1), 0);

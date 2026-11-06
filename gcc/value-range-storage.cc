@@ -883,6 +883,88 @@ prange_storage::fits_p (const prange &r) const
   return num_words <= m_trailing_ints.num_elements ();
 }
 
+// Ensure this range of type TYPE does not contain zero.
+
+void
+prange_storage::set_nonnull (tree type)
+{
+  gcc_checking_assert (m_kind != PR_UNDEFINED);
+  switch (m_kind)
+    {
+      case PR_VARYING:
+      case PR_FULL:
+	m_kind = PR_NONZERO;
+	return;
+
+      case PR_NONZERO:
+	return;
+
+      case PR_ZERO:
+	m_kind = PR_UNDEFINED;
+	return;
+
+      case PR_OTHER:
+	if (get_word (0, type) != 0)
+	  return;
+	// [0,1] -> [1,1] is a special case and requires adjustments.
+	// otherwise we can simply set the lower bound to 1.
+	if (get_word (1, type) != 1)
+	  set_word (0, wi::one (TYPE_PRECISION (type)), type);
+	else
+	  {
+	    // This is very uncoomon, and rather than trying to cover
+	    // the edge cases (ie, bitmask present, points to)
+	    // simply load the range, remove zero, and resave it.
+	    prange pr;
+	    this->get_vrange (pr, type);
+	    prange nz;
+	    nz.set_nonzero (type);
+	    if (pr.intersect (nz))
+	      this->set_prange (pr);
+	  }
+	return;
+
+      default:
+	gcc_unreachable ();
+    }
+}
+
+irange_bitmask
+prange_storage::get_bitmask (tree type) const
+{
+  gcc_checking_assert (m_kind != PR_UNDEFINED);
+  unsigned prec = TYPE_PRECISION (type);
+  unsigned index = 0;
+
+  switch (m_kind)
+    {
+      case PR_VARYING:
+	return irange_bitmask (prec);
+
+      case PR_ZERO:
+	return irange_bitmask (type, wi::zero (prec), wi::zero (prec));
+
+      case PR_NONZERO:
+      case PR_FULL:
+	break;
+
+      case PR_OTHER:
+	index = 2;
+	break;
+
+      default:
+	gcc_unreachable ();
+    }
+
+  if (m_has_bitmask)
+    {
+      wide_int value = get_word (index++, type);
+      wide_int mask = get_word (index++, type);
+      return irange_bitmask (value, mask);
+    }
+  return irange_bitmask (prec);
+}
+
 
 static vrange_allocator ggc_vrange_allocator (true);
 

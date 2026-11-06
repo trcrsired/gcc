@@ -174,7 +174,7 @@ char sh_additional_register_names[ADDREGNAMES_SIZE] \
 int assembler_dialect;
 
 static void split_branches (rtx_insn *);
-static int branch_dest (rtx);
+static int branch_dest (rtx_insn *);
 static void print_slot (rtx_sequence *);
 static rtx_code_label *add_constant (rtx, machine_mode, rtx);
 static void dump_table (rtx_insn *, rtx_insn *);
@@ -188,7 +188,7 @@ static void sh_option_override (void);
 static void sh_override_options_after_change (void);
 static void output_stack_adjust (int, rtx, int, HARD_REG_SET *, bool);
 static rtx_insn* emit_frame_insn (rtx);
-static rtx push (int);
+static rtx_insn *push (int);
 static void pop (int);
 static void push_regs (HARD_REG_SET* mask, bool interrupt_handler);
 static int calc_live_regs (HARD_REG_SET *);
@@ -223,7 +223,7 @@ static int sh_adjust_cost (rtx_insn *, int, rtx_insn *, int, unsigned int);
 static int sh_issue_rate (void);
 static int sh_dfa_new_cycle (FILE *, int, rtx_insn *, int, int, int *sort_p);
 static short find_set_regmode_weight (rtx, machine_mode);
-static short find_insn_regmode_weight (rtx, machine_mode);
+static short find_insn_regmode_weight (rtx_insn *, machine_mode);
 static void find_regmode_weight (basic_block, machine_mode);
 static int find_r0_life_regions (basic_block);
 static void  sh_md_init_global (FILE *, int, int);
@@ -489,6 +489,10 @@ TARGET_GNU_ATTRIBUTES (sh_attribute_table,
 
 #undef TARGET_CANNOT_COPY_INSN_P
 #define TARGET_CANNOT_COPY_INSN_P sh_cannot_copy_insn_p
+/* The table entries are relative to the braf of one dispatch, and sh_reorg
+   pairs every table with one mova.  */
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P hook_bool_rtx_insn_false
 #undef TARGET_RTX_COSTS
 #define TARGET_RTX_COSTS sh_rtx_costs
 #undef TARGET_ADDRESS_COST
@@ -2481,7 +2485,7 @@ sh_emit_compare_and_set (rtx *operands, machine_mode mode)
    Since the SH cannot move a DI or DF in one instruction, we have
    to take care when we see overlapping source and dest registers.  */
 const char *
-output_movedouble (rtx insn ATTRIBUTE_UNUSED, rtx operands[],
+output_movedouble (rtx_insn *insn ATTRIBUTE_UNUSED, rtx operands[],
 		   machine_mode mode)
 {
   rtx dst = operands[0];
@@ -4039,7 +4043,7 @@ shl_and_kind (rtx left_rtx, rtx mask_rtx, int *attrp)
 /* This is used in length attributes of the unnamed instructions
    corresponding to shl_and_kind return values of 1 and 2.  */
 int
-shl_and_length (rtx insn)
+shl_and_length (rtx_insn *insn)
 {
   rtx set_src, left_rtx, mask_rtx;
   int attributes[3];
@@ -4053,7 +4057,7 @@ shl_and_length (rtx insn)
 
 /* This is used in length attribute of the and_shl_scratch instruction.  */
 int
-shl_and_scr_length (rtx insn)
+shl_and_scr_length (rtx_insn *insn)
 {
   rtx set_src = SET_SRC (XVECEXP (PATTERN (insn), 0, 0));
   int len = ashl_lshr_seq[INTVAL (XEXP (set_src, 1)) & 31].insn_count;
@@ -4295,7 +4299,7 @@ shl_sext_kind (rtx left_rtx, rtx size_rtx, int *costp)
 /* Function to be used in the length attribute of the instructions
    implementing this pattern.  */
 int
-shl_sext_length (rtx insn)
+shl_sext_length (rtx_insn *insn)
 {
   rtx set_src, left_rtx, size_rtx;
   int cost;
@@ -4904,7 +4908,8 @@ untangle_mova (int *num_mova, rtx_insn **first_mova, rtx_insn *new_mova)
 	return -1;
 
       n_addr = INSN_ADDRESSES (INSN_UID (new_mova));
-      n_target = INSN_ADDRESSES (INSN_UID (XEXP (MOVA_LABELREF (new_mova), 0)));
+      n_target = INSN_ADDRESSES
+	(INSN_UID (label_ref_label (MOVA_LABELREF (new_mova))));
       if (n_addr > n_target || n_addr + 1022 < n_target)
 	{
 	  /* Change the mova into a load.
@@ -4920,7 +4925,8 @@ untangle_mova (int *num_mova, rtx_insn **first_mova, rtx_insn *new_mova)
     }
   if (!optimize
       || ((f_target
-	   = INSN_ADDRESSES (INSN_UID (XEXP (MOVA_LABELREF (*first_mova), 0))))
+	   = INSN_ADDRESSES
+	     (INSN_UID (label_ref_label (MOVA_LABELREF (*first_mova)))))
 	  >= n_target))
     return -1;
 
@@ -5500,7 +5506,7 @@ gen_block_redirect (rtx_insn *jump, int addr, int need_block)
     }
   /* We can't use JUMP_LABEL here because it might be undefined
      when not optimizing.  */
-  rtx dest = XEXP (SET_SRC (PATTERN (jump)), 0);
+  rtx_insn *dest = label_ref_label (SET_SRC (PATTERN (jump)));
   /* If the branch is out of range, try to find a scratch register for it.  */
   if (optimize
       && (INSN_ADDRESSES (INSN_UID (dest)) - addr + (unsigned) 4092
@@ -5569,13 +5575,13 @@ gen_block_redirect (rtx_insn *jump, int addr, int need_block)
 
   else if (optimize && need_block >= 0)
     {
-      rtx_insn *next = next_active_insn (as_a<rtx_insn *> (dest));
+      rtx_insn *next = next_active_insn (dest);
       next = next_active_insn (next);
       if (next && JUMP_P (next)
 	  && GET_CODE (PATTERN (next)) == SET
 	  && recog_memoized (next) == CODE_FOR_jump_compact)
 	{
-	  dest = JUMP_LABEL (next);
+	  dest = JUMP_LABEL_AS_INSN (next);
 	  if (dest
 	      && (INSN_ADDRESSES (INSN_UID (dest)) - addr + (unsigned) 4092
 		  > 4092 + 4098))
@@ -5931,7 +5937,8 @@ sh_reorg (void)
 
       for (insn = first; insn; insn = NEXT_INSN (insn))
 	{
-	  rtx pattern, reg, set, dies;
+	  rtx pattern, reg, set;
+	  rtx_insn *dies;
 	  rtx_code_label *label;
 	  rtx_insn *link, *scan;
 	  int rescan = 0, foundinsn = 0;
@@ -6004,7 +6011,7 @@ sh_reorg (void)
 	     by reload, since there may not be a REG_DEAD note for the
 	     register.  */
 
-	  dies = NULL_RTX;
+	  dies = nullptr;
 	  for (scan = NEXT_INSN (link); scan; scan = NEXT_INSN (scan))
 	    {
 	      rtx scanset;
@@ -6197,7 +6204,7 @@ sh_reorg (void)
 		{
 		  rtx *patp = &PATTERN (scan), pat = *patp;
 		  rtx src, dst;
-		  rtx lab;
+		  rtx_code_label *lab;
 		  rtx newsrc;
 		  machine_mode mode;
 
@@ -6472,7 +6479,8 @@ split_branches (rtx_insn *first)
 		    && GET_CODE (PATTERN (beyond)) == SET
 		    && recog_memoized (beyond) == CODE_FOR_jump_compact
 		    && ((INSN_ADDRESSES
-			 (INSN_UID (XEXP (SET_SRC (PATTERN (beyond)), 0)))
+			 (INSN_UID (label_ref_label
+				    (SET_SRC (PATTERN (beyond)))))
 			 - INSN_ADDRESSES (INSN_UID (insn)) + (unsigned) 252)
 			> 252 + 258 + 2))
 		  gen_block_redirect (beyond,
@@ -6488,7 +6496,7 @@ split_branches (rtx_insn *first)
 		&& GET_CODE (PATTERN (next)) == SET
 		&& recog_memoized (next) == CODE_FOR_jump_compact
 		&& ((INSN_ADDRESSES
-		     (INSN_UID (XEXP (SET_SRC (PATTERN (next)), 0)))
+		     (INSN_UID (label_ref_label (SET_SRC (PATTERN (next)))))
 		     - INSN_ADDRESSES (INSN_UID (insn)) + (unsigned) 252)
 		    > 252 + 258 + 2))
 	      gen_block_redirect (next, INSN_ADDRESSES (INSN_UID (next)), 1);
@@ -6702,7 +6710,7 @@ output_stack_adjust (int size, rtx reg, int epilogue_p,
       else
 	{
 	  rtx const_reg;
-	  rtx insn;
+	  rtx_insn *insn;
 	  int temp = epilogue_p ? 7 : 1;
 	  int i;
 
@@ -6837,7 +6845,7 @@ emit_frame_insn (rtx x)
 }
 
 /* Output RTL to push register RN onto the stack.  */
-static rtx
+static rtx_insn *
 push (int rn)
 {
   rtx x;
@@ -6849,7 +6857,7 @@ push (int rn)
 	   && ! TARGET_FPU_SINGLE && FP_OR_XD_REGISTER_P (rn))
     {
       if (FP_REGISTER_P (rn) && (rn - FIRST_FP_REG) & 1)
-	return NULL_RTX;
+	return nullptr;
       x = gen_push_4 (gen_rtx_REG (DFmode, rn));
     }
   else if (TARGET_SH2E && FP_REGISTER_P (rn))
@@ -6857,9 +6865,9 @@ push (int rn)
   else
     x = gen_push (gen_rtx_REG (SImode, rn));
 
-  x = emit_frame_insn (x);
-  add_reg_note (x, REG_INC, gen_rtx_REG (SImode, STACK_POINTER_REGNUM));
-  return x;
+  rtx_insn *insn = emit_frame_insn (x);
+  add_reg_note (insn, REG_INC, gen_rtx_REG (SImode, STACK_POINTER_REGNUM));
+  return insn;
 }
 
 /* Output RTL to pop register RN from the stack.  */
@@ -6883,19 +6891,19 @@ pop (int rn)
   else
     x = gen_pop (gen_rtx_REG (SImode, rn));
 
-  x = emit_insn (x);
+  rtx_insn *insn = emit_insn (x);
 
   sp_reg = gen_rtx_REG (SImode, STACK_POINTER_REGNUM);
-  reg = copy_rtx (GET_CODE (PATTERN (x)) == PARALLEL
-		  ? SET_DEST (XVECEXP (PATTERN (x), 0, 0))
-		  : SET_DEST (PATTERN (x)));
-  add_reg_note (x, REG_CFA_RESTORE, reg);
-  add_reg_note (x, REG_CFA_ADJUST_CFA,
+  reg = copy_rtx (GET_CODE (PATTERN (insn)) == PARALLEL
+		  ? SET_DEST (XVECEXP (PATTERN (insn), 0, 0))
+		  : SET_DEST (PATTERN (insn)));
+  add_reg_note (insn, REG_CFA_RESTORE, reg);
+  add_reg_note (insn, REG_CFA_ADJUST_CFA,
 		gen_rtx_SET (sp_reg,
 			     plus_constant (SImode, sp_reg,
 					    GET_MODE_SIZE (GET_MODE (reg)))));
-  add_reg_note (x, REG_INC, gen_rtx_REG (SImode, STACK_POINTER_REGNUM));
-  RTX_FRAME_RELATED_P (x) = 1;
+  add_reg_note (insn, REG_INC, gen_rtx_REG (SImode, STACK_POINTER_REGNUM));
+  RTX_FRAME_RELATED_P (insn) = 1;
 }
 
 /* Generate code to push the regs specified in the mask.  */
@@ -6966,16 +6974,16 @@ push_regs (HARD_REG_SET *mask, bool interrupt_handler)
 	     insns.  */
 	  emit_insn (gen_blockage ());
 	  x = gen_movml_push_banked (sp_reg);
-	  x = emit_frame_insn (x);
+	  rtx_insn *insn = emit_frame_insn (x);
 	  for (int i = FIRST_BANKED_REG; i <= LAST_BANKED_REG; i++)
 	    {
 	      mem = gen_rtx_MEM (SImode, plus_constant (Pmode, sp_reg, i * 4));
 	      reg = gen_rtx_REG (SImode, i);
-	      add_reg_note (x, REG_CFA_OFFSET, gen_rtx_SET (mem, reg));
+	      add_reg_note (insn, REG_CFA_OFFSET, gen_rtx_SET (mem, reg));
 	    }
 
 	  set = gen_rtx_SET (sp_reg, plus_constant (Pmode, sp_reg, - 32));
-	  add_reg_note (x, REG_CFA_ADJUST_CFA, set);
+	  add_reg_note (insn, REG_CFA_ADJUST_CFA, set);
 	  emit_insn (gen_blockage ());
 	}
       else
@@ -7165,14 +7173,14 @@ sh_expand_prologue (void)
   /* If we're supposed to switch stacks at function entry, do so now.  */
   if (sp_switch_attr)
     {
-      rtx lab, newsrc;
+      rtx newsrc;
       /* The argument specifies a variable holding the address of the
 	 stack the interrupt function should switch to/from at entry/exit.  */
       tree arg = TREE_VALUE ( TREE_VALUE (sp_switch_attr));
       const char* s = ggc_strdup (TREE_STRING_POINTER (arg));
       rtx sp_switch = gen_rtx_SYMBOL_REF (Pmode, s);
 
-      lab = add_constant (sp_switch, SImode, 0);
+      rtx_code_label *lab = add_constant (sp_switch, SImode, 0);
       newsrc = gen_rtx_LABEL_REF (VOIDmode, lab);
 
       emit_insn (gen_sp_switch_1 (newsrc));
@@ -8725,14 +8733,14 @@ tls_symbolic_operand (rtx op, machine_mode mode ATTRIBUTE_UNUSED)
 
 /* Return the destination address of a branch.  */
 static int
-branch_dest (rtx branch)
+branch_dest (rtx_insn *branch)
 {
   rtx dest = SET_SRC (PATTERN (branch));
 
   if (GET_CODE (dest) == IF_THEN_ELSE)
     dest = XEXP (dest, 1);
 
-  return INSN_ADDRESSES (INSN_UID (XEXP (dest, 0)));
+  return INSN_ADDRESSES (INSN_UID (label_ref_label (dest)));
 }
 
 /* Return nonzero if REG is not used after INSN.
@@ -9652,7 +9660,7 @@ find_set_regmode_weight (rtx x, machine_mode mode)
 
 /* Get regmode weight for insn.  */
 static short
-find_insn_regmode_weight (rtx insn, machine_mode mode)
+find_insn_regmode_weight (rtx_insn *insn, machine_mode mode)
 {
   /* Increment weight for each register born here.  */
   rtx x = PATTERN (insn);
@@ -10653,7 +10661,7 @@ sh_mark_label (rtx address, int nuses)
     }
   if (GET_CODE (address) == LABEL_REF
       && LABEL_P (XEXP (address, 0)))
-    LABEL_NUSES (XEXP (address, 0)) += nuses;
+    LABEL_NUSES (label_ref_label (address)) += nuses;
 }
 
 /* Compute extra cost of moving data between one register class
@@ -10728,7 +10736,7 @@ sh_register_move_cost (machine_mode mode,
   return 2 * ((GET_MODE_SIZE (mode) + 3) / 4U);
 }
 
-static rtx
+static rtx_insn *
 emit_load_ptr (rtx reg, rtx addr)
 {
   rtx mem = gen_const_mem (ptr_mode, addr);
@@ -11037,7 +11045,7 @@ sh_expand_t_scc (rtx operands[])
 
 /* INSN is an sfunc; return the rtx that describes the address used.  */
 static rtx
-extract_sfunc_addr (rtx insn)
+extract_sfunc_addr (rtx_insn *insn)
 {
   rtx pattern = PATTERN (insn);
   const int len = XVECLEN (pattern, 0);
@@ -11197,7 +11205,7 @@ sh_gen_truncate (machine_mode mode, rtx x, int need_sign_ext)
 
    Return true iff INSN contains a MEM.  */
 bool
-sh_contains_memref_p (rtx insn)
+sh_contains_memref_p (rtx_insn *insn)
 {
   subrtx_iterator::array_type array;
   FOR_EACH_SUBRTX (iter, array, PATTERN (insn), NONCONST)
@@ -11208,7 +11216,7 @@ sh_contains_memref_p (rtx insn)
 
 /* Return true iff INSN loads a banked register.  */
 bool
-sh_loads_bankedreg_p (rtx insn)
+sh_loads_bankedreg_p (rtx_insn *insn)
 {
   if (GET_CODE (PATTERN (insn)) == SET)
     {

@@ -5719,10 +5719,10 @@
    && (true_regnum (operands[0]) < 16) != (true_regnum (operands[1]) < 16)"
   [(const_int 0)]
 {
-  rtx insn, tos;
+  rtx tos;
 
   tos = gen_tmp_stack_mem (DFmode, gen_rtx_PRE_DEC (Pmode, stack_pointer_rtx));
-  insn = emit_insn (gen_movdf_i4 (tos, operands[1]));
+  rtx_insn *insn = emit_insn (gen_movdf_i4 (tos, operands[1]));
   add_reg_note (insn, REG_INC, stack_pointer_rtx);
   tos = gen_tmp_stack_mem (DFmode, gen_rtx_POST_INC (Pmode, stack_pointer_rtx));
   insn = emit_insn (gen_movdf_i4 (operands[0], tos));
@@ -5880,13 +5880,13 @@
   [(const_int 0)]
 {
   int regno = true_regnum (operands[0]);
-  rtx insn;
   rtx mem = SET_SRC (XVECEXP (PATTERN (curr_insn), 0, 0));
   rtx mem2
     = change_address (mem, SFmode, gen_rtx_POST_INC (Pmode, operands[1]));
-  insn = emit_insn (gen_movsf_ie (gen_rtx_REG (SFmode,
-					       regno + SH_REG_MSW_OFFSET),
-				  mem2));
+  rtx_insn *insn
+    = emit_insn (gen_movsf_ie (gen_rtx_REG (SFmode,
+					    regno + SH_REG_MSW_OFFSET),
+			       mem2));
   add_reg_note (insn, REG_INC, operands[1]);
   insn = emit_insn (gen_movsf_ie (gen_rtx_REG (SFmode,
 					       regno + SH_REG_LSW_OFFSET),
@@ -5904,7 +5904,8 @@
   [(const_int 0)]
 {
   int regno = true_regnum (operands[0]);
-  rtx addr, insn;
+  rtx addr;
+  rtx_insn *insn;
   rtx mem2 = change_address (operands[1], SFmode, NULL_RTX);
   rtx reg0 = gen_rtx_REG (SFmode, regno + SH_REG_MSW_OFFSET);
   rtx reg1 = gen_rtx_REG (SFmode, regno + SH_REG_LSW_OFFSET);
@@ -5971,7 +5972,8 @@
   [(const_int 0)]
 {
   int regno = true_regnum (operands[1]);
-  rtx insn, addr;
+  rtx_insn *insn;
+  rtx addr;
   rtx reg0 = gen_rtx_REG (SFmode, regno + SH_REG_MSW_OFFSET);
   rtx reg1 = gen_rtx_REG (SFmode, regno + SH_REG_LSW_OFFSET);
 
@@ -6503,7 +6505,8 @@
   [(const_int 0)]
 {
   int regno = true_regnum (operands[0]);
-  rtx addr, insn;
+  rtx addr;
+  rtx_insn *insn;
   rtx mem2 = change_address (operands[1], SFmode, NULL_RTX);
   rtx reg0 = gen_rtx_REG (SFmode, regno + SH_REG_MSW_OFFSET);
   rtx reg1 = gen_rtx_REG (SFmode, regno + SH_REG_LSW_OFFSET);
@@ -6567,7 +6570,8 @@
   [(const_int 0)]
 {
   int regno = true_regnum (operands[1]);
-  rtx insn, addr;
+  rtx_insn *insn;
+  rtx addr;
   rtx reg0 = gen_rtx_REG (SFmode, regno + SH_REG_MSW_OFFSET);
   rtx reg1 = gen_rtx_REG (SFmode, regno + SH_REG_LSW_OFFSET);
 
@@ -7299,7 +7303,7 @@
   [(const_int 0)]
 {
   rtx lab = PATTERN (gen_call_site ());
-  rtx call_insn;
+  rtx_insn *call_insn;
 
   sh_expand_sym_label2reg (operands[2], operands[0], lab, true);
   call_insn = emit_call_insn (gen_sibcalli_pcrel (operands[2], operands[1],
@@ -7328,8 +7332,9 @@
   rtx lab = PATTERN (gen_call_site ());
 
   sh_expand_sym_label2reg (operands[2], operands[0], lab, true);
-  rtx i = emit_call_insn (gen_sibcalli_pcrel_fdpic (operands[2], operands[1],
-						    copy_rtx (lab)));
+  rtx_insn *i
+    = emit_call_insn (gen_sibcalli_pcrel_fdpic (operands[2], operands[1],
+						copy_rtx (lab)));
   SIBLING_CALL_P (i) = 1;
   DONE;
 }
@@ -7468,10 +7473,11 @@
   rtx tmp =  gen_rtx_REG (SImode, R1_REG);
 
   sh_expand_sym_label2reg (tmp, operands[1], lab, true);
-  rtx call_insn = emit_call_insn (gen_sibcall_valuei_pcrel (operands[0],
-							tmp,
-							operands[2],
-							copy_rtx (lab)));
+  rtx_insn *call_insn
+    = emit_call_insn (gen_sibcall_valuei_pcrel (operands[0],
+						tmp,
+						operands[2],
+						copy_rtx (lab)));
   SIBLING_CALL_P (call_insn) = 1;
   DONE;
 }
@@ -7500,10 +7506,11 @@
   rtx tmp = gen_rtx_REG (SImode, R1_REG);
 
   sh_expand_sym_label2reg (tmp, operands[1], lab, true);
-  rtx i = emit_call_insn (gen_sibcall_valuei_pcrel_fdpic (operands[0],
-							  tmp,
-							  operands[2],
-							  copy_rtx (lab)));
+  rtx_insn *i
+    = emit_call_insn (gen_sibcall_valuei_pcrel_fdpic (operands[0],
+						      tmp,
+						      operands[2],
+						      copy_rtx (lab)));
   SIBLING_CALL_P (i) = 1;
   DONE;
 }
@@ -7834,11 +7841,11 @@
   [(match_operand 0 "" "") (match_operand 1 "" "")]
   ""
 {
-  rtx gotsym, insn;
+  rtx gotsym;
 
   gotsym = gen_sym2GOT (operands[1]);
   PUT_MODE (gotsym, Pmode);
-  insn = emit_insn (gen_symGOT_load (operands[0], gotsym));
+  rtx_insn *insn = emit_insn (gen_symGOT_load (operands[0], gotsym));
 
   MEM_READONLY_P (SET_SRC (PATTERN (insn))) = 1;
 
@@ -7855,7 +7862,7 @@
 {
   rtx gotsym = gen_sym2GOTFUNCDESC (operands[1]);
   PUT_MODE (gotsym, Pmode);
-  rtx insn = emit_insn (gen_symGOT_load (operands[0], gotsym));
+  rtx_insn *insn = emit_insn (gen_symGOT_load (operands[0], gotsym));
 
   MEM_READONLY_P (SET_SRC (PATTERN (insn))) = 1;
 

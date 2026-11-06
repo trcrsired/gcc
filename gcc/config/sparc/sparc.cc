@@ -3993,13 +3993,12 @@ emit_tfmode_cvt (enum rtx_code code, rtx *operands)
 int
 empty_delay_slot (rtx_insn *insn)
 {
-  rtx seq;
 
   /* If no previous instruction (should not happen), return true.  */
   if (PREV_INSN (insn) == NULL)
     return 1;
 
-  seq = NEXT_INSN (PREV_INSN (insn));
+  rtx_insn *seq = NEXT_INSN (PREV_INSN (insn));
   if (GET_CODE (PATTERN (seq)) == SEQUENCE)
     return 0;
 
@@ -4053,7 +4052,7 @@ emit_cbcond_nop (rtx_insn *insn)
    instruction.  */
 
 static int
-eligible_for_restore_insn (rtx trial, bool return_p)
+eligible_for_restore_insn (rtx_insn *trial, bool return_p)
 {
   rtx pat = PATTERN (trial);
   rtx src = SET_SRC (pat);
@@ -12357,7 +12356,7 @@ sparc_register_move_cost (machine_mode mode ATTRIBUTE_UNUSED,
    function calls, with the possible exception of calls to the GOT helper.  */
 
 static void
-emit_and_preserve (rtx seq, rtx reg, rtx reg2)
+emit_and_preserve (rtx_insn *seq, rtx reg, rtx reg2)
 {
   /* We must preserve the lowest 16 words for the register save area.  */
   HOST_WIDE_INT offset = 16*UNITS_PER_WORD;
@@ -12523,7 +12522,8 @@ sparc_output_mi_thunk (FILE *file, tree thunk_fndecl ATTRIBUTE_UNUSED,
     {
       /* The hoops we have to jump through in order to generate a sibcall
 	 without using delay slots...  */
-      rtx spill_reg, seq, scratch = gen_rtx_REG (Pmode, 1);
+      rtx spill_reg, scratch = gen_rtx_REG (Pmode, 1);
+      rtx_insn *seq;
 
       if (flag_pic)
         {

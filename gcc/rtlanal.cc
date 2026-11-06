@@ -38,6 +38,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "rtl-iter.h"
 #include "hard-reg-set.h"
 #include "function-abi.h"
+#include "hash-map.h"
+#include "tree-pass.h"
 
 /* Forward declarations */
 static void set_of_1 (rtx, const_rtx, void *);
@@ -1233,8 +1235,12 @@ reg_set_between_p (const_rtx reg, const rtx_insn *from_insn,
 /* Return true if REG is set or clobbered inside INSN.  */
 
 bool
-reg_set_p (const_rtx reg, const_rtx insn)
+reg_set_p (const_rtx reg, const_rtx uncast_insn)
 {
+  const rtx_insn *insn = dyn_cast <const rtx_insn *> (uncast_insn);
+  if (!insn)
+    return set_of (reg, uncast_insn) != NULL_RTX;
+
   /* After delay slot handling, call and branch insns might be in a
      sequence.  Check all the elements there.  */
   if (INSN_P (insn) && GET_CODE (PATTERN (insn)) == SEQUENCE)
@@ -1253,7 +1259,7 @@ reg_set_p (const_rtx reg, const_rtx insn)
 	  || (CALL_P (insn)
 	      && ((REG_P (reg)
 		   && REGNO (reg) < FIRST_PSEUDO_REGISTER
-		   && (insn_callee_abi (as_a<const rtx_insn *> (insn))
+		   && (insn_callee_abi (insn)
 		       .clobbers_reg_p (GET_MODE (reg), REGNO (reg))))
 		  || MEM_P (reg)
 		  || find_reg_fusage (insn, CLOBBER, reg)))))
@@ -2516,7 +2522,7 @@ dead_or_set_regno_p (const rtx_insn *insn, unsigned int test_regno)
    If DATUM is nonzero, look for one whose datum is DATUM.  */
 
 rtx
-find_reg_note (const_rtx insn, enum reg_note kind, const_rtx datum)
+find_reg_note (const rtx_insn *insn, enum reg_note kind, const_rtx datum)
 {
   rtx link;
 
@@ -2545,7 +2551,7 @@ find_reg_note (const_rtx insn, enum reg_note kind, const_rtx datum)
    it might be the case that the note overlaps REGNO.  */
 
 rtx
-find_regno_note (const_rtx insn, enum reg_note kind, unsigned int regno)
+find_regno_note (const rtx_insn *insn, enum reg_note kind, unsigned int regno)
 {
   rtx link;
 
@@ -2568,7 +2574,7 @@ find_regno_note (const_rtx insn, enum reg_note kind, unsigned int regno)
    has such a note.  */
 
 rtx
-find_reg_equal_equiv_note (const_rtx insn)
+find_reg_equal_equiv_note (const rtx_insn *insn)
 {
   rtx link;
 
@@ -2586,7 +2592,7 @@ find_reg_equal_equiv_note (const_rtx insn)
 
 	   This should be changed into an assert.  */
 	if (GET_CODE (PATTERN (insn)) == PARALLEL
-	    && multiple_sets (as_a<const rtx_insn *> (insn)))
+	    && multiple_sets (insn))
 	  return 0;
 	return link;
       }
@@ -2621,7 +2627,7 @@ find_constant_src (const rtx_insn *insn)
    in the CALL_INSN_FUNCTION_USAGE information of INSN.  */
 
 bool
-find_reg_fusage (const_rtx insn, enum rtx_code code, const_rtx datum)
+find_reg_fusage (const rtx_insn *insn, enum rtx_code code, const_rtx datum)
 {
   /* If it's not a CALL_INSN, it can't possibly have a
      CALL_INSN_FUNCTION_USAGE field, so don't bother checking.  */
@@ -2666,7 +2672,7 @@ find_reg_fusage (const_rtx insn, enum rtx_code code, const_rtx datum)
    in the CALL_INSN_FUNCTION_USAGE information of INSN.  */
 
 bool
-find_regno_fusage (const_rtx insn, enum rtx_code code, unsigned int regno)
+find_regno_fusage (const rtx_insn *insn, enum rtx_code code, unsigned int regno)
 {
   rtx link;
 
@@ -2732,7 +2738,7 @@ alloc_reg_note (enum reg_note kind, rtx datum, rtx list)
 /* Add register note with kind KIND and datum DATUM to INSN.  */
 
 void
-add_reg_note (rtx insn, enum reg_note kind, rtx datum)
+add_reg_note (rtx_insn *insn, enum reg_note kind, rtx datum)
 {
   REG_NOTES (insn) = alloc_reg_note (kind, datum, REG_NOTES (insn));
 }
@@ -3547,6 +3553,150 @@ tablejump_p (const rtx_insn *insn, rtx_insn **labelp,
   if (tablep)
     *tablep = as_a <rtx_jump_table_data *> (table);
   return true;
+}
+
+/* Return true if INSN is a tablejump whose table is shared with other
+   jumps (JUMP_TABLE_SHARED_P).  Store the label and the table as
+   tablejump_p does.  */
+
+bool
+shared_tablejump_p (const rtx_insn *insn, rtx_insn **labelp,
+		    rtx_jump_table_data **tablep)
+{
+  rtx_jump_table_data *table;
+  if (!tablejump_p (insn, labelp, &table)
+      || !JUMP_TABLE_SHARED_P (PATTERN (table)))
+    return false;
+
+  if (tablep)
+    *tablep = table;
+  return true;
+}
+
+/* Check the tablejump links in the current function's linear RTL chain.
+   This also works after the CFG has been released.  */
+
+void
+verify_jump_tables (void)
+{
+  struct table_users
+  {
+    unsigned int total;
+    unsigned int repeatable;
+  };
+  hash_set<rtx_insn *> live;
+  hash_map<rtx_insn *, table_users> users;
+  auto_vec<rtx_jump_table_data *> tables;
+  auto_vec<rtx_insn *> jumps;
+
+  for (rtx_insn *insn = get_insns (); insn; insn = NEXT_INSN (insn))
+    {
+      if (LABEL_P (insn) || JUMP_TABLE_DATA_P (insn))
+	live.add (insn);
+      if (JUMP_TABLE_DATA_P (insn))
+	{
+	  tables.safe_push (as_a<rtx_jump_table_data *> (insn));
+	  users.put (insn, { 0, 0 });
+	}
+      else if (JUMP_P (insn))
+	jumps.safe_push (insn);
+      else if (NONDEBUG_INSN_P (insn) && GET_CODE (PATTERN (insn)) == SEQUENCE)
+	for (int i = 0; i < XVECLEN (PATTERN (insn), 0); ++i)
+	  {
+	    rtx_insn *part = as_a<rtx_insn *> (XVECEXP (PATTERN (insn), 0, i));
+	    if (JUMP_P (part))
+	      jumps.safe_push (part);
+	  }
+    }
+
+  for (rtx_jump_table_data *table : tables)
+    {
+      rtx_insn *label = PREV_INSN (table);
+      if (!label || !LABEL_P (label) || !live.contains (label)
+	  || NEXT_INSN (label) != table)
+	fatal_insn ("jump table has no adjacent live label", table);
+    }
+
+  for (rtx_insn *jump : jumps)
+    {
+      rtx_insn *label = NULL;
+      if (tablejump_p (jump, &label, NULL)
+	  && !reg_mentioned_p (label, PATTERN (jump)))
+	fatal_insn ("tablejump pattern does not reference its label", jump);
+
+      /* A USE of a label identifies a tablejump even if its JUMP_LABEL
+	 or table was lost.  Also find table references in casesi patterns.  */
+      bool indirect = (!any_uncondjump_p (jump) && !any_condjump_p (jump)
+		       && !returnjump_p (jump));
+      subrtx_iterator::array_type array;
+      FOR_EACH_SUBRTX (iter, array, PATTERN (jump), ALL)
+	{
+	  const_rtx x = *iter;
+	  bool table_use = (indirect && GET_CODE (x) == USE
+			    && GET_CODE (XEXP (x, 0)) == LABEL_REF);
+	  if (table_use)
+	    x = XEXP (x, 0);
+	  else if (GET_CODE (x) != LABEL_REF)
+	    continue;
+	  rtx_insn *ref = label_ref_label (x);
+	  if (!table_use
+	      && (!LABEL_P (ref) || !NEXT_INSN (ref)
+		  || !JUMP_TABLE_DATA_P (NEXT_INSN (ref))))
+	    continue;
+	  if (!LABEL_P (ref) || !live.contains (ref))
+	    fatal_insn ("tablejump references a label outside the RTL chain",
+			jump);
+	  if (JUMP_LABEL (jump) != ref)
+	    fatal_insn ("tablejump pattern and JUMP_LABEL disagree", jump);
+	  if (!NEXT_INSN (ref) || !JUMP_TABLE_DATA_P (NEXT_INSN (ref))
+	      || !live.contains (NEXT_INSN (ref)))
+	    fatal_insn ("tablejump references a missing jump table", jump);
+	  label = ref;
+	}
+      if (label)
+	{
+	  table_users &count = *users.get (NEXT_INSN (label));
+	  ++count.total;
+	  if (!targetm.cannot_copy_insn_p || !targetm.cannot_copy_insn_p (jump))
+	    ++count.repeatable;
+	}
+    }
+
+  for (rtx_jump_table_data *table : tables)
+    {
+      /* A dispatch with private labels can also have an out-of-line
+	 execution template that references the same table.  */
+      const table_users &count = *users.get (table);
+      if (count.repeatable > 1 && !JUMP_TABLE_SHARED_P (PATTERN (table)))
+	fatal_insn ("jump table with multiple users is not marked shared",
+		    table);
+      if (!count.total)
+	continue;
+
+      /* While the CFG exists, a shared table follows one of the jumps
+	 through it.  Machine reorganization can place other insns between
+	 them later.  */
+      if ((cfun->curr_properties & PROP_cfg)
+	  && JUMP_TABLE_SHARED_P (PATTERN (table)))
+	{
+	  rtx_insn *label = PREV_INSN (table);
+	  rtx_insn *prev = prev_nonnote_nondebug_insn (label);
+	  while (prev && BARRIER_P (prev))
+	    prev = prev_nonnote_nondebug_insn (prev);
+	  if (!prev || !JUMP_P (prev) || JUMP_LABEL (prev) != label)
+	    fatal_insn ("shared jump table does not follow a jump through it",
+			table);
+	}
+      subrtx_iterator::array_type array;
+      FOR_EACH_SUBRTX (iter, array, PATTERN (table), ALL)
+	if (GET_CODE (*iter) == LABEL_REF)
+	  {
+	    rtx_insn *label = label_ref_label (*iter);
+	    if (!LABEL_P (label) || !live.contains (label))
+	      fatal_insn ("jump table references a label outside the RTL chain",
+			  table);
+	  }
+    }
 }
 
 /* For INSN known to satisfy tablejump_p, determine if it actually is a

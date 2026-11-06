@@ -187,14 +187,6 @@
   BUILTIN_VDQV_L (UNOP, saddlv, 0, DEFAULT)
   BUILTIN_VDQV_L (UNOPU, uaddlv, 0, DEFAULT)
 
-  /* Implemented by aarch64_<su>abd<mode>.  */
-  BUILTIN_VDQ_BHSI (BINOP, sabd, 0, DEFAULT)
-  BUILTIN_VDQ_BHSI (BINOPU, uabd, 0, DEFAULT)
-
-  /* Implemented by aarch64_<su>aba<mode>.  */
-  BUILTIN_VDQ_BHSI (TERNOP, saba, 0, DEFAULT)
-  BUILTIN_VDQ_BHSI (TERNOPU, uaba, 0, DEFAULT)
-
   BUILTIN_VDQV_L (BINOP, sadalp, 0, DEFAULT)
   BUILTIN_VDQV_L (BINOPU, uadalp, 0, DEFAULT)
 
@@ -668,12 +660,6 @@
   BUILTIN_VHSDF (UNOP, frecpe, 0, FP)
   BUILTIN_VHSDF_HSDF (BINOP, frecps, 0, FP)
 
-  /* Implemented by a mixture of abs2 patterns.  Note the DImode builtin is
-     only ever used for the int64x1_t intrinsic, there is no scalar version.  */
-  BUILTIN_VSDQ_I_DI (UNOP, abs, 0, QUIET)
-  BUILTIN_VHSDF (UNOP, abs, 2, QUIET)
-  VAR1 (UNOP, abs, 2, QUIET, hf)
-
   BUILTIN_VQ_HSF (UNOP, vec_unpacks_hi_, 10, FP)
   VAR1 (BINOP, float_truncate_hi_, 0, FP, v4sf)
   VAR1 (BINOP, float_truncate_hi_, 0, FP, v8hf)
@@ -797,9 +783,6 @@
 
   /* Implemented by aarch64_ursqrte<mode>.  */
   BUILTIN_VDQ_SI (UNOPU, ursqrte, 0, DEFAULT)
-
-  /* Implemented by fabd<mode>3.  */
-  BUILTIN_VHSDF_HSDF (BINOP, fabd, 3, FP)
 
   /* Implemented by aarch64_faddp<mode>.  */
   BUILTIN_VHSDF (BINOP, faddp, 0, FP)

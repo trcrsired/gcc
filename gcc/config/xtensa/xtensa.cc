@@ -1307,7 +1307,7 @@ xtensa_emit_move_sequence (rtx *operands, machine_mode mode)
 rtx
 xtensa_copy_incoming_a7 (rtx opnd)
 {
-  rtx entry_insns = 0;
+  rtx_insn *entry_insns = 0;
   rtx reg, tmp;
   machine_mode mode;
 
@@ -4029,7 +4029,7 @@ xtensa_set_return_address (rtx address, rtx scratch)
 			       total_size - UNITS_PER_WORD);
   rtx note = gen_rtx_SET (gen_frame_mem (SImode, a0_addr),
 			  gen_rtx_REG (SImode, A0_REG));
-  rtx insn;
+  rtx_insn *insn;
 
   if (total_size > 1024)
     {
@@ -4046,7 +4046,8 @@ xtensa_set_return_address (rtx address, rtx scratch)
 rtx
 xtensa_return_addr (int count, rtx frame)
 {
-  rtx result, retaddr, curaddr, label;
+  rtx result, retaddr, curaddr;
+  rtx_code_label *label;
 
   if (!TARGET_WINDOWED_ABI)
     {

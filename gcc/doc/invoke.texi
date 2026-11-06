@@ -616,6 +616,7 @@ Objective-C and Objective-C++ Dialects}.
 -fdata-sections  -fdce  -fdelayed-branch
 -fdelete-null-pointer-checks  -fdep-fusion  -fdevirtualize
 -fdevirtualize-speculatively  -fdevirtualize-at-ltrans  -fdse
+-fduplicate-switch-dispatch
 -fearly-inlining  -fexcess-precision=@var{style}
 -fexpensive-optimizations  -fext-dce
 -ffast-math  -ffat-lto-objects  -ffinite-loops
@@ -1554,7 +1555,7 @@ See RS/6000 and PowerPC Options.
 -mavxneconvert  -mcmpccxadd  -mamx-fp16  -mprefetchi  -mraoint
 -mamx-complex  -mavxvnniint16  -msm3  -msha512  -msm4  -mapxf
 -musermsr  -mavx10.1  -mavx10.2  -mamx-avx512  -mmovrs  -mamx-movrs 
--mavx512bmm  -mavx10v2aux  -macev1
+-mavx512bmm  -mavx10v2aux  -macev1  -mavx10v1aux
 -mcldemote  -mms-bitfields  -mno-align-stringops  -minline-all-stringops
 -minline-stringops-dynamically  -mstringop-strategy=@var{alg}
 -mkl  -mwidekl
@@ -13662,6 +13663,7 @@ also turns on the following optimization flags:
 -fcse-follow-jumps  -fcse-skip-blocks
 -fdelete-null-pointer-checks -fdep-fusion
 -fdevirtualize  -fdevirtualize-speculatively
+-fduplicate-switch-dispatch
 -fexpensive-optimizations
 -ffinite-loops
 -fgcse  -fgcse-lm
@@ -13735,7 +13737,7 @@ Optimize for size.  @option{-Os} enables all @option{-O2} optimizations
 except those that often increase code size:
 
 @gccoptlist{-falign-functions  -falign-jumps
--falign-labels  -falign-loops
+-falign-labels  -falign-loops  -fduplicate-switch-dispatch
 -fprefetch-loop-arrays  -freorder-blocks-algorithm=stc}
 
 It also enables @option{-finline-functions}, causes the compiler to tune for
@@ -14304,6 +14306,24 @@ Enabled by default at @option{-O1} and higher.
 @item -fdse
 Perform dead store elimination (DSE) on RTL@.
 Enabled by default at @option{-O1} and higher.
+
+@opindex fduplicate-switch-dispatch
+@opindex fno-duplicate-switch-dispatch
+@item -fduplicate-switch-dispatch
+If supported by the target machine, give eligible predecessors of a switch at
+a loop head their own copy of the jump-table branch.  A bytecode interpreter
+written with such a @code{switch} otherwise sends every opcode transition
+through one indirect branch instruction.  This can make indirect target
+prediction less effective.  GCC already performs the same transformation for
+the computed gotos of an interpreter written with the labels-as-values
+extension.
+
+It trades size for speed, so the amount copied is bounded by
+@option{--param=max-goto-duplication-insns}.  The transformation runs only
+with @option{-fexpensive-optimizations} and only in functions that are
+optimized for speed.
+
+Enabled at levels @option{-O2}, @option{-O3}.
 
 @opindex fif-conversion
 @opindex fno-if-conversion
@@ -36407,6 +36427,12 @@ AVX10.1 and AVX10V2AUX built-in functions and code generation.
 @item -macev1
 Support MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AVX, AVX2,
 AVX10.1 and ACEV1 built-in functions and code generation.
+
+@opindex mavx10v1aux
+@opindex mno-avx10v1aux
+@item -mavx10v1aux
+Support MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, AVX, AVX2,
+AVX10.1 and AVX10V1AUX built-in functions and code generation.
 @end table
 
 These additional options are available for the x86 processor family.
