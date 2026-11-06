@@ -64,7 +64,7 @@ struct lm32_frame_info
 };
 
 /* Prototypes for static functions.  */
-static rtx emit_add (rtx dest, rtx src0, rtx src1);
+static rtx_insn *emit_add (rtx dest, rtx src0, rtx src1);
 static void expand_save_restore (struct lm32_frame_info *info, int op);
 static void stack_adjust (HOST_WIDE_INT amount);
 static bool lm32_in_small_data_p (const_tree);
@@ -163,10 +163,10 @@ lm32_return_in_memory (tree type)
 
 /* Generate an emit a word sized add instruction.  */
 
-static rtx
+static rtx_insn *
 emit_add (rtx dest, rtx src0, rtx src1)
 {
-  rtx insn;
+  rtx_insn *insn;
   insn = emit_insn (gen_addsi3 (dest, src0, src1));
   return insn;
 }
@@ -308,7 +308,7 @@ expand_save_restore (struct lm32_frame_info *info, int op)
   unsigned int reg_save_mask = info->reg_save_mask;
   int regno;
   HOST_WIDE_INT offset;
-  rtx insn;
+  rtx_insn *insn;
 
   /* Callee saves are below locals and above outgoing arguments.  */
   offset = info->args_size + info->callee_size;
@@ -359,7 +359,7 @@ expand_save_restore (struct lm32_frame_info *info, int op)
 static void
 stack_adjust (HOST_WIDE_INT amount)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   if (!IN_RANGE (amount, -32776, 32768))
     {
@@ -387,7 +387,7 @@ stack_adjust (HOST_WIDE_INT amount)
 void
 lm32_expand_prologue (void)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   lm32_compute_frame_size (get_frame_size ());
 

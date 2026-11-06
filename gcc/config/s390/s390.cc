@@ -5619,7 +5619,7 @@ static GTY(()) rtx s390_tls_symbol;
 static void
 s390_emit_tls_call_insn (rtx result_reg, rtx tls_call)
 {
-  rtx insn;
+  rtx_insn *insn;
 
   if (!flag_pic)
     emit_insn (s390_load_got ());
@@ -6668,9 +6668,9 @@ s390_expand_vec_strlen (rtx target, rtx string, rtx alignment)
   rtx str_addr_base_reg = gen_reg_rtx (Pmode);
   rtx str_idx_reg = gen_reg_rtx (Pmode);
   rtx result_reg = gen_reg_rtx (V16QImode);
-  rtx is_aligned_label = gen_label_rtx ();
-  rtx into_loop_label = NULL_RTX;
-  rtx loop_start_label = gen_label_rtx ();
+  rtx_code_label *is_aligned_label = gen_label_rtx ();
+  rtx_code_label *into_loop_label = nullptr;
+  rtx_code_label *loop_start_label = gen_label_rtx ();
   rtx temp;
   rtx len = gen_reg_rtx (QImode);
   rtx cond;
@@ -6779,10 +6779,10 @@ s390_expand_vec_movstr (rtx result, rtx dst, rtx src)
   rtx loadlen = gen_reg_rtx (SImode);
   rtx gpos_qi = gen_reg_rtx(QImode);
   rtx gpos = gen_reg_rtx (SImode);
-  rtx done_label = gen_label_rtx ();
-  rtx loop_label = gen_label_rtx ();
-  rtx exit_label = gen_label_rtx ();
-  rtx full_label = gen_label_rtx ();
+  rtx_code_label *done_label = gen_label_rtx ();
+  rtx_code_label *loop_label = gen_label_rtx ();
+  rtx_code_label *exit_label = gen_label_rtx ();
+  rtx_code_label *full_label = gen_label_rtx ();
 
   /* Perform a quick check for string ending on the first up to 16
      bytes and exit early if successful.  */
@@ -7318,7 +7318,7 @@ s390_expand_cstoreti4 (rtx dst, rtx cmp, rtx op1, rtx op2)
 				  gen_rtx_VEC_SELECT (DImode, op1, lane0),
 				  gen_rtx_VEC_SELECT (DImode, op2, lane0))));
   rtx ccs_reg = gen_rtx_REG (CCSmode, CC_REGNUM);
-  rtx lab = gen_label_rtx ();
+  rtx_code_label *lab = gen_label_rtx ();
   s390_emit_jump (lab, gen_rtx_NE (VOIDmode, ccs_reg, const0_rtx));
   /* At this point we have that high(op1) == high(op2).  Thus, test the low
      part, now.  For unsigned comparisons
@@ -8299,7 +8299,7 @@ s390_expand_int_spaceship (rtx op0, rtx op1, rtx op2, rtx op3)
 	= force_reg (V2DImode, simplify_gen_subreg (V2DImode, op1, TImode, 0));
       op2
 	= force_reg (V2DImode, simplify_gen_subreg (V2DImode, op2, TImode, 0));
-      rtx lab = gen_label_rtx ();
+      rtx_code_label *lab = gen_label_rtx ();
       rtx ccz = gen_rtx_REG (CCZmode, CC_REGNUM);
       /* Compare high halves for equality.
 	 VEC[L]G op1, op2 sets
@@ -8398,10 +8398,10 @@ s390_expand_fp_spaceship (rtx op0, rtx op1, rtx op2, rtx op3)
   rtx cond_eq = gen_rtx_EQ (mode, cc_reg, const0_rtx);
   rtx cond_gt = gen_rtx_GT (mode, cc_reg, const0_rtx);
   rtx_insn *insn;
-  rtx l_unordered = gen_label_rtx ();
-  rtx l_eq = gen_label_rtx ();
-  rtx l_gt = gen_label_rtx ();
-  rtx l_end = gen_label_rtx ();
+  rtx_code_label *l_unordered = gen_label_rtx ();
+  rtx_code_label *l_eq = gen_label_rtx ();
+  rtx_code_label *l_gt = gen_label_rtx ();
+  rtx_code_label *l_end = gen_label_rtx ();
 
   s390_emit_compare (VOIDmode, LTGT, op1, op2);
   if (!flag_finite_math_only)
@@ -9830,7 +9830,7 @@ s390_end_pool (struct constant_pool *pool, rtx_insn *insn)
 /* Add INSN to the list of insns covered by POOL.  */
 
 static void
-s390_add_pool_insn (struct constant_pool *pool, rtx insn)
+s390_add_pool_insn (struct constant_pool *pool, rtx_insn *insn)
 {
   bitmap_set_bit (pool->insns, INSN_UID (insn));
 }
@@ -9950,7 +9950,7 @@ s390_execute_label (rtx insn)
    the pool to the location of the execute target.  */
 
 static rtx
-s390_find_execute (struct constant_pool *pool, rtx insn)
+s390_find_execute (struct constant_pool *pool, rtx_insn *insn)
 {
   struct constant *c;
 
@@ -10329,7 +10329,7 @@ s390_chunkify_start (void)
 
 	  for (i = 0; i < XVECLEN (vec_pat, diff_p); i++)
 	    {
-	      rtx label = XEXP (XVECEXP (vec_pat, diff_p, i), 0);
+	      rtx_insn *label = label_ref_label (XVECEXP (vec_pat, diff_p, i));
 
 	      if (s390_find_pool (pool_list, label)
 		  != s390_find_pool (pool_list, insn))
@@ -11751,11 +11751,11 @@ s390_initial_elimination_offset (int from, int to)
 /* Emit insn to save fpr REGNUM at offset OFFSET relative
    to register BASE.  Return generated insn.  */
 
-static rtx
+static rtx_insn *
 save_fpr (rtx base, int offset, int regnum)
 {
   rtx addr;
-  rtx insn;
+  rtx_insn *insn;
 
   addr = gen_rtx_MEM (DFmode, plus_constant (Pmode, base, offset));
 
@@ -11782,7 +11782,7 @@ save_fpr (rtx base, int offset, int regnum)
 /* Emit insn to restore fpr REGNUM from offset OFFSET relative
    to register BASE.  Return generated insn.  */
 
-static rtx
+static rtx_insn *
 restore_fpr (rtx base, int offset, int regnum)
 {
   rtx addr;
@@ -11799,7 +11799,8 @@ restore_fpr (rtx base, int offset, int regnum)
 static void
 save_gprs (rtx base, int offset, int first, int last, rtx_insn *before = NULL)
 {
-  rtx addr, insn, note;
+  rtx addr, note;
+  rtx_insn *insn;
   rtx_insn *out_insn;
   int i;
 
@@ -11809,7 +11810,8 @@ save_gprs (rtx base, int offset, int first, int last, rtx_insn *before = NULL)
   /* Special-case single register.  */
   if (first == last)
     {
-      insn = gen_movdi (addr, gen_rtx_REG (Pmode, first));
+      insn = as_a <rtx_insn *> (gen_movdi (addr,
+					   gen_rtx_REG (Pmode, first)));
 
       if (!global_not_special_regno_p (first))
 	RTX_FRAME_RELATED_P (insn) = 1;
@@ -11825,9 +11827,9 @@ save_gprs (rtx base, int offset, int first, int last, rtx_insn *before = NULL)
     }
 
 
-  insn = gen_store_multiple (addr,
-			     gen_rtx_REG (Pmode, first),
-			     GEN_INT (last - first + 1));
+  insn = as_a <rtx_insn *> (gen_store_multiple (addr,
+						gen_rtx_REG (Pmode, first),
+						GEN_INT (last - first + 1)));
 
   if (first <= 6 && cfun->stdarg)
     for (i = 0; i < XVECLEN (PATTERN (insn), 0); i++)
@@ -12138,7 +12140,7 @@ make_pass_s390_early_mach (gcc::context *ctxt)
    - push too big immediates to the literal pool and annotate the refs
    - emit frame related notes for stack pointer changes.  */
 
-static rtx
+static rtx_insn *
 s390_prologue_plus_offset (rtx target, rtx reg, rtx offset, bool frame_related_p)
 {
   rtx_insn *insn;
@@ -12318,7 +12320,8 @@ allocate_stack_space (rtx size, HOST_WIDE_INT last_probe_offset,
 void
 s390_emit_prologue (void)
 {
-  rtx insn, addr;
+  rtx_insn *insn;
+  rtx addr;
   rtx temp_reg;
   int i;
   int offset;
@@ -12726,7 +12729,8 @@ s390_emit_epilogue (bool sibcall)
 
   if (cfun_frame_layout.first_restore_gpr != -1)
     {
-      rtx insn, addr;
+      rtx addr;
+      rtx_insn *insn;
       int i;
 
       /* Check for global register and save them
@@ -12793,14 +12797,14 @@ s390_emit_epilogue (bool sibcall)
 	  cfun_frame_layout.save_return_addr_p = true;
 	}
 
-      insn = restore_gprs (frame_pointer,
-			   offset + cfun_frame_layout.gprs_offset
-			   + (cfun_frame_layout.first_restore_gpr
-			      - cfun_frame_layout.first_save_gpr_slot)
-			   * UNITS_PER_WORD,
-			   cfun_frame_layout.first_restore_gpr,
-			   cfun_frame_layout.last_restore_gpr);
-      insn = emit_insn (insn);
+      rtx pat = restore_gprs (frame_pointer,
+			      offset + cfun_frame_layout.gprs_offset
+			      + (cfun_frame_layout.first_restore_gpr
+				 - cfun_frame_layout.first_save_gpr_slot)
+			      * UNITS_PER_WORD,
+			      cfun_frame_layout.first_restore_gpr,
+			      cfun_frame_layout.last_restore_gpr);
+      insn = emit_insn (pat);
       REG_NOTES (insn) = cfa_restores;
       add_reg_note (insn, REG_CFA_DEF_CFA,
 		    plus_constant (Pmode, stack_pointer_rtx,
@@ -13971,7 +13975,7 @@ s390_expand_tbegin (rtx dest, rtx tdb, rtx retry, bool clobber_fprs_p)
       const int CC0 = 1 << 3;
       const int CC1 = 1 << 2;
       const int CC3 = 1 << 0;
-      rtx jump;
+      rtx_insn *jump;
       rtx count = gen_reg_rtx (SImode);
       rtx_code_label *leave_label = gen_label_rtx ();
 
@@ -14917,8 +14921,7 @@ static bool
 s390_fix_long_loop_prediction (rtx_insn *insn)
 {
   rtx set = single_set (insn);
-  rtx code_label, label_ref;
-  rtx_insn *uncond_jump;
+  rtx label_ref;
   rtx_insn *cur_insn;
   rtx tmp;
   int distance;
@@ -14945,7 +14948,7 @@ s390_fix_long_loop_prediction (rtx_insn *insn)
 
   gcc_assert (GET_CODE (label_ref) == LABEL_REF);
 
-  code_label = XEXP (label_ref, 0);
+  rtx_insn *code_label = label_ref_label (label_ref);
 
   if (INSN_ADDRESSES (INSN_UID (code_label)) == -1
       || INSN_ADDRESSES (INSN_UID (insn)) == -1
@@ -14960,7 +14963,7 @@ s390_fix_long_loop_prediction (rtx_insn *insn)
       return false;
 
   rtx_code_label *new_label = gen_label_rtx ();
-  uncond_jump = emit_jump_insn_after (
+  rtx_jump_insn *uncond_jump = emit_jump_insn_after (
 		  gen_rtx_SET (pc_rtx,
 			       gen_rtx_LABEL_REF (VOIDmode, code_label)),
 		  insn);
@@ -17325,8 +17328,8 @@ s390_rawmemchr (machine_mode elt_mode, rtx dst, rtx src, rtx pat)
 					   16 / GET_MODE_SIZE (elt_mode)).require();
   rtx lens = gen_reg_rtx (V16QImode);
   rtx pattern = gen_reg_rtx (vec_mode);
-  rtx loop_start = gen_label_rtx ();
-  rtx loop_end = gen_label_rtx ();
+  rtx_code_label *loop_start = gen_label_rtx ();
+  rtx_code_label *loop_end = gen_label_rtx ();
   rtx addr = gen_reg_rtx (Pmode);
   rtx offset = gen_reg_rtx (Pmode);
   rtx loadlen = gen_reg_rtx (SImode);
@@ -18167,9 +18170,11 @@ expand_perm_as_a_vlbr_vstbr_candidate (const struct expand_vec_perm_d &d)
 	{ 7,  6,  5,  4,  3,  2,  1, 0, 15, 14, 13, 12, 11, 10, 9,  8  },
 	{ 15, 14, 13, 12, 11, 10, 9, 8, 7,  6,  5,  4,  3,  2,  1,  0  } };
 
-  if (!TARGET_VXE2 || d.vmode != V16QImode || d.op0 != d.op1)
+  if (d.vmode != V16QImode || d.op0 != d.op1)
     return false;
 
+  /* For halfwords a byte-swap is a rotate by 8 bits (verllh), which does not
+     require VXE2.  */
   if (memcmp (d.perm, perm[0], MAX_VECT_LEN) == 0)
     {
       if (!d.testing_p)
@@ -18180,6 +18185,9 @@ expand_perm_as_a_vlbr_vstbr_candidate (const struct expand_vec_perm_d &d)
 	}
       return true;
     }
+
+  if (!TARGET_VXE2)
+    return false;
 
   if (memcmp (d.perm, perm[1], MAX_VECT_LEN) == 0)
     {

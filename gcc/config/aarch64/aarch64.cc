@@ -3815,7 +3815,7 @@ aarch64_load_symref_appropriately (rtx dest, rtx imm,
    important because, unlike emit_move_insn, the move expanders know
    how to force Pmode objects into the constant pool even when the
    constant pool address is not itself legitimate.  */
-static rtx
+static rtx_insn *
 aarch64_emit_move (rtx dest, rtx src)
 {
   return (can_create_pseudo_p ()
@@ -5949,7 +5949,7 @@ aarch64_sub_sp (rtx temp1, rtx temp2, poly_int64 delta,
    Emit instructions to branch around the mode switch if PSTATE.SM already
    matches LOCAL_MODE.  Return the label that the branch jumps to.  */
 
-static rtx_insn *
+static rtx_code_label *
 aarch64_guard_switch_pstate_sm (rtx old_svcr, aarch64_isa_mode local_mode)
 {
   local_mode &= AARCH64_ISA_MODE_SM_STATE;
@@ -9452,14 +9452,14 @@ aarch64_pushwb_single_reg (machine_mode mode, unsigned regno,
 			   HOST_WIDE_INT adjustment)
  {
   rtx base_rtx = stack_pointer_rtx;
-  rtx insn, reg, mem;
+  rtx reg, mem;
 
   reg = gen_rtx_REG (mode, regno);
   mem = gen_rtx_PRE_MODIFY (Pmode, base_rtx,
 			    plus_constant (Pmode, base_rtx, -adjustment));
   mem = gen_frame_mem (mode, mem);
 
-  insn = emit_move_insn (mem, reg);
+  rtx_insn *insn = emit_move_insn (mem, reg);
   RTX_FRAME_RELATED_P (insn) = 1;
 }
 
@@ -9685,7 +9685,7 @@ aarch64_gcs_enabled (void)
 
 /* Check if X (or any sub-rtx of X) is a PACIASP/PACIBSP instruction.  */
 bool
-aarch_pac_insn_p (rtx x)
+aarch_pac_insn_p (rtx_insn *x)
 {
   if (!INSN_P (x))
     return false;
@@ -10766,7 +10766,7 @@ aarch64_read_old_svcr (unsigned int regno)
    load the incoming value of SVCR from its save slot into temporary
    register REGNO.  */
 
-static rtx_insn *
+static rtx_code_label *
 aarch64_guard_switch_pstate_sm (unsigned int regno,
 				aarch64_isa_mode local_mode)
 {
@@ -11072,7 +11072,7 @@ aarch64_expand_prologue (void)
   /* Enable PSTATE.SM, if required.  */
   if (aarch64_cfun_enables_pstate_sm ())
     {
-      rtx_insn *guard_label = nullptr;
+      rtx_code_label *guard_label = nullptr;
       if (known_ge (cfun->machine->frame.old_svcr_offset, 0))
 	{
 	  /* The current function is streaming-compatible.  Save the
@@ -11186,7 +11186,7 @@ aarch64_expand_epilogue (rtx_call_insn *sibcall)
   /* Reset PSTATE.SM, if required.  */
   if (aarch64_cfun_enables_pstate_sm ())
     {
-      rtx_insn *guard_label = nullptr;
+      rtx_code_label *guard_label = nullptr;
       if (known_ge (cfun->machine->frame.old_svcr_offset, 0))
 	guard_label = aarch64_guard_switch_pstate_sm (IP0_REGNUM,
 						      AARCH64_ISA_MODE);
@@ -11304,7 +11304,7 @@ aarch64_expand_epilogue (rtx_call_insn *sibcall)
       rtx_code_label *label = gen_label_rtx ();
       rtx x = aarch64_gen_compare_zero_and_branch (EQ, EH_RETURN_TAKEN_RTX,
 						   label);
-      rtx jump = emit_jump_insn (x);
+      rtx_insn *jump = emit_jump_insn (x);
       JUMP_LABEL (jump) = label;
       LABEL_NUSES (label)++;
       emit_insn (gen_add2_insn (stack_pointer_rtx,
@@ -14515,6 +14515,21 @@ aarch64_elf_asm_destructor (rtx symbol, int priority)
     }
 }
 
+/* True if the base of a jump table whose body is DIFF_VEC has to be
+   materialised with ADRP and ADD rather than ADR.  Once other jumps dispatch
+   through the same table the base is defined once and the copies are spread
+   over the whole function, which ADR does not cover.  The tiny code model
+   bounds the whole program by 1MB, so ADR always reaches there.  Under the
+   other models the base is still a label in this function, whose text is
+   limited to 4GB, so the page-relative form is enough.  */
+
+static bool
+aarch64_far_jump_table_base_p (rtx diff_vec)
+{
+  return (JUMP_TABLE_SHARED_P (diff_vec)
+	  && aarch64_cmodel != AARCH64_CMODEL_TINY);
+}
+
 const char*
 aarch64_output_casesi (rtx *operands)
 {
@@ -14555,15 +14570,57 @@ aarch64_output_casesi (rtx *operands)
   /* Need to implement table size reduction, by changing the code below.  */
   output_asm_insn (patterns[index][0], operands);
   ASM_GENERATE_INTERNAL_LABEL (label, "Lrtx", CODE_LABEL_NUMBER (operands[2]));
-  snprintf (buf, sizeof (buf),
-	    "adr\t%%4, %s", targetm.strip_name_encoding (label));
-  output_asm_insn (buf, operands);
+  const char *name = targetm.strip_name_encoding (label);
+  if (aarch64_far_jump_table_base_p (diff_vec))
+    {
+      /* Several jumps dispatch through this table and there is one base,
+	 so the distance to it is bounded only by the size of the function.
+	 ADR only reaches 1MB.  */
+      snprintf (buf, sizeof (buf), "adrp\t%%4, %s", name);
+      output_asm_insn (buf, operands);
+      snprintf (buf, sizeof (buf), "add\t%%4, %%4, :lo12:%s", name);
+      output_asm_insn (buf, operands);
+    }
+  else
+    {
+      snprintf (buf, sizeof (buf), "adr\t%%4, %s", name);
+      output_asm_insn (buf, operands);
+    }
   output_asm_insn (patterns[index][1], operands);
   output_asm_insn ("br\t%3", operands);
   output_asm_insn (aarch64_sls_barrier (aarch64_harden_sls_retbr_p ()),
 		   operands);
-  assemble_label (asm_out_file, label);
+  if (!JUMP_TABLE_SHARED_P (diff_vec))
+    assemble_label (asm_out_file, label);
   return "";
+}
+
+/* Return true if the dispatch INSN needs the longer base sequence.  Used by
+   the length attribute of the dispatch pattern.  */
+
+bool
+aarch64_casesi_far_base_p (rtx_insn *insn)
+{
+  rtx_jump_table_data *table;
+
+  return (tablejump_p (insn, NULL, &table)
+	  && aarch64_far_jump_table_base_p (PATTERN (table)));
+}
+
+/* Implement TARGET_ASM_JUMP_TABLE_BASE.  The entries of a table are the
+   distance from the base to the case handler, so the base has to be a
+   text label.  Emit it here, just before the table's own label, rather than
+   from the output template of the dispatching jump: several jumps may
+   dispatch through the one table, and the base has to be defined once.  */
+
+static void
+aarch64_asm_jump_table_base (FILE *stream, rtx_jump_table_data *,
+			     unsigned long labelno)
+{
+  char label[100];
+
+  ASM_GENERATE_INTERNAL_LABEL (label, "Lrtx", labelno);
+  assemble_label (stream, label);
 }
 
 /* Return the asm string for an SME ZERO instruction whose 8-bit mask
@@ -29645,8 +29702,8 @@ aarch64_expand_cpymem (rtx *operands, bool is_memmove)
 	mode = V4SImode;
 
       rtx reg = gen_reg_rtx (mode);
-      rtx load = gen_move_insn (reg, adjust_address (src, mode, offset));
-      rtx store = gen_move_insn (adjust_address (dst, mode, offset), reg);
+      rtx_insn *load = gen_move_insn (reg, adjust_address (src, mode, offset));
+      rtx_insn *store = gen_move_insn (adjust_address (dst, mode, offset), reg);
       ops.safe_push ({ load, store });
       size -= mode_bytes;
       offset += mode_bytes;
@@ -33577,7 +33634,7 @@ aarch64_switch_pstate_sm_for_landing_pad (basic_block bb)
     return false;
 
   start_sequence ();
-  rtx_insn *guard_label = nullptr;
+  rtx_code_label *guard_label = nullptr;
   if (TARGET_STREAMING_COMPATIBLE)
     guard_label = aarch64_guard_switch_pstate_sm (IP0_REGNUM,
 						  AARCH64_ISA_MODE_SM_OFF);
@@ -33604,7 +33661,7 @@ aarch64_switch_pstate_sm_for_jump (rtx_insn *jump)
     return false;
 
   start_sequence ();
-  rtx_insn *guard_label = nullptr;
+  rtx_code_label *guard_label = nullptr;
   if (TARGET_STREAMING_COMPATIBLE)
     guard_label = aarch64_guard_switch_pstate_sm (IP0_REGNUM,
 						  AARCH64_ISA_MODE_SM_OFF);
@@ -33634,7 +33691,7 @@ aarch64_switch_pstate_sm_for_call (rtx_call_insn *call)
   /* Switch mode before the call, preserving any argument registers
      across the switch.  */
   start_sequence ();
-  rtx_insn *args_guard_label = nullptr;
+  rtx_code_label *args_guard_label = nullptr;
   if (TARGET_STREAMING_COMPATIBLE)
     args_guard_label = aarch64_guard_switch_pstate_sm (IP0_REGNUM,
 						       callee_isa_mode);
@@ -33654,7 +33711,7 @@ aarch64_switch_pstate_sm_for_call (rtx_call_insn *call)
   /* Switch mode after the call, preserving any return registers across
      the switch.  */
   start_sequence ();
-  rtx_insn *return_guard_label = nullptr;
+  rtx_code_label *return_guard_label = nullptr;
   if (TARGET_STREAMING_COMPATIBLE)
     return_guard_label = aarch64_guard_switch_pstate_sm (IP0_REGNUM,
 							 callee_isa_mode);
@@ -34064,10 +34121,10 @@ aarch64_expand_fp_spaceship (rtx dest, rtx op0, rtx op1, rtx hint)
 
   if (hint == const0_rtx)
     {
-      rtx un_label = gen_label_rtx ();
-      rtx lt_label = gen_label_rtx ();
-      rtx gt_label = gen_label_rtx ();
-      rtx end_label = gen_label_rtx ();
+      rtx_code_label *un_label = gen_label_rtx ();
+      rtx_code_label *lt_label = gen_label_rtx ();
+      rtx_code_label *gt_label = gen_label_rtx ();
+      rtx_code_label *end_label = gen_label_rtx ();
 
       rtx temp = gen_rtx_IF_THEN_ELSE (VOIDmode, cc_un,
 			gen_rtx_LABEL_REF (Pmode, un_label), pc_rtx);
@@ -34417,6 +34474,9 @@ aarch64_run_selftests (void)
 
 #undef TARGET_ASM_ALIGNED_HI_OP
 #define TARGET_ASM_ALIGNED_HI_OP "\t.hword\t"
+
+#undef TARGET_ASM_JUMP_TABLE_BASE
+#define TARGET_ASM_JUMP_TABLE_BASE aarch64_asm_jump_table_base
 
 #undef TARGET_ASM_ALIGNED_SI_OP
 #define TARGET_ASM_ALIGNED_SI_OP "\t.word\t"

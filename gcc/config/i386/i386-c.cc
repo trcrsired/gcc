@@ -794,6 +794,8 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
     def_or_undef (parse_in, "__AVX10V2AUX__");
   if (isa_flag2 & OPTION_MASK_ISA2_ACEV1)
     def_or_undef (parse_in, "__ACEV1__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AVX10V1AUX)
+    def_or_undef (parse_in, "__AVX10V1AUX__");
   if (TARGET_IAMCU)
     {
       def_or_undef (parse_in, "__iamcu");
@@ -975,8 +977,9 @@ ix86_target_macros (void)
   cpp_define (parse_in, "__SEG_FS");
   cpp_define (parse_in, "__SEG_GS");
 
-  if (flag_cf_protection != CF_NONE)
-    cpp_define_formatted (parse_in, "__CET__=%d", flag_cf_protection & ~CF_SET);
+  if (flag_cf_protection & (CF_BRANCH | CF_RETURN))
+    cpp_define_formatted (parse_in, "__CET__=%d",
+			  flag_cf_protection & (CF_BRANCH | CF_RETURN));
 }
 
 

@@ -943,8 +943,12 @@ output_call_frame_info (int for_eh)
 			     eh_data_format_name (fde_encoding));
     }
 
-  FOR_EACH_VEC_ELT (*cie_cfi_vec, i, cfi)
-    output_cfi (cfi, NULL, for_eh);
+  /* cie_cfi_vec is created lazily by the dwarf2 frame pass.
+     The RTL front end allows for starting from a pass after that so that
+     this can be absent.  */
+  if (cie_cfi_vec)
+    FOR_EACH_VEC_ELT (*cie_cfi_vec, i, cfi)
+      output_cfi (cfi, NULL, for_eh);
 
   /* Pad the CIE out to an address sized boundary.  */
   ASM_OUTPUT_ALIGN (asm_out_file,
@@ -14632,7 +14636,7 @@ reg_loc_descriptor (rtx rtl, enum var_init_status initialized)
   if ((rtl == arg_pointer_rtx || rtl == frame_pointer_rtx)
       && (ira_use_lra_p
 	  ? lra_eliminate_regs (rtl, VOIDmode, NULL_RTX)
-	  : eliminate_regs (rtl, VOIDmode, NULL_RTX)) != rtl)
+	  : eliminate_regs (rtl, VOIDmode, nullptr)) != rtl)
     {
       dw_loc_descr_ref result = NULL;
 
@@ -15198,7 +15202,7 @@ based_loc_descr (rtx reg, poly_int64 offset,
     {
       rtx elim = (ira_use_lra_p
 		  ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-		  : eliminate_regs (reg, VOIDmode, NULL_RTX));
+		  : eliminate_regs (reg, VOIDmode, nullptr));
 
       if (elim != reg)
 	{
@@ -21617,7 +21621,7 @@ compute_frame_pointer_to_fb_displacement (poly_int64 offset)
 
   elim = (ira_use_lra_p
 	  ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-	  : eliminate_regs (reg, VOIDmode, NULL_RTX));
+	  : eliminate_regs (reg, VOIDmode, nullptr));
   elim = strip_offset_and_add (elim, &offset);
 
   frame_pointer_fb_offset = -offset;

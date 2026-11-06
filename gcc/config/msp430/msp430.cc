@@ -1707,6 +1707,13 @@ msp430_insn_cost (rtx_insn *insn, bool speed ATTRIBUTE_UNUSED)
 
 /* We use this to wrap all emitted insns in the prologue, so they get
    the "frame-related" (/f) flag set.  */
+static rtx_insn *
+F (rtx_insn *x)
+{
+  RTX_FRAME_RELATED_P (x) = 1;
+  return x;
+}
+
 static rtx
 F (rtx x)
 {
@@ -2886,7 +2893,7 @@ msp430_expand_prologue (void)
      that there is a single rtx representing the stack pointer,
      namely stack_pointer_rtx, and uses == to recognize it.  */
   rtx sp = stack_pointer_rtx;
-  rtx p;
+  rtx_insn *p;
 
   if (is_naked_func ())
     {
@@ -3007,7 +3014,7 @@ msp430_expand_epilogue (int is_eh)
   int i, j;
   int fs;
   rtx sp = stack_pointer_rtx;
-  rtx p;
+  rtx_insn *p;
   int helper_n = 0;
 
   if (is_naked_func ())
@@ -3321,8 +3328,8 @@ msp430_expand_helper (rtx *operands, const char *helper_name,
 
   c = gen_call_value_internal (gen_rtx_REG (arg0mode, 12), fsym, GEN_INT (0));
 
-  c = emit_call_insn (c);
-  RTL_CONST_CALL_P (c) = 1;
+  rtx_insn *call = emit_call_insn (c);
+  RTL_CONST_CALL_P (call) = 1;
 
   /* Add register usage information for the arguments to the call.  */
   fusage = NULL;
@@ -3336,7 +3343,7 @@ msp430_expand_helper (rtx *operands, const char *helper_name,
       else
 	use_regs (&fusage, arg2, arg1sz);
     }
-  add_function_usage_to (c, fusage);
+  add_function_usage_to (call, fusage);
 
   emit_move_insn (operands[0],
 		  /* Return value will always start in R12.  */

@@ -683,12 +683,16 @@
 ;; Is copying of this instruction disallowed?
 (define_attr "cannot_copy" "no,yes" (const_string "no"))
 
+;; Multiply part attribute distinguishes mul (low) from mulh/mulhu/mulhsu (high)
+(define_attr "mul_part" "low,high"
+  (const_string "low"))
+
 ;; Microarchitectures we know how to tune for.
 ;; Keep this in sync with enum riscv_microarchitecture.
 (define_attr "tune"
   "generic,sifive_7,sifive_p400,sifive_p600,xiangshan,generic_ooo,mips_p8700,
    tt_ascalon_d8,tt_ascalon_xg,andes_25_series,andes_23_series,andes_45_series,
-   spacemit_x60,arcv_rmx100,arcv_rhx100,xt_c908"
+   spacemit_x60,arcv_rmx100,arcv_rhx100,arcv_rpx100,xt_c908"
   (const (symbol_ref "((enum attr_tune) riscv_microarchitecture)")))
 
 ;; Describe a user's asm statement.
@@ -1319,7 +1323,8 @@
   "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
   "mulh<u>\t%0,%1,%2"
   [(set_attr "type" "imul")
-   (set_attr "mode" "DI")])
+   (set_attr "mode" "DI")
+   (set_attr "mul_part" "high")])
 
 (define_expand "usmulditi3"
   [(set (match_operand:TI                          0 "register_operand")
@@ -1350,7 +1355,8 @@
   "(TARGET_ZMMUL || TARGET_MUL) && TARGET_64BIT"
   "mulhsu\t%0,%2,%1"
   [(set_attr "type" "imul")
-   (set_attr "mode" "DI")])
+   (set_attr "mode" "DI")
+   (set_attr "mul_part" "high")])
 
 (define_expand "<u>mulsidi3"
   [(set (match_operand:DI            0 "register_operand" "=r")
@@ -1380,7 +1386,8 @@
   "(TARGET_ZMMUL || TARGET_MUL) && !TARGET_64BIT"
   "mulh<u>\t%0,%1,%2"
   [(set_attr "type" "imul")
-   (set_attr "mode" "SI")])
+   (set_attr "mode" "SI")
+   (set_attr "mul_part" "high")])
 
 
 (define_expand "usmulsidi3"
@@ -1411,7 +1418,8 @@
   "(TARGET_ZMMUL || TARGET_MUL) && !TARGET_64BIT"
   "mulhsu\t%0,%2,%1"
   [(set_attr "type" "imul")
-   (set_attr "mode" "SI")])
+   (set_attr "mode" "SI")
+   (set_attr "mul_part" "high")])
 
 ;;
 ;;  ....................
@@ -2350,10 +2358,10 @@
   else
     {
       rtx reg;
-      rtx label1 = gen_label_rtx ();
-      rtx label2 = gen_label_rtx ();
-      rtx label3 = gen_label_rtx ();
-      rtx end_label = gen_label_rtx ();
+      rtx_code_label *label1 = gen_label_rtx ();
+      rtx_code_label *label2 = gen_label_rtx ();
+      rtx_code_label *label3 = gen_label_rtx ();
+      rtx_code_label *end_label = gen_label_rtx ();
       rtx abs_reg = gen_reg_rtx (<ANYF:MODE>mode);
       rtx coeff_reg = gen_reg_rtx (<ANYF:MODE>mode);
       rtx tmp_reg = gen_reg_rtx (<ANYF:MODE>mode);
@@ -4658,11 +4666,11 @@
       emit_insn (gen_ssrdp (word_mode, cur_ssp));
 
       /* Compare and jump over adjustment code.  */
-      rtx noadj_label = gen_label_rtx ();
+      rtx_code_label *noadj_label = gen_label_rtx ();
       emit_cmp_and_jump_insns (cur_ssp, const0_rtx, EQ, NULL_RTX,
 			       word_mode, 1, noadj_label);
 
-      rtx loop_label = gen_label_rtx ();
+      rtx_code_label *loop_label = gen_label_rtx ();
       emit_label (loop_label);
       LABEL_NUSES (loop_label) = 1;
 
@@ -4686,7 +4694,7 @@
       emit_barrier ();
 
       /* Adjust the ssp in a loop.  */
-      rtx cmp_4k_label = gen_label_rtx ();
+      rtx_code_label *cmp_4k_label = gen_label_rtx ();
       emit_label (cmp_4k_label);
       LABEL_NUSES (cmp_4k_label) = 1;
 

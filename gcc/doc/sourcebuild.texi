@@ -2708,6 +2708,9 @@ Target supports the execution of @code{avx} instructions.
 @item avx10v2aux
 Target supports the execution of @code{avx10v2aux} instructions.
 
+@item avx10v1aux
+Target supports the execution of @code{avx10v1aux} instructions.
+
 @item avx10.1
 Target supports the execution of @code{avx10.1} instructions.
 
@@ -3064,6 +3067,9 @@ Target supports automatic stack alignment.
 @item branch_cost
 Target supports @option{-branch-cost=N}.
 
+@item checking
+Compiler has been configured with internal checking enabled.
+
 @item const_volatile_readonly_section
 Target places const volatile variables in readonly sections.
 
@@ -3219,6 +3225,11 @@ and @code{double}.  These optabs are: @code{fma_optab}, @code{fms_optab},
 
 @item section_anchors
 Target supports section anchors.
+
+@item shared_jump_tables
+Target makes the copies of a loop switch dispatch that
+@option{-fduplicate-switch-dispatch} creates share one jump table, with the
+current multilib and test options.  Use it only in test directives.
 
 @item shf_gnu_retain
 Target supports @code{SHF_GNU_RETAIN}.

@@ -19,6 +19,7 @@ You should have received a copy of the GNU General Public License
 along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
+#define INCLUDE_STRING
 #include "config.h"
 #include "system.h"
 #include "coretypes.h"
@@ -822,8 +823,6 @@ pp_points_to_solution (pretty_printer *pp, const pt_solution *pt)
     pp_string (pp, "escaped ");
   if (pt->ipa_escaped)
     pp_string (pp, "unit-escaped ");
-  if (pt->null)
-    pp_string (pp, "null ");
   if (pt->const_pool)
     pp_string (pp, "const-pool ");
   if (pt->vars

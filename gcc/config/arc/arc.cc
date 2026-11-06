@@ -198,7 +198,7 @@ static void arc_encode_section_info (tree decl, rtx rtl, int first);
 static void arc_init_builtins (void);
 static rtx arc_expand_builtin (tree, rtx, rtx, machine_mode, int);
 
-static int branch_dest (rtx);
+static int branch_dest (rtx_insn *);
 
 static void  arc_output_pic_addr_const (FILE *,  rtx, int);
 static bool arc_function_ok_for_sibcall (tree, tree);
@@ -588,7 +588,7 @@ static rtx arc_delegitimize_address (rtx);
 static bool arc_can_follow_jump (const rtx_insn *follower,
 				 const rtx_insn *followee);
 
-static rtx frame_insn (rtx);
+static rtx_insn *frame_insn (rtx);
 static void arc_function_arg_advance (cumulative_args_t,
 				      const function_arg_info &);
 static rtx arc_legitimize_address_0 (rtx, rtx, machine_mode mode);
@@ -690,6 +690,9 @@ static rtx arc_legitimize_address_0 (rtx, rtx, machine_mode mode);
 
 #undef TARGET_CAN_FOLLOW_JUMP
 #define TARGET_CAN_FOLLOW_JUMP arc_can_follow_jump
+
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P arc_can_share_jump_table_p
 
 #undef TARGET_DELEGITIMIZE_ADDRESS
 #define TARGET_DELEGITIMIZE_ADDRESS arc_delegitimize_address
@@ -2488,17 +2491,17 @@ arc_address_cost (rtx addr, machine_mode, addr_space_t, bool speed)
 
 /* Emit instruction X with the frame related bit set.  */
 
-static rtx
+static rtx_insn *
 frame_insn (rtx x)
 {
-  x = emit_insn (x);
-  RTX_FRAME_RELATED_P (x) = 1;
-  return x;
+  rtx_insn *insn = emit_insn (x);
+  RTX_FRAME_RELATED_P (insn) = 1;
+  return insn;
 }
 
 /* Emit a frame insn to move SRC to DST.  */
 
-static rtx
+static rtx_insn *
 frame_move (rtx dst, rtx src)
 {
   rtx tmp = gen_rtx_SET (dst, src);
@@ -2509,10 +2512,10 @@ frame_move (rtx dst, rtx src)
 /* Like frame_move, but add a REG_INC note for REG if ADDR contains an
    auto increment address, or is zero.  */
 
-static rtx
+static rtx_insn *
 frame_move_inc (rtx dst, rtx src, rtx reg, rtx addr)
 {
-  rtx insn = frame_move (dst, src);
+  rtx_insn *insn = frame_move (dst, src);
 
   if (!addr
       || GET_CODE (addr) == PRE_DEC || GET_CODE (addr) == POST_INC
@@ -2523,18 +2526,18 @@ frame_move_inc (rtx dst, rtx src, rtx reg, rtx addr)
 
 /* Emit a frame insn which adjusts a frame address register REG by OFFSET.  */
 
-static rtx
+static rtx_insn *
 frame_add (rtx reg, HOST_WIDE_INT offset)
 {
   gcc_assert ((offset & 0x3) == 0);
   if (!offset)
-    return NULL_RTX;
+    return nullptr;
   return frame_move (reg, plus_constant (Pmode, reg, offset));
 }
 
 /* Emit a frame insn which adjusts stack pointer by OFFSET.  */
 
-static rtx
+static rtx_insn *
 frame_stack_add (HOST_WIDE_INT offset)
 {
   return frame_add (stack_pointer_rtx, offset);
@@ -2904,7 +2907,8 @@ arc_compute_frame_size (void)
 static void
 arc_dwarf_emit_irq_save_regs (void)
 {
-  rtx tmp, par, insn, reg;
+  rtx tmp, par, reg;
+  rtx_insn *insn;
   int i, offset, j;
 
   par = gen_rtx_SEQUENCE (VOIDmode,
@@ -3001,7 +3005,7 @@ push_reg (rtx reg)
 {
   rtx stkslot = gen_rtx_MEM (GET_MODE (reg), gen_rtx_PRE_DEC (Pmode,
 						   stack_pointer_rtx));
-  rtx insn = emit_move_insn (stkslot, reg);
+  rtx_insn *insn = emit_move_insn (stkslot, reg);
   RTX_FRAME_RELATED_P (insn) = 1;
   add_reg_note (insn, REG_CFA_ADJUST_CFA,
 		gen_rtx_SET (stack_pointer_rtx,
@@ -3017,7 +3021,7 @@ push_reg (rtx reg)
 static int
 frame_restore_reg (rtx reg, HOST_WIDE_INT offset)
 {
-  rtx addr, insn;
+  rtx addr;
 
   if (offset)
     {
@@ -3031,7 +3035,7 @@ frame_restore_reg (rtx reg, HOST_WIDE_INT offset)
   else
     addr = gen_frame_mem (GET_MODE (reg), gen_rtx_POST_INC (Pmode,
 							    stack_pointer_rtx));
-  insn = frame_move_inc (reg, addr, stack_pointer_rtx, 0);
+  rtx_insn *insn = frame_move_inc (reg, addr, stack_pointer_rtx, 0);
   add_reg_note (insn, REG_CFA_RESTORE, reg);
 
   if (reg == hard_frame_pointer_rtx)
@@ -3055,7 +3059,7 @@ pop_reg (rtx reg)
 {
   rtx stkslot = gen_rtx_MEM (GET_MODE (reg), gen_rtx_POST_INC (Pmode,
 						   stack_pointer_rtx));
-  rtx insn = emit_move_insn (reg, stkslot);
+  rtx_insn *insn = emit_move_insn (reg, stkslot);
   RTX_FRAME_RELATED_P (insn) = 1;
   add_reg_note (insn, REG_CFA_ADJUST_CFA,
 		gen_rtx_SET (stack_pointer_rtx,
@@ -3198,8 +3202,8 @@ arc_restore_callee_saves (uint64_t gmask,
     {
       rtx addr = plus_constant (Pmode, stack_pointer_rtx, offs);
       reg = gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM);
-      rtx insn = frame_move_inc (reg, gen_frame_mem (Pmode, addr),
-				 stack_pointer_rtx, NULL_RTX);
+      rtx_insn *insn = frame_move_inc (reg, gen_frame_mem (Pmode, addr),
+				       stack_pointer_rtx, NULL_RTX);
       add_reg_note (insn, REG_CFA_RESTORE, reg);
       restore_blink = false;
     }
@@ -3269,7 +3273,7 @@ arc_save_callee_enter (uint64_t gmask,
   int start_reg = ENTER_LEAVE_START_REG;
   int end_reg = ENTER_LEAVE_END_REG;
   int regno, indx, off, nregs;
-  rtx insn, reg, mem;
+  rtx reg, mem;
   int frame_allocated = 0;
 
   for (regno = start_reg; regno <= end_reg && (gmask & (1ULL << regno));)
@@ -3283,8 +3287,8 @@ arc_save_callee_enter (uint64_t gmask,
   if (offset)
     frame_stack_add (offset);
 
-  insn = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (nregs + (save_fp ? 1 : 0)
-						  + 1));
+  rtx body = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (nregs + (save_fp ? 1 : 0)
+						      + 1));
   indx = 0;
 
   reg = gen_rtx_SET (stack_pointer_rtx,
@@ -3292,7 +3296,7 @@ arc_save_callee_enter (uint64_t gmask,
 				    stack_pointer_rtx,
 				    -nregs * UNITS_PER_WORD));
   RTX_FRAME_RELATED_P (reg) = 1;
-  XVECEXP (insn, 0, indx++) = reg;
+  XVECEXP (body, 0, indx++) = reg;
   off = nregs * UNITS_PER_WORD;
 
   if (save_blink)
@@ -3301,8 +3305,8 @@ arc_save_callee_enter (uint64_t gmask,
       mem = gen_frame_mem (Pmode, plus_constant (Pmode,
 						 stack_pointer_rtx,
 						 -off));
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (mem, reg);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx++)) = 1;
+      XVECEXP (body, 0, indx) = gen_rtx_SET (mem, reg);
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx++)) = 1;
       off -= UNITS_PER_WORD;
       save_blink = false;
     }
@@ -3315,8 +3319,8 @@ arc_save_callee_enter (uint64_t gmask,
       mem = gen_frame_mem (SImode, plus_constant (Pmode,
 						  stack_pointer_rtx,
 						  -off));
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (mem, reg);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx)) = 1;
+      XVECEXP (body, 0, indx) = gen_rtx_SET (mem, reg);
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx)) = 1;
       gmask = gmask & ~(1ULL << regno);
     }
 
@@ -3325,18 +3329,18 @@ arc_save_callee_enter (uint64_t gmask,
       mem = gen_frame_mem (Pmode, plus_constant (Pmode,
 						 stack_pointer_rtx,
 						 -off));
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (mem, hard_frame_pointer_rtx);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx++)) = 1;
+      XVECEXP (body, 0, indx) = gen_rtx_SET (mem, hard_frame_pointer_rtx);
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx++)) = 1;
       off -= UNITS_PER_WORD;
 
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (hard_frame_pointer_rtx,
+      XVECEXP (body, 0, indx) = gen_rtx_SET (hard_frame_pointer_rtx,
 					     stack_pointer_rtx);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx++)) = 1;
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx++)) = 1;
       save_fp = false;
     }
 
   gcc_assert (off == 0);
-  insn = frame_insn (insn);
+  rtx_insn *insn = frame_insn (body);
 
   add_reg_note (insn, REG_INC, stack_pointer_rtx);
 
@@ -3361,7 +3365,7 @@ arc_restore_callee_leave (uint64_t gmask,
   int start_reg = ENTER_LEAVE_START_REG;
   int end_reg = ENTER_LEAVE_END_REG;
   int regno, indx, off, nregs;
-  rtx insn, reg, mem;
+  rtx body, reg, mem;
   int frame_allocated = 0;
 
   for (regno = start_reg; regno <= end_reg && (gmask & (1ULL << regno));)
@@ -3372,12 +3376,12 @@ arc_restore_callee_leave (uint64_t gmask,
   nregs += restore_blink ? 1 : 0;
   nregs += restore_fp ? 1 : 0;
 
-  insn = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (nregs + 1
+  body = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (nregs + 1
 						  + (return_p ? 1 : 0)));
   indx = 0;
 
   if (return_p)
-    XVECEXP (insn, 0, indx++) = ret_rtx;
+    XVECEXP (body, 0, indx++) = ret_rtx;
 
   if (restore_fp)
     {
@@ -3401,7 +3405,7 @@ arc_restore_callee_leave (uint64_t gmask,
 				    stack_pointer_rtx,
 				    offset + nregs * UNITS_PER_WORD));
   RTX_FRAME_RELATED_P (reg) = 1;
-  XVECEXP (insn, 0, indx++) = reg;
+  XVECEXP (body, 0, indx++) = reg;
   off = nregs * UNITS_PER_WORD;
 
   if (restore_blink)
@@ -3410,8 +3414,8 @@ arc_restore_callee_leave (uint64_t gmask,
       mem = gen_frame_mem (Pmode, plus_constant (Pmode,
 						 stack_pointer_rtx,
 						 off));
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (reg, mem);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx++)) = 1;
+      XVECEXP (body, 0, indx) = gen_rtx_SET (reg, mem);
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx++)) = 1;
       off -= UNITS_PER_WORD;
     }
 
@@ -3423,8 +3427,8 @@ arc_restore_callee_leave (uint64_t gmask,
       mem = gen_frame_mem (SImode, plus_constant (Pmode,
 						  stack_pointer_rtx,
 						  off));
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (reg, mem);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx)) = 1;
+      XVECEXP (body, 0, indx) = gen_rtx_SET (reg, mem);
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx)) = 1;
       gmask = gmask & ~(1ULL << regno);
     }
 
@@ -3433,19 +3437,20 @@ arc_restore_callee_leave (uint64_t gmask,
       mem = gen_frame_mem (Pmode, plus_constant (Pmode,
 						 stack_pointer_rtx,
 						 off));
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (hard_frame_pointer_rtx, mem);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx++)) = 1;
+      XVECEXP (body, 0, indx) = gen_rtx_SET (hard_frame_pointer_rtx, mem);
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx++)) = 1;
       off -= UNITS_PER_WORD;
     }
 
   gcc_assert (off == 0);
+  rtx_insn *insn;
   if (return_p)
     {
-      insn = emit_jump_insn (insn);
+      insn = emit_jump_insn (body);
       RTX_FRAME_RELATED_P (insn) = 1;
     }
   else
-    insn = frame_insn (insn);
+    insn = frame_insn (body);
 
   add_reg_note (insn, REG_INC, stack_pointer_rtx);
 
@@ -3497,7 +3502,7 @@ arc_save_callee_milli (uint64_t gmask,
   int start_reg = 13;
   int end_reg = 25;
   int regno, indx, off, nregs;
-  rtx insn, reg, mem;
+  rtx body, reg, mem;
   int frame_allocated = 0;
 
   for (regno = start_reg; regno <= end_reg && (gmask & (1ULL << regno));)
@@ -3526,12 +3531,12 @@ arc_save_callee_milli (uint64_t gmask,
     }
 
   /* Start generate millicode call.  */
-  insn = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (nregs + 1));
+  body = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (nregs + 1));
   indx = 0;
 
   /* This is a call, we clobber blink.  */
-  XVECEXP (insn, 0, nregs) =
-    gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM));
+  XVECEXP (body, 0, nregs)
+    = gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM));
 
   for (regno = start_reg, indx = 0, off = 0;
        regno <= end_reg;
@@ -3541,11 +3546,11 @@ arc_save_callee_milli (uint64_t gmask,
       mem = gen_frame_mem (SImode, plus_constant (Pmode,
 						  stack_pointer_rtx,
 						  off));
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (mem, reg);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx)) = 1;
+      XVECEXP (body, 0, indx) = gen_rtx_SET (mem, reg);
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx)) = 1;
       gmask = gmask & ~(1ULL << regno);
     }
-  insn = frame_insn (insn);
+  rtx_insn *insn = frame_insn (body);
 
   /* Add DWARF info.  */
   for (regno = start_reg, off = 0;
@@ -3611,7 +3616,7 @@ arc_restore_callee_milli (uint64_t gmask,
   int start_reg = 13;
   int end_reg = 25;
   int regno, indx, off, nregs;
-  rtx insn, reg, mem;
+  rtx body, reg, mem;
   int frame_allocated = 0;
 
   for (regno = start_reg; regno <= end_reg && (gmask & (1ULL << regno));)
@@ -3642,7 +3647,7 @@ arc_restore_callee_milli (uint64_t gmask,
     }
 
   /* Start generate millicode call.  */
-  insn = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc ((return_p ? 1 : 0)
+  body = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc ((return_p ? 1 : 0)
 						  + nregs + 1));
   indx = 0;
 
@@ -3651,17 +3656,17 @@ arc_restore_callee_milli (uint64_t gmask,
       /* sibling call, the blink is restored with the help of the
 	 value held into r12.  */
       reg = gen_rtx_REG (Pmode, 12);
-      XVECEXP (insn, 0, indx++) = ret_rtx;
-      XVECEXP (insn, 0, indx++) =
-	gen_rtx_SET (stack_pointer_rtx,
-		     gen_rtx_PLUS (Pmode, stack_pointer_rtx, reg));
+      XVECEXP (body, 0, indx++) = ret_rtx;
+      XVECEXP (body, 0, indx++)
+	= gen_rtx_SET (stack_pointer_rtx,
+		       gen_rtx_PLUS (Pmode, stack_pointer_rtx, reg));
       frame_allocated += UNITS_PER_WORD;
     }
   else
     {
       /* This is a call, we clobber blink.  */
-      XVECEXP (insn, 0, nregs) =
-	gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM));
+      XVECEXP (body, 0, nregs)
+	= gen_rtx_CLOBBER (VOIDmode, gen_rtx_REG (Pmode, RETURN_ADDR_REGNUM));
     }
 
   for (regno = start_reg, off = 0;
@@ -3672,8 +3677,8 @@ arc_restore_callee_milli (uint64_t gmask,
       mem = gen_frame_mem (SImode, plus_constant (Pmode,
 						  stack_pointer_rtx,
 						  off));
-      XVECEXP (insn, 0, indx) = gen_rtx_SET (reg, mem);
-      RTX_FRAME_RELATED_P (XVECEXP (insn, 0, indx)) = 1;
+      XVECEXP (body, 0, indx) = gen_rtx_SET (reg, mem);
+      RTX_FRAME_RELATED_P (XVECEXP (body, 0, indx)) = 1;
       gmask = gmask & ~(1ULL << regno);
     }
 
@@ -3687,22 +3692,23 @@ arc_restore_callee_milli (uint64_t gmask,
       mem = gen_frame_mem (SImode, plus_constant (Pmode,
 						  stack_pointer_rtx,
 						  off));
-      rtx tmp = frame_move_inc (reg, mem, stack_pointer_rtx, 0);
+      rtx_insn *tmp = frame_move_inc (reg, mem, stack_pointer_rtx, 0);
       add_reg_note (tmp, REG_CFA_RESTORE, reg);
       off += UNITS_PER_WORD;
     }
 
   /* Emit millicode call.  */
+  rtx_insn *insn;
   if (return_p)
     {
       reg = gen_rtx_REG (Pmode, 12);
       frame_insn (gen_rtx_SET (reg, GEN_INT (off)));
       frame_allocated += off;
-      insn = emit_jump_insn (insn);
+      insn = emit_jump_insn (body);
       RTX_FRAME_RELATED_P (insn) = 1;
     }
   else
-    insn = frame_insn (insn);
+    insn = frame_insn (body);
 
   /* Add DWARF info.  */
   for (regno = start_reg; regno <= end_reg; regno++)
@@ -3930,7 +3936,7 @@ arc_expand_epilogue (int sibcall_p)
   /* Restore accumulator registers.  */
   if (arc_must_save_register (R58_REG, cfun, true))
     {
-      rtx insn;
+      rtx_insn *insn;
       rtx reg0 = gen_rtx_REG (SImode, R0_REG);
       rtx reg1 = gen_rtx_REG (SImode, R1_REG);
       size_to_deallocate -= pop_reg (reg0);
@@ -5626,7 +5632,7 @@ arc_frame_pointer_required (void)
 /* Return the destination address of a branch.  */
 
 static int
-branch_dest (rtx branch)
+branch_dest (rtx_insn *branch)
 {
   rtx pat = PATTERN (branch);
   rtx dest = (GET_CODE (pat) == PARALLEL
@@ -7932,7 +7938,7 @@ static void
 hwloop_fail (hwloop_info loop)
 {
   rtx test;
-  rtx insn = loop->loop_end;
+  rtx_insn *insn = loop->loop_end;
 
   if (TARGET_DBNZ
       && (loop->length && (loop->length <= ARC_MAX_LOOP_LENGTH))
@@ -8000,7 +8006,7 @@ hwloop_optimize (hwloop_info loop)
   edge entry_edge;
   basic_block entry_bb, bb;
   rtx iter_reg;
-  rtx_insn *insn, *seq, *entry_after, *last_insn, *end_label;
+  rtx_insn *insn, *seq, *entry_after, *last_insn;
   unsigned int length;
   bool need_fix = false;
   rtx lp_reg = gen_rtx_REG (SImode, LP_COUNT);
@@ -8224,7 +8230,7 @@ hwloop_optimize (hwloop_info loop)
       return false;
     }
   /* The loop is good.  */
-  end_label = gen_label_rtx ();
+  rtx_code_label *end_label = gen_label_rtx ();
   loop->end_label = end_label;
 
   /* Place the zero_cost_loop_start instruction before the loop.  */
@@ -8580,7 +8586,7 @@ arc_reorg (void)
 	      else
 		{
 		  /* Check if this is a data dependency.  */
-		  rtx op, cc_clob_rtx, op0, op1, brcc_insn, note;
+		  rtx op, cc_clob_rtx, op0, op1, brcc_body, note;
 		  rtx cmp0, cmp1;
 
 		  /* Make sure we can use it for brcc insns.  */
@@ -8660,14 +8666,15 @@ arc_reorg (void)
 		  else
 		    cc_clob_rtx = gen_rtx_REG (CCmode, CC_REG);
 
-		  brcc_insn
+		  brcc_body
 		    = gen_rtx_IF_THEN_ELSE (VOIDmode, op, label, pc_rtx);
-		  brcc_insn = gen_rtx_SET (pc_rtx, brcc_insn);
+		  brcc_body = gen_rtx_SET (pc_rtx, brcc_body);
 		  cc_clob_rtx = gen_rtx_CLOBBER (VOIDmode, cc_clob_rtx);
-		  brcc_insn
+		  brcc_body
 		    = gen_rtx_PARALLEL
-			(VOIDmode, gen_rtvec (2, brcc_insn, cc_clob_rtx));
-		  brcc_insn = emit_jump_insn_before (brcc_insn, insn);
+			(VOIDmode, gen_rtvec (2, brcc_body, cc_clob_rtx));
+		  rtx_jump_insn *brcc_insn
+		    = emit_jump_insn_before (brcc_body, insn);
 
 		  JUMP_LABEL (brcc_insn) = JUMP_LABEL (insn);
 		  note = find_reg_note (insn, REG_BR_PROB, 0);
@@ -9580,7 +9587,7 @@ arc_predicate_delay_insns (void)
 /* Return nonzreo iff INSN writes to an extension core register.  */
 
 int
-arc_write_ext_corereg (rtx insn)
+arc_write_ext_corereg (rtx_insn *insn)
 {
   subrtx_iterator::array_type array;
   FOR_EACH_SUBRTX (iter, array, PATTERN (insn), NONCONST)
@@ -10150,6 +10157,15 @@ arc_can_follow_jump (const rtx_insn *follower, const rtx_insn *followee)
   return true;
 }
 
+/* Implement TARGET_CAN_SHARE_JUMP_TABLE_P.  The bi and bih dispatches branch
+   into a table of branches that has to follow them.  */
+
+static bool
+arc_can_share_jump_table_p (rtx_insn *)
+{
+  return !TARGET_BI_BIH;
+}
+
 
 /* Implement EPILOGUE_USES.
    Return true if REGNO should be added to the deemed uses of the epilogue.
@@ -10359,7 +10375,9 @@ arc_expand_compare_and_swap_qh (rtx bool_result, rtx result, rtx mem,
   rtx newvalue = gen_reg_rtx (SImode);
   rtx res = gen_reg_rtx (SImode);
   rtx resv = gen_reg_rtx (SImode);
-  rtx memsi, val, mask, end_label, loop_label, cc, x;
+  rtx memsi, val, mask;
+  rtx_code_label *end_label, *loop_label;
+  rtx cc, x;
   machine_mode mode;
   bool is_weak = (weak != const0_rtx);
 
@@ -10529,7 +10547,7 @@ arc_split_compare_and_swap (rtx operands[])
   machine_mode mode;
   enum memmodel mod_s, mod_f;
   bool is_weak;
-  rtx label1, label2, x, cond;
+  rtx x, cond;
 
   rval = operands[0];
   mem = operands[1];
@@ -10545,13 +10563,13 @@ arc_split_compare_and_swap (rtx operands[])
 
   arc_pre_atomic_barrier (mod_s);
 
-  label1 = NULL_RTX;
+  rtx_code_label *label1 = nullptr;
   if (!is_weak)
     {
       label1 = gen_label_rtx ();
       emit_label (label1);
     }
-  label2 = gen_label_rtx ();
+  rtx_code_label *label2 = gen_label_rtx ();
 
   /* Load exclusive.  */
   emit_insn (gen_arc_load_exclusivesi (rval, mem));
@@ -10600,7 +10618,7 @@ arc_expand_atomic_op (enum rtx_code code, rtx mem, rtx val,
 {
   enum memmodel model = (enum memmodel) INTVAL (model_rtx);
   machine_mode mode = GET_MODE (mem);
-  rtx label, x, cond;
+  rtx x, cond;
   rtx before = orig_before, after = orig_after;
 
   /* ARC atomic ops work only with 32-bit aligned memories.  */
@@ -10608,9 +10626,9 @@ arc_expand_atomic_op (enum rtx_code code, rtx mem, rtx val,
 
   arc_pre_atomic_barrier (model);
 
-  label = gen_label_rtx ();
+  rtx_code_label *label = gen_label_rtx ();
   emit_label (label);
-  label = gen_rtx_LABEL_REF (VOIDmode, label);
+  rtx label_ref = gen_rtx_LABEL_REF (VOIDmode, label);
 
   if (before == NULL_RTX)
     before = gen_reg_rtx (mode);
@@ -10651,7 +10669,7 @@ arc_expand_atomic_op (enum rtx_code code, rtx mem, rtx val,
   cond = gen_rtx_REG (CC_Zmode, CC_REG);
   x = gen_rtx_NE (VOIDmode, cond, const0_rtx);
   x = gen_rtx_IF_THEN_ELSE (VOIDmode, x,
-			    label, pc_rtx);
+			    label_ref, pc_rtx);
   emit_unlikely_jump (gen_rtx_SET (pc_rtx, x));
 
   arc_post_atomic_barrier (model);

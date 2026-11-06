@@ -172,8 +172,8 @@ static int arm_register_move_cost (machine_mode, reg_class_t, reg_class_t);
 static int arm_memory_move_cost (machine_mode, reg_class_t, bool);
 static void emit_constant_insn (rtx cond, rtx pattern);
 static rtx_insn *emit_set_insn (rtx, rtx);
-static void arm_add_cfa_adjust_cfa_note (rtx, int, rtx, rtx);
-static rtx emit_multi_reg_push (unsigned long, unsigned long);
+static void arm_add_cfa_adjust_cfa_note (rtx_insn *, int, rtx, rtx);
+static rtx_insn *emit_multi_reg_push (unsigned long, unsigned long);
 static void arm_emit_multi_reg_pop (unsigned long);
 static int vfp_emit_fstmd (int, int);
 static void arm_emit_vfp_multi_reg_pop (int, int, rtx);
@@ -626,6 +626,12 @@ static const scoped_attribute_specs *const arm_attribute_table[] =
 
 #undef  TARGET_CANNOT_COPY_INSN_P
 #define TARGET_CANNOT_COPY_INSN_P arm_cannot_copy_insn_p
+
+/* The dispatch sequences find the table through the PC or LR, or define a
+   base label of their own, and arm_reorg expects every table to follow its
+   jump.  */
+#undef TARGET_CAN_SHARE_JUMP_TABLE_P
+#define TARGET_CAN_SHARE_JUMP_TABLE_P hook_bool_rtx_insn_false
 
 #ifdef HAVE_AS_TLS
 #undef TARGET_HAVE_TLS
@@ -4388,7 +4394,7 @@ static inline bool reg_needs_saving_p (unsigned reg)
    call.  SIBLING is the call insn, so we can examine its register usage.  */
 
 int
-use_return_insn (int iscond, rtx sibling)
+use_return_insn (int iscond, rtx_insn *sibling)
 {
   int regno;
   unsigned int func_type;
@@ -4710,7 +4716,7 @@ const_ok_for_dimode_op (HOST_WIDE_INT i, enum rtx_code code)
 
 /* ??? Tweak this for thumb2.  */
 int
-arm_split_constant (enum rtx_code code, machine_mode mode, rtx insn,
+arm_split_constant (enum rtx_code code, machine_mode mode, rtx_insn *insn,
 		    HOST_WIDE_INT val, rtx target, rtx source, int subtargets)
 {
   rtx cond;
@@ -18086,7 +18092,8 @@ cmse_clear_registers (sbitmap to_clear_bitmap, uint32_t *padding_bits_to_clear,
     {
       rtvec vunspec_vec;
       int i, j, k, nb_regs;
-      rtx use_seq, par, reg, set, vunspec;
+      rtx_insn *use_seq;
+      rtx par, reg, set, vunspec;
       int to_clear_bitmap_size = SBITMAP_SIZE (to_clear_bitmap);
       auto_sbitmap core_regs_bitmap (to_clear_bitmap_size);
       auto_sbitmap to_clear_core_bitmap (to_clear_bitmap_size);
@@ -18367,8 +18374,8 @@ cmse_nonsecure_call_inline_register_clear (void)
 
 	  if (clear_callee_saved)
 	    {
-	      rtx push_insn =
-		emit_multi_reg_push (callee_saved_mask, callee_saved_mask);
+	      rtx_insn *push_insn
+		= emit_multi_reg_push (callee_saved_mask, callee_saved_mask);
 	      /* Disable frame debug info in push because it needs to be
 		 disabled for pop (see below).  */
 	      RTX_FRAME_RELATED_P (push_insn) = 0;
@@ -19008,9 +19015,9 @@ vfp_emit_fstmd (int base_reg, int count)
       XVECEXP (dwarf, 0, i + 1) = tmp;
     }
 
-  par = emit_insn (par);
-  add_reg_note (par, REG_FRAME_RELATED_EXPR, dwarf);
-  RTX_FRAME_RELATED_P (par) = 1;
+  rtx_insn *insn = emit_insn (par);
+  add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
+  RTX_FRAME_RELATED_P (insn) = 1;
 
   return count * 8;
 }
@@ -19038,9 +19045,7 @@ detect_cmse_nonsecure_call (tree addr)
 void
 arm_emit_call_insn (rtx pat, rtx addr, bool sibcall)
 {
-  rtx insn;
-
-  insn = emit_call_insn (pat);
+  rtx_insn *insn = emit_call_insn (pat);
 
   /* The PIC register is live on entry to VxWorks PIC PLT entries.
      If the call might use such an entry, add a use of the PIC register
@@ -21078,7 +21083,7 @@ thumb2_emit_strd_push (unsigned long saved_regs_mask)
      64-bit aligned).  */
   if ((num_regs & 1) != 0)
     {
-      rtx reg, mem, insn;
+      rtx reg, mem;
 
       reg = gen_rtx_REG (SImode, regno);
       if (num_regs == 1)
@@ -21093,7 +21098,7 @@ thumb2_emit_strd_push (unsigned long saved_regs_mask)
 
       tmp = gen_rtx_SET (mem, reg);
       RTX_FRAME_RELATED_P (tmp) = 1;
-      insn = emit_insn (tmp);
+      rtx_insn *insn = emit_insn (tmp);
       RTX_FRAME_RELATED_P (insn) = 1;
       add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
       tmp = gen_rtx_SET (gen_frame_mem (Pmode, stack_pointer_rtx), reg);
@@ -21121,7 +21126,6 @@ thumb2_emit_strd_push (unsigned long saved_regs_mask)
 
 	if (first)
 	  {
-	    rtx insn;
 
 	    first = false;
 	    mem1 = gen_frame_mem (Pmode, plus_constant (Pmode,
@@ -21142,7 +21146,7 @@ thumb2_emit_strd_push (unsigned long saved_regs_mask)
 	    XVECEXP (par, 0, 0) = tmp0;
 	    XVECEXP (par, 0, 1) = tmp1;
 	    XVECEXP (par, 0, 2) = tmp2;
-	    insn = emit_insn (par);
+	    rtx_insn *insn = emit_insn (par);
 	    RTX_FRAME_RELATED_P (insn) = 1;
 	    add_reg_note (insn, REG_FRAME_RELATED_EXPR, dwarf);
 	  }
@@ -21203,7 +21207,7 @@ arm_emit_strd_push (unsigned long saved_regs_mask)
   int i, j, dwarf_index  = 0;
   int offset = 0;
   rtx dwarf = NULL_RTX;
-  rtx insn = NULL_RTX;
+  rtx_insn *insn = nullptr;
   rtx tmp, mem;
 
   /* TODO: A more efficient code can be emitted by changing the
@@ -21255,11 +21259,11 @@ arm_emit_strd_push (unsigned long saved_regs_mask)
 
             tmp = gen_rtx_SET (mem, gen_rtx_REG (DImode, j));
             RTX_FRAME_RELATED_P (tmp) = 1;
-            tmp = emit_insn (tmp);
+	    rtx_insn *tmp1 = emit_insn (tmp);
 
             /* Record the first store insn.  */
             if (dwarf_index == 1)
-              insn = tmp;
+	      insn = tmp1;
 
             /* Generate dwarf info.  */
             mem = gen_frame_mem (SImode,
@@ -21302,11 +21306,11 @@ arm_emit_strd_push (unsigned long saved_regs_mask)
 
             tmp = gen_rtx_SET (mem, gen_rtx_REG (SImode, j));
             RTX_FRAME_RELATED_P (tmp) = 1;
-            tmp = emit_insn (tmp);
+	    rtx_insn *tmp1 = emit_insn (tmp);
 
             /* Record the first store insn.  */
             if (dwarf_index == 1)
-              insn = tmp;
+	      insn = tmp1;
 
             /* Generate dwarf info.  */
             mem = gen_frame_mem (SImode,
@@ -21336,13 +21340,13 @@ arm_emit_strd_push (unsigned long saved_regs_mask)
    of DWARF2 frame unwind information.  DWARF_REGS_MASK is a subset of
    MASK for registers that should be annotated for DWARF2 frame unwind
    information.  */
-static rtx
+static rtx_insn *
 emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 {
   int num_regs = 0;
   int num_dwarf_regs = 0;
   int i, j;
-  rtx par;
+  rtx_insn *par;
   rtx dwarf;
   int dwarf_par_index;
   rtx tmp, reg;
@@ -21401,7 +21405,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 
      For more see PR43399.  */
 
-  par = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (num_regs));
+  rtx parallel = gen_rtx_PARALLEL (VOIDmode, rtvec_alloc (num_regs));
   dwarf = gen_rtx_SEQUENCE (VOIDmode, rtvec_alloc (num_dwarf_regs + 1));
   dwarf_par_index = 1;
 
@@ -21437,7 +21441,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 	  if (arm_current_function_pac_enabled_p () && i == IP_REGNUM)
 	    dwarf_reg = gen_rtx_REG (SImode, RA_AUTH_CODE);
 
-	  XVECEXP (par, 0, 0)
+	  XVECEXP (parallel, 0, 0)
 	    = gen_rtx_SET (gen_frame_mem
 			   (BLKmode,
 			    gen_rtx_PRE_MODIFY (Pmode,
@@ -21470,7 +21474,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 	  if (arm_current_function_pac_enabled_p () && i == IP_REGNUM)
 	    dwarf_reg = gen_rtx_REG (SImode, RA_AUTH_CODE);
 
-	  XVECEXP (par, 0, j) = gen_rtx_USE (VOIDmode, reg);
+	  XVECEXP (parallel, 0, j) = gen_rtx_USE (VOIDmode, reg);
 
 	  if (dwarf_regs_mask & (1 << i))
 	    {
@@ -21488,7 +21492,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
 	}
     }
 
-  par = emit_insn (par);
+  par = emit_insn (parallel);
 
   tmp = gen_rtx_SET (stack_pointer_rtx,
 		     plus_constant (Pmode, stack_pointer_rtx, -4 * num_regs));
@@ -21504,7 +21508,7 @@ emit_multi_reg_push (unsigned long mask, unsigned long dwarf_regs_mask)
    SIZE is the offset to be adjusted.
    DEST and SRC might be stack_pointer_rtx or hard_frame_pointer_rtx.  */
 static void
-arm_add_cfa_adjust_cfa_note (rtx insn, int size, rtx dest, rtx src)
+arm_add_cfa_adjust_cfa_note (rtx_insn *insn, int size, rtx dest, rtx src)
 {
   rtx dwarf;
 
@@ -21559,10 +21563,9 @@ arm_emit_multi_reg_pop (unsigned long saved_regs_mask)
       tmp = gen_frame_mem (SImode,
 			   gen_rtx_POST_INC (Pmode,
 					     stack_pointer_rtx));
-      tmp = emit_insn (gen_rtx_SET (reg, tmp));
-      REG_NOTES (tmp) = alloc_reg_note (REG_CFA_RESTORE, dwarf_reg,
-					dwarf);
-      arm_add_cfa_adjust_cfa_note (tmp, UNITS_PER_WORD,
+      rtx_insn *insn = emit_insn (gen_rtx_SET (reg, tmp));
+      add_reg_note (insn, REG_CFA_RESTORE, dwarf_reg);
+      arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD,
 				   stack_pointer_rtx, stack_pointer_rtx);
       return;
     }
@@ -21613,14 +21616,14 @@ arm_emit_multi_reg_pop (unsigned long saved_regs_mask)
       elt++;
     }
 
-  par = return_in_pc ? emit_jump_insn (par) : emit_insn (par);
-  REG_NOTES (par) = dwarf;
+  rtx_insn *insn = return_in_pc ? emit_jump_insn (par) : emit_insn (par);
+  REG_NOTES (insn) = dwarf;
 
   if (!return_in_pc && emit_update)
-    arm_add_cfa_adjust_cfa_note (par, UNITS_PER_WORD * num_regs,
+    arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD * num_regs,
 				 stack_pointer_rtx, stack_pointer_rtx);
   else if (!return_in_pc)
-    RTX_FRAME_RELATED_P (par) = 1;
+    RTX_FRAME_RELATED_P (insn) = 1;
 }
 
 /* Generate and emit an insn pattern that we will recognize as a pop_multi
@@ -21686,17 +21689,17 @@ arm_emit_vfp_multi_reg_pop (int first_reg, int num_regs, rtx base_reg)
       j++;
     }
 
-  par = emit_insn (par);
-  REG_NOTES (par) = dwarf;
+  rtx_insn *insn = emit_insn (par);
+  REG_NOTES (insn) = dwarf;
 
   /* Make sure cfa doesn't leave with IP_REGNUM to allow unwinding from FP.  */
   if (REGNO (base_reg) == IP_REGNUM)
     {
-      RTX_FRAME_RELATED_P (par) = 1;
-      add_reg_note (par, REG_CFA_DEF_CFA, hard_frame_pointer_rtx);
+      RTX_FRAME_RELATED_P (insn) = 1;
+      add_reg_note (insn, REG_CFA_DEF_CFA, hard_frame_pointer_rtx);
     }
   else
-    arm_add_cfa_adjust_cfa_note (par, 2 * UNITS_PER_WORD * num_regs,
+    arm_add_cfa_adjust_cfa_note (insn, 2 * UNITS_PER_WORD * num_regs,
 				 base_reg, base_reg);
 }
 
@@ -21769,9 +21772,9 @@ thumb2_emit_ldrd_pop (unsigned long saved_regs_mask)
             /* When saved-register index (i) is odd, RTXs for both the registers
                to be loaded are generated in above given LDRD pattern, and the
                pattern can be emitted now.  */
-            par = emit_insn (par);
-            REG_NOTES (par) = dwarf;
-	    RTX_FRAME_RELATED_P (par) = 1;
+	    rtx_insn *insn = emit_insn (par);
+	    REG_NOTES (insn) = dwarf;
+	    RTX_FRAME_RELATED_P (insn) = 1;
           }
 
         i++;
@@ -21787,10 +21790,10 @@ thumb2_emit_ldrd_pop (unsigned long saved_regs_mask)
   tmp = gen_rtx_SET (stack_pointer_rtx,
                      plus_constant (Pmode, stack_pointer_rtx, 4 * i));
   RTX_FRAME_RELATED_P (tmp) = 1;
-  tmp = emit_insn (tmp);
+  rtx_insn *insn = emit_insn (tmp);
   if (!return_in_pc)
     {
-      arm_add_cfa_adjust_cfa_note (tmp, UNITS_PER_WORD * i,
+      arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD * i,
 				   stack_pointer_rtx, stack_pointer_rtx);
     }
 
@@ -21825,9 +21828,9 @@ thumb2_emit_ldrd_pop (unsigned long saved_regs_mask)
         }
       else
         {
-          par = emit_insn (tmp);
-	  REG_NOTES (par) = dwarf;
-	  arm_add_cfa_adjust_cfa_note (par, UNITS_PER_WORD,
+	  rtx_insn *insn = emit_insn (tmp);
+	  REG_NOTES (insn) = dwarf;
+	  arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD,
 				       stack_pointer_rtx, stack_pointer_rtx);
         }
 
@@ -21859,7 +21862,6 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
   int j = 0;
   int offset = 0;
   rtx par = NULL_RTX;
-  rtx dwarf = NULL_RTX;
   rtx tmp, mem;
 
   /* Restore saved registers.  */
@@ -21884,19 +21886,13 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
               mem = gen_frame_mem (DImode, stack_pointer_rtx);
 
             tmp = gen_rtx_SET (gen_rtx_REG (DImode, j), mem);
-            tmp = emit_insn (tmp);
-	    RTX_FRAME_RELATED_P (tmp) = 1;
+	    rtx_insn *insn = emit_insn (tmp);
+	    RTX_FRAME_RELATED_P (insn) = 1;
 
             /* Generate dwarf info.  */
 
-            dwarf = alloc_reg_note (REG_CFA_RESTORE,
-                                    gen_rtx_REG (SImode, j),
-                                    NULL_RTX);
-            dwarf = alloc_reg_note (REG_CFA_RESTORE,
-                                    gen_rtx_REG (SImode, j + 1),
-                                    dwarf);
-
-            REG_NOTES (tmp) = dwarf;
+	    add_reg_note (insn, REG_CFA_RESTORE, gen_rtx_REG (SImode, j));
+	    add_reg_note (insn, REG_CFA_RESTORE, gen_rtx_REG (SImode, j + 1));
 
             offset += 8;
             j += 2;
@@ -21913,13 +21909,11 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
               mem = gen_frame_mem (SImode, stack_pointer_rtx);
 
             tmp = gen_rtx_SET (gen_rtx_REG (SImode, j), mem);
-            tmp = emit_insn (tmp);
-	    RTX_FRAME_RELATED_P (tmp) = 1;
+	    rtx_insn *insn = emit_insn (tmp);
+	    RTX_FRAME_RELATED_P (insn) = 1;
 
             /* Generate dwarf info.  */
-            REG_NOTES (tmp) = alloc_reg_note (REG_CFA_RESTORE,
-                                              gen_rtx_REG (SImode, j),
-                                              NULL_RTX);
+	    add_reg_note (insn, REG_CFA_RESTORE, gen_rtx_REG (SImode, j));
 
             offset += 4;
             j += 1;
@@ -21937,8 +21931,8 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
                          plus_constant (Pmode,
                                         stack_pointer_rtx,
                                         offset));
-      tmp = emit_insn (tmp);
-      arm_add_cfa_adjust_cfa_note (tmp, offset,
+      rtx_insn *insn = emit_insn (tmp);
+      arm_add_cfa_adjust_cfa_note (insn, offset,
 				   stack_pointer_rtx, stack_pointer_rtx);
       offset = 0;
     }
@@ -21954,14 +21948,11 @@ arm_emit_ldrd_pop (unsigned long saved_regs_mask)
                                                           stack_pointer_rtx)));
       RTX_FRAME_RELATED_P (tmp) = 1;
       XVECEXP (par, 0, 1) = tmp;
-      par = emit_jump_insn (par);
+      rtx_insn *insn = emit_jump_insn (par);
 
       /* Generate dwarf info.  */
-      dwarf = alloc_reg_note (REG_CFA_RESTORE,
-                              gen_rtx_REG (SImode, PC_REGNUM),
-                              NULL_RTX);
-      REG_NOTES (par) = dwarf;
-      arm_add_cfa_adjust_cfa_note (par, UNITS_PER_WORD,
+      add_reg_note (insn, REG_CFA_RESTORE, gen_rtx_REG (SImode, PC_REGNUM));
+      arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD,
 				   stack_pointer_rtx, stack_pointer_rtx);
     }
 }
@@ -21994,7 +21985,7 @@ thumb_force_lr_save (void)
    we do have an indirect tailcall happening in this
    particular case.  */
 static bool
-is_indirect_tailcall_p (rtx call)
+is_indirect_tailcall_p (rtx_insn *call)
 {
   rtx pat = PATTERN (call);
 
@@ -22377,7 +22368,8 @@ static void
 thumb_set_frame_pointer (arm_stack_offsets *offsets)
 {
   HOST_WIDE_INT amount;
-  rtx insn, dwarf;
+  rtx_insn *insn;
+  rtx dwarf;
 
   amount = offsets->outgoing_args - offsets->locals_base;
   if (amount < 1024)
@@ -22460,7 +22452,7 @@ get_scratch_register_on_entry (struct scratch_reg *sr, unsigned int regno1,
   if (sr->saved)
     {
       rtx addr = gen_rtx_PRE_DEC (Pmode, stack_pointer_rtx);
-      rtx insn = emit_set_insn (gen_frame_mem (SImode, addr), sr->reg);
+      rtx_insn *insn = emit_set_insn (gen_frame_mem (SImode, addr), sr->reg);
       rtx x = gen_rtx_SET (stack_pointer_rtx,
 		           plus_constant (Pmode, stack_pointer_rtx, -4));
       RTX_FRAME_RELATED_P (insn) = 1;
@@ -22476,7 +22468,7 @@ release_scratch_register_on_entry (struct scratch_reg *sr)
   if (sr->saved)
     {
       rtx addr = gen_rtx_POST_INC (Pmode, stack_pointer_rtx);
-      rtx insn = emit_set_insn (sr->reg, gen_frame_mem (SImode, addr));
+      rtx_insn *insn = emit_set_insn (sr->reg, gen_frame_mem (SImode, addr));
       rtx x = gen_rtx_SET (stack_pointer_rtx,
 			   plus_constant (Pmode, stack_pointer_rtx, 4));
       RTX_FRAME_RELATED_P (insn) = 1;
@@ -22650,7 +22642,7 @@ void
 arm_expand_prologue (void)
 {
   rtx amount;
-  rtx insn;
+  rtx_insn *insn;
   rtx ip_rtx;
   unsigned long live_regs_mask;
   unsigned long func_type;
@@ -22994,15 +22986,15 @@ arm_expand_prologue (void)
       /* Create the new frame pointer.  */
       if (TARGET_APCS_FRAME)
 	{
-	  insn = GEN_INT (-(4 + args_to_push + fp_offset));
-	  insn = emit_insn (gen_addsi3 (hard_frame_pointer_rtx, ip_rtx, insn));
+	  rtx x = GEN_INT (-(4 + args_to_push + fp_offset));
+	  insn = emit_insn (gen_addsi3 (hard_frame_pointer_rtx, ip_rtx, x));
 	  RTX_FRAME_RELATED_P (insn) = 1;
 	}
       else
 	{
-	  insn = GEN_INT (saved_regs - (4 + fp_offset));
+	  rtx x = GEN_INT (saved_regs - (4 + fp_offset));
 	  insn = emit_insn (gen_addsi3 (hard_frame_pointer_rtx,
-					stack_pointer_rtx, insn));
+					stack_pointer_rtx, x));
 	  RTX_FRAME_RELATED_P (insn) = 1;
 	}
     }
@@ -23042,14 +23034,15 @@ arm_expand_prologue (void)
   /* Recover the static chain register.  */
   if (clobber_ip)
     {
+      rtx x;
       if (!arm_r3_live_at_start_p () || saved_pretend_args)
-	insn = gen_rtx_REG (SImode, 3);
+	x = gen_rtx_REG (SImode, 3);
       else
 	{
-	  insn = plus_constant (Pmode, hard_frame_pointer_rtx, 4);
-	  insn = gen_frame_mem (SImode, insn);
+	  x = plus_constant (Pmode, hard_frame_pointer_rtx, 4);
+	  x = gen_frame_mem (SImode, x);
 	}
-      emit_set_insn (ip_rtx, insn);
+      emit_set_insn (ip_rtx, x);
       emit_insn (gen_force_register_use (ip_rtx));
     }
 
@@ -27143,12 +27136,12 @@ arm_expand_epilogue (bool really_return)
                   }
                 else
                   {
-                    insn = emit_insn (gen_movsi (gen_rtx_REG (SImode, i),
-                                                 addr));
-                    REG_NOTES (insn) = alloc_reg_note (REG_CFA_RESTORE,
-                                                       gen_rtx_REG (SImode, i),
-                                                       NULL_RTX);
-		    arm_add_cfa_adjust_cfa_note (insn, UNITS_PER_WORD,
+		    rtx_insn *move
+		      = emit_insn (gen_movsi (gen_rtx_REG (SImode, i),
+					      addr));
+		    add_reg_note (move, REG_CFA_RESTORE,
+				  gen_rtx_REG (SImode, i));
+		    arm_add_cfa_adjust_cfa_note (move, UNITS_PER_WORD,
 						 stack_pointer_rtx,
 						 stack_pointer_rtx);
                   }
@@ -28305,7 +28298,7 @@ arm32_output_mi_thunk (FILE *file, tree, HOST_WIDE_INT delta,
 
   /* Add DELTA to THIS_RTX.  */
   if (delta != 0)
-    arm_split_constant (PLUS, Pmode, NULL_RTX,
+    arm_split_constant (PLUS, Pmode, nullptr,
 			delta, this_rtx, this_rtx, false);
 
   /* Add *(*THIS_RTX + VCALL_OFFSET) to THIS_RTX.  */
@@ -28314,7 +28307,7 @@ arm32_output_mi_thunk (FILE *file, tree, HOST_WIDE_INT delta,
       /* Load *THIS_RTX.  */
       emit_move_insn (temp, gen_rtx_MEM (Pmode, this_rtx));
       /* Compute *THIS_RTX + VCALL_OFFSET.  */
-      arm_split_constant (PLUS, Pmode, NULL_RTX, vcall_offset, temp, temp,
+      arm_split_constant (PLUS, Pmode, nullptr, vcall_offset, temp, temp,
 			  false);
       /* Compute *(*THIS_RTX + VCALL_OFFSET).  */
       emit_move_insn (temp, gen_rtx_MEM (Pmode, temp));
@@ -32282,7 +32275,7 @@ aarch_bti_j_insn_p (rtx_insn *insn)
 
 /* Check if X (or any sub-rtx of X) is a PACIASP/PACIBSP instruction.  */
 bool
-aarch_pac_insn_p (rtx x)
+aarch_pac_insn_p (rtx_insn *x)
 {
   if (!x || !INSN_P (x))
     return false;

@@ -10025,7 +10025,7 @@ reemit_marker_as_note (rtx_insn *insn)
     case NOTE_INSN_BEGIN_STMT:
     case NOTE_INSN_INLINE_ENTRY:
       {
-	rtx_insn *note = NULL;
+	rtx_note *note = NULL;
 	if (cfun->debug_nonbind_markers)
 	  {
 	    note = emit_note_before (kind, insn);
@@ -10145,7 +10145,7 @@ vt_initialize (void)
 #endif
       elim = (ira_use_lra_p
 	      ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-	      : eliminate_regs (reg, VOIDmode, NULL_RTX));
+	      : eliminate_regs (reg, VOIDmode, nullptr));
       if (elim != reg)
 	{
 	  if (GET_CODE (elim) == PLUS)
@@ -10167,7 +10167,7 @@ vt_initialize (void)
 #endif
       elim = (ira_use_lra_p
 	      ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-	      : eliminate_regs (reg, VOIDmode, NULL_RTX));
+	      : eliminate_regs (reg, VOIDmode, nullptr));
       if (elim != reg)
 	{
 	  if (GET_CODE (elim) == PLUS)
@@ -10201,7 +10201,7 @@ vt_initialize (void)
 #endif
       elim = (ira_use_lra_p
 	      ? lra_eliminate_regs (reg, VOIDmode, NULL_RTX)
-	      : eliminate_regs (reg, VOIDmode, NULL_RTX));
+	      : eliminate_regs (reg, VOIDmode, nullptr));
       if (elim != reg)
 	{
 	  if (GET_CODE (elim) == PLUS)

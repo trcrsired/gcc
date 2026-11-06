@@ -1130,8 +1130,8 @@ static int rs6000_debug_adjust_cost (rtx_insn *, int, rtx_insn *, int,
 static bool is_microcoded_insn (rtx_insn *);
 static bool is_nonpipeline_insn (rtx_insn *);
 static bool is_cracked_insn (rtx_insn *);
-static bool is_load_insn (rtx, rtx *);
-static bool is_store_insn (rtx, rtx *);
+static bool is_load_insn (rtx_insn *, rtx *);
+static bool is_store_insn (rtx_insn *, rtx *);
 static bool set_to_load_agen (rtx_insn *,rtx_insn *);
 static bool insn_terminates_group_p (rtx_insn *, enum group_termination);
 static bool insn_must_be_first_in_group (rtx_insn *);
@@ -4976,7 +4976,7 @@ rs6000_option_override (void)
 
 /* Implement LOOP_ALIGN. */
 align_flags
-rs6000_loop_align (rtx label)
+rs6000_loop_align (rtx_insn *label)
 {
   basic_block bb;
   int ninsns;
@@ -9806,12 +9806,12 @@ rs6000_legitimize_tls_address (rtx addr, enum tls_model model)
 		rs6000_emit_move (got, gsym, Pmode);
 	      else
 		{
-		  rtx mem, lab;
+		  rtx mem;
 
 		  tmp1 = gen_reg_rtx (Pmode);
 		  tmp2 = gen_reg_rtx (Pmode);
 		  mem = gen_const_mem (Pmode, tmp1);
-		  lab = gen_label_rtx ();
+		  rtx_code_label *lab = gen_label_rtx ();
 		  emit_insn (gen_load_toc_v4_PIC_1b (gsym, lab));
 		  emit_move_insn (tmp1, gen_rtx_REG (Pmode, LR_REGNO));
 		  if (TARGET_LINK_STACK)
@@ -15665,7 +15665,7 @@ rs6000_generate_compare (rtx cmp, machine_mode mode)
 	{
 	  rtx ne_rtx, normal_dest, unord_dest;
 	  rtx unord_func = optab_libfunc (unord_optab, mode);
-	  rtx join_label = gen_label_rtx ();
+	  rtx_code_label *join_label = gen_label_rtx ();
 	  rtx join_ref = gen_rtx_LABEL_REF (VOIDmode, join_label);
 	  rtx unord_cmp = gen_reg_rtx (comp_mode);
 
@@ -17151,7 +17151,7 @@ void
 rs6000_expand_atomic_compare_and_swap (rtx operands[], bool local)
 {
   rtx boolval, retval, mem, oldval, newval, cond;
-  rtx label1, label2, x, mask, shift;
+  rtx label_ref1, x, mask, shift;
   machine_mode mode, orig_mode;
   enum memmodel mod_s, mod_f;
   bool is_weak;
@@ -17203,13 +17203,15 @@ rs6000_expand_atomic_compare_and_swap (rtx operands[], bool local)
 
   mem = rs6000_pre_atomic_barrier (mem, mod_s);
 
-  label1 = NULL_RTX;
+  label_ref1 = NULL_RTX;
   if (!is_weak)
     {
-      label1 = gen_rtx_LABEL_REF (VOIDmode, gen_label_rtx ());
-      emit_label (XEXP (label1, 0));
+      rtx_code_label *label1 = gen_label_rtx ();
+      label_ref1 = gen_rtx_LABEL_REF (VOIDmode, label1);
+      emit_label (label1);
     }
-  label2 = gen_rtx_LABEL_REF (VOIDmode, gen_label_rtx ());
+  rtx_code_label *label2 = gen_label_rtx ();
+  rtx label_ref2 = gen_rtx_LABEL_REF (VOIDmode, label2);
 
   emit_load_locked (mode, retval, mem, local ? const1_rtx : const0_rtx);
 
@@ -17241,7 +17243,7 @@ rs6000_expand_atomic_compare_and_swap (rtx operands[], bool local)
   emit_insn (gen_rtx_SET (cond, x));
 
   x = gen_rtx_NE (VOIDmode, cond, const0_rtx);
-  emit_unlikely_jump (x, label2);
+  emit_unlikely_jump (x, label_ref2);
 
   x = newval;
   if (mask)
@@ -17252,16 +17254,16 @@ rs6000_expand_atomic_compare_and_swap (rtx operands[], bool local)
   if (!is_weak)
     {
       x = gen_rtx_NE (VOIDmode, cond, const0_rtx);
-      emit_unlikely_jump (x, label1);
+      emit_unlikely_jump (x, label_ref1);
     }
 
   if (!is_mm_relaxed (mod_f))
-    emit_label (XEXP (label2, 0));
+    emit_label (label2);
 
   rs6000_post_atomic_barrier (mod_s);
 
   if (is_mm_relaxed (mod_f))
-    emit_label (XEXP (label2, 0));
+    emit_label (label2);
 
   if (shift)
     rs6000_finish_atomic_subword (operands[1], retval, shift);
@@ -17281,7 +17283,7 @@ rs6000_expand_atomic_exchange (rtx operands[])
   rtx retval, mem, val, cond;
   machine_mode mode;
   enum memmodel model;
-  rtx label, x, mask, shift;
+  rtx x, mask, shift;
 
   retval = operands[0];
   mem = operands[1];
@@ -17306,8 +17308,9 @@ rs6000_expand_atomic_exchange (rtx operands[])
 
   mem = rs6000_pre_atomic_barrier (mem, model);
 
-  label = gen_rtx_LABEL_REF (VOIDmode, gen_label_rtx ());
-  emit_label (XEXP (label, 0));
+  rtx_code_label *label = gen_label_rtx ();
+  rtx label_ref = gen_rtx_LABEL_REF (VOIDmode, label);
+  emit_label (label);
 
   emit_load_locked (mode, retval, mem, const0_rtx);
 
@@ -17319,7 +17322,7 @@ rs6000_expand_atomic_exchange (rtx operands[])
   emit_store_conditional (mode, cond, mem, x);
 
   x = gen_rtx_NE (VOIDmode, cond, const0_rtx);
-  emit_unlikely_jump (x, label);
+  emit_unlikely_jump (x, label_ref);
 
   rs6000_post_atomic_barrier (model);
 
@@ -17340,7 +17343,7 @@ rs6000_expand_atomic_op (enum rtx_code code, rtx mem, rtx val,
   enum memmodel model = memmodel_base (INTVAL (model_rtx));
   machine_mode mode = GET_MODE (mem);
   machine_mode store_mode = mode;
-  rtx label, x, cond, mask, shift;
+  rtx x, cond, mask, shift;
   rtx before = orig_before, after = orig_after;
 
   mask = shift = NULL_RTX;
@@ -17407,9 +17410,9 @@ rs6000_expand_atomic_op (enum rtx_code code, rtx mem, rtx val,
 
   mem = rs6000_pre_atomic_barrier (mem, model);
 
-  label = gen_label_rtx ();
+  rtx_code_label *label = gen_label_rtx ();
   emit_label (label);
-  label = gen_rtx_LABEL_REF (VOIDmode, label);
+  rtx label_ref = gen_rtx_LABEL_REF (VOIDmode, label);
 
   if (before == NULL_RTX)
     before = gen_reg_rtx (mode);
@@ -17442,7 +17445,7 @@ rs6000_expand_atomic_op (enum rtx_code code, rtx mem, rtx val,
   emit_store_conditional (store_mode, cond, mem, x);
 
   x = gen_rtx_NE (VOIDmode, cond, const0_rtx);
-  emit_unlikely_jump (x, label);
+  emit_unlikely_jump (x, label_ref);
 
   rs6000_post_atomic_barrier (model);
 
@@ -17543,7 +17546,7 @@ rs6000_hash_constant (rtx k)
   switch (code)
     {
     case LABEL_REF:
-      return result * 1231 + (unsigned) INSN_UID (XEXP (k, 0));
+      return result * 1231 + (unsigned) INSN_UID (label_ref_label (k));
 
     case CONST_WIDE_INT:
       {
@@ -19143,7 +19146,7 @@ is_load_insn1 (rtx pat, rtx *load_mem)
 /* Determine if INSN loads from memory.  */
 
 static bool
-is_load_insn (rtx insn, rtx *load_mem)
+is_load_insn (rtx_insn *insn, rtx *load_mem)
 {
   if (!insn || !INSN_P (insn))
     return false;
@@ -19185,7 +19188,7 @@ is_store_insn1 (rtx pat, rtx *str_mem)
 /* Determine if INSN stores to memory.  */
 
 static bool
-is_store_insn (rtx insn, rtx *str_mem)
+is_store_insn (rtx_insn *insn, rtx *str_mem)
 {
   if (!insn || !INSN_P (insn))
     return false;
@@ -19221,8 +19224,6 @@ is_power9_pairable_vec_type (enum attr_type type)
 static bool
 rs6000_is_costly_dependence (dep_t dep, int cost, int distance)
 {
-  rtx insn;
-  rtx next;
   rtx load_mem, str_mem;
 
   /* If the flag is not enabled - no dependence is considered costly;
@@ -19237,8 +19238,8 @@ rs6000_is_costly_dependence (dep_t dep, int cost, int distance)
   if (rs6000_sched_costly_dep == all_deps_costly)
     return true;
 
-  insn = DEP_PRO (dep);
-  next = DEP_CON (dep);
+  rtx_insn *insn = DEP_PRO (dep);
+  rtx_insn *next = DEP_CON (dep);
 
   if (rs6000_sched_costly_dep == store_to_load_dep_costly
       && is_load_insn (next, &load_mem)
@@ -20124,7 +20125,7 @@ is_costly_group (rtx_insn **group_insns, rtx next_insn)
 
       FOR_EACH_DEP (insn, SD_LIST_RES_FORW, sd_it, dep)
 	{
-	  rtx next = DEP_CON (dep);
+	  rtx_insn *next = DEP_CON (dep);
 
 	  if (next == next_insn
 	      && rs6000_is_costly_dependence (dep, dep_cost (dep), 0))
@@ -26658,7 +26659,7 @@ rs6000_call_darwin_1 (rtx value, rtx func_desc, rtx tlsarg,
 
       if (no_previous_def (funname))
 	{
-	  rtx label_rtx = gen_label_rtx ();
+	  rtx_code_label *label_rtx = gen_label_rtx ();
 	  char *label_buf, temp_buf[256];
 	  ASM_GENERATE_INTERNAL_LABEL (temp_buf, "L",
 				       CODE_LABEL_NUMBER (label_rtx));

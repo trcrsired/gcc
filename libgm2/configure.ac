@@ -25,7 +25,7 @@
 AC_INIT(package-unused, version-unused,,libgm2)
 AC_CONFIG_SRCDIR(Makefile.am)
 # AC_CONFIG_MACRO_DIR([config])
-AC_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS([config.h])
 
 libtool_VERSION=21:0:0
 AC_SUBST(libtool_VERSION)
@@ -254,8 +254,7 @@ AC_CHECK_TOOL(RANLIB, ranlib, ranlib-not-found-in-path-error)
 AC_PROG_MAKE_SET
 AC_PROG_INSTALL
 
-LT_INIT
-AC_LIBTOOL_DLOPEN
+LT_INIT([dlopen])
 
 AM_CONDITIONAL([ENABLE_DARWIN_AT_RPATH], [test x$enable_darwin_at_rpath = xyes])
 AC_PYTHON_INTERPRETER([>= '3.0'])

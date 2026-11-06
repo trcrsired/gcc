@@ -2,7 +2,7 @@
 # aclocal && autoconf && autoheader && automake
 
 AC_INIT([GNU Fortran Runtime Library], 0.3,,[libgfortran])
-AC_CONFIG_HEADER(config.h)
+AC_CONFIG_HEADERS([config.h])
 GCC_TOPLEV_SUBDIRS
 
 # -------
@@ -258,8 +258,7 @@ AC_PROG_INSTALL
 
 # Configure libtool
 #AC_MSG_NOTICE([====== Starting libtool configuration])
-AC_LIBTOOL_DLOPEN
-LT_INIT
+LT_INIT([dlopen])
 LT_LIB_M
 ACX_LT_HOST_FLAGS
 AC_SUBST(enable_shared)
@@ -287,6 +286,7 @@ AC_SUBST(extra_ldflags_libgfortran)
 LIBGFOR_WORKING_GFORTRAN
 
 AC_SYS_LARGEFILE
+LIBGFOR_CHECK_TIME_BITS64
 
 # Types
 AC_TYPE_OFF_T

@@ -158,6 +158,7 @@ extern void ix86_expand_branch (enum rtx_code, rtx, rtx, rtx);
 extern void ix86_expand_setcc (rtx, enum rtx_code, rtx, rtx);
 extern bool ix86_expand_int_movcc (rtx[]);
 extern bool ix86_expand_fp_movcc (rtx[]);
+extern void ix86_expand_cond_fma (rtx[], bool, bool);
 extern bool ix86_expand_fp_vcond (rtx[]);
 extern bool ix86_expand_int_vcond (rtx[]);
 extern void ix86_expand_vec_perm (rtx[]);
@@ -266,7 +267,7 @@ extern rtx ix86_expand_ternlog (machine_mode mode, rtx op0, rtx op1, rtx op2,
 				int idx, rtx target);
 extern void ix86_expand_vector_sf2bf_with_vec_perm (rtx, rtx);
 extern void ix86_expand_vector_bf2sf_with_vec_perm (rtx, rtx);
-extern void ix86_expand_gfni_bitreverse (rtx, rtx);
+extern void ix86_expand_bitreverse (rtx, rtx);
 
 
 #ifdef TREE_CODE

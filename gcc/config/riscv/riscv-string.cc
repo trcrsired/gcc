@@ -138,7 +138,7 @@ do_load_from_addr (machine_mode mode, rtx dest, rtx addr_reg, rtx addr)
 
 static void
 emit_strcmp_scalar_compare_byte (rtx result, rtx data1, rtx data2,
-				 rtx final_label)
+				 rtx_code_label *final_label)
 {
   do_sub3 (result, data1, data2);
   emit_jump_insn (gen_jump (final_label));
@@ -156,7 +156,7 @@ emit_strcmp_scalar_compare_byte (rtx result, rtx data1, rtx data2,
 static void
 emit_strcmp_scalar_compare_subword (rtx data1, rtx data2, rtx orc1,
 				    unsigned HOST_WIDE_INT cmp_bytes,
-				    rtx end_label)
+				    rtx_code_label *end_label)
 {
   /* Set a NUL-byte after the relevant data (behind the string).  */
   long long im = -256ll;
@@ -186,7 +186,8 @@ emit_strcmp_scalar_compare_subword (rtx data1, rtx data2, rtx orc1,
 
 static void
 emit_strcmp_scalar_compare_word (rtx data1, rtx data2, rtx orc1, rtx testval,
-				 rtx end_label, rtx nonul_end_label)
+				 rtx_code_label *end_label,
+				 rtx_code_label *nonul_end_label)
 {
   /* Check if data1 contains a NUL character.  */
   if (TARGET_ZBB)
@@ -221,8 +222,9 @@ static void
 emit_strcmp_scalar_load_and_compare (rtx result, rtx src1, rtx src2,
 				     unsigned HOST_WIDE_INT nbytes,
 				     rtx data1, rtx data2, rtx orc1,
-				     rtx end_label, rtx nonul_end_label,
-				     rtx final_label)
+				     rtx_code_label *end_label,
+				     rtx_code_label *nonul_end_label,
+				     rtx_code_label *final_label)
 {
   const unsigned HOST_WIDE_INT xlen = GET_MODE_SIZE (Xmode);
   unsigned HOST_WIDE_INT offset = 0;
@@ -426,9 +428,9 @@ riscv_expand_strcmp_scalar (rtx result, rtx src1, rtx src2,
   rtx data1 = gen_reg_rtx (Xmode);
   rtx data2 = gen_reg_rtx (Xmode);
   rtx orc1 = gen_reg_rtx (Xmode);
-  rtx nonul_end_label = gen_label_rtx ();
-  rtx end_label = gen_label_rtx ();
-  rtx final_label = gen_label_rtx ();
+  rtx_code_label *nonul_end_label = gen_label_rtx ();
+  rtx_code_label *end_label = gen_label_rtx ();
+  rtx_code_label *final_label = gen_label_rtx ();
 
   /* Generate a sequence of zbb instructions to compare out
      to the length specified.  */
@@ -546,7 +548,7 @@ static bool
 riscv_expand_strlen_scalar (rtx result, rtx src, rtx align)
 {
   rtx testval, addr, addr_plus_regsz, word, zeros;
-  rtx loop_label, cond;
+  rtx cond;
 
   gcc_assert (TARGET_ZBB || TARGET_XTHEADBB);
 
@@ -567,7 +569,7 @@ riscv_expand_strlen_scalar (rtx result, rtx src, rtx align)
 
   do_add3 (addr_plus_regsz, addr, GEN_INT (UNITS_PER_WORD));
 
-  loop_label = gen_label_rtx ();
+  rtx_code_label *loop_label = gen_label_rtx ();
   emit_label (loop_label);
 
   /* Load a word and use orc.b/th.tstnbz to find a zero-byte.  */
@@ -635,7 +637,8 @@ static void
 emit_memcmp_scalar_load_and_compare (rtx result, rtx src1, rtx src2,
 				     unsigned HOST_WIDE_INT nbytes,
 				     rtx data1, rtx data2,
-				     rtx diff_label, rtx final_label)
+				     rtx_code_label *diff_label,
+				     rtx_code_label *final_label)
 {
   const unsigned HOST_WIDE_INT xlen = GET_MODE_SIZE (Xmode);
   unsigned HOST_WIDE_INT offset = 0;
@@ -761,8 +764,8 @@ riscv_expand_block_compare_scalar (rtx result, rtx src1, rtx src2, rtx nbytes)
 
   rtx data1 = gen_reg_rtx (Xmode);
   rtx data2 = gen_reg_rtx (Xmode);
-  rtx diff_label = gen_label_rtx ();
-  rtx final_label = gen_label_rtx ();
+  rtx_code_label *diff_label = gen_label_rtx ();
+  rtx_code_label *final_label = gen_label_rtx ();
 
   /* Generate a sequence of zbb instructions to compare out
      to the length specified.  */
@@ -853,22 +856,29 @@ riscv_block_move_straight (rtx dest, rtx src, unsigned HOST_WIDE_INT length,
       if (step <= length)
 	{
 	  int i;
+	  /* Keep the trailing chunk in the group when it is a whole word:
+	     unlike a ragged tail, move_by_pieces cannot handle it any
+	     better (no overlapping access is possible for an aligned
+	     word), and keeping all loads ahead of all stores lets RTL DSE
+	     eliminate copies of words that later stores overwrite.  */
+	  bool group_last = bits == BITS_PER_WORD && length % delta == 0;
+	  unsigned HOST_WIDE_INT limit
+	    = group_last ? length - delta : length - 2 * delta;
+
 	  /* Allocate a buffer for the temporary registers.  */
-	  regs = XALLOCAVEC (rtx, length / delta - 1);
+	  regs = XALLOCAVEC (rtx, limit / delta + 1);
 
 	  /* Load as many BITS-sized chunks as possible.  Use a normal load
 	     if the source has enough alignment, otherwise use left/right
 	     pairs.  */
-	  for (offset = 0, i = 0; offset + step <= length;
-	       offset += delta, i++)
+	  for (offset = 0, i = 0; offset <= limit; offset += delta, i++)
 	    {
 	      regs[i] = gen_reg_rtx (mode);
 	      riscv_emit_move (regs[i], adjust_address (src, mode, offset));
 	    }
 
 	  /* Copy the chunks to the destination.  */
-	  for (offset = 0, i = 0; offset + step <= length;
-	       offset += delta, i++)
+	  for (offset = 0, i = 0; offset <= limit; offset += delta, i++)
 	    riscv_emit_move (adjust_address (dest, mode, offset), regs[i]);
 	}
 
@@ -912,7 +922,7 @@ riscv_block_move_loop (rtx dest, rtx src, unsigned HOST_WIDE_INT length,
 		       unsigned HOST_WIDE_INT align,
 		       unsigned HOST_WIDE_INT bytes_per_iter)
 {
-  rtx label, src_reg, dest_reg, final_src, test;
+  rtx src_reg, dest_reg, final_src, test;
   unsigned HOST_WIDE_INT leftover;
 
   leftover = length % bytes_per_iter;
@@ -928,7 +938,7 @@ riscv_block_move_loop (rtx dest, rtx src, unsigned HOST_WIDE_INT length,
 				   0, 0, OPTAB_WIDEN);
 
   /* Emit the start of the loop.  */
-  label = gen_label_rtx ();
+  rtx_code_label *label = gen_label_rtx ();
   emit_label (label);
 
   /* Emit the loop body.  */
@@ -1459,7 +1469,7 @@ expand_block_move (rtx dst_in, rtx src_in, rtx length_in, bool overlap_p)
   /* avl holds the (remaining) length of the required copy.
      cnt holds the length we copy with the current load/store pair.  */
   rtx cnt = info.avl;
-  rtx label = NULL_RTX;
+  rtx_code_label *label = nullptr;
   rtx dst_addr = copy_addr_to_reg (XEXP (dst_in, 0));
   rtx src_addr = copy_addr_to_reg (XEXP (src_in, 0));
 
@@ -1575,7 +1585,7 @@ expand_rawmemchr (machine_mode mode, rtx dst, rtx haystack, rtx needle,
   rtx src_addr = copy_addr_to_reg (XEXP (haystack, 0));
   rtx start_addr = copy_addr_to_reg (XEXP (haystack, 0));
 
-  rtx loop = gen_label_rtx ();
+  rtx_code_label *loop = gen_label_rtx ();
   emit_label (loop);
 
   rtx vsrc = change_address (haystack, vmode, src_addr);
@@ -1676,8 +1686,8 @@ expand_strcmp (rtx result, rtx src1, rtx src2, rtx nbytes,
   rtx vec1 = gen_reg_rtx (vmode);
   rtx vec2 = gen_reg_rtx (vmode);
 
-  rtx done = gen_label_rtx ();
-  rtx loop = gen_label_rtx ();
+  rtx_code_label *done = gen_label_rtx ();
+  rtx_code_label *loop = gen_label_rtx ();
   emit_label (loop);
 
   /* Bump the pointers.  */

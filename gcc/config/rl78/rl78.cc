@@ -746,8 +746,8 @@ need_to_save (unsigned int regno)
 }
 
 /* We use this to wrap all emitted insns in the prologue.  */
-static rtx
-F (rtx x)
+static rtx_insn *
+F (rtx_insn *x)
 {
   RTX_FRAME_RELATED_P (x) = 1;
   return x;
@@ -1474,11 +1474,9 @@ rl78_expand_prologue (void)
 	 smaller to move SP into AX and perform the subtraction there.  */
       if (fs > 254 * 3)
 	{
-	  rtx insn;
-
 	  emit_move_insn (ax, sp);
 	  emit_insn (gen_subhi3 (ax, ax, GEN_INT (fs)));
-	  insn = F (emit_move_insn (sp, ax));
+	  rtx_insn *insn = F (emit_move_insn (sp, ax));
 	  add_reg_note (insn, REG_FRAME_RELATED_EXPR,
 			gen_rtx_SET (sp, gen_rtx_PLUS (HImode, sp,
 						       GEN_INT (-fs))));
@@ -2931,7 +2929,8 @@ gen_and_emit_move (rtx to, rtx from, rtx_insn *where, bool before)
 	     cf. compiling gcc.dg/pr44545.c.  */
 	  if (note != NULL_RTX)
 	    {
-	      add_reg_note (move, REG_EH_REGION, XEXP (note, 0));
+	      add_reg_note (as_a <rtx_insn *> (move), REG_EH_REGION,
+			    XEXP (note, 0));
 	      remove_note (where, note);
 	    }
 
@@ -3824,7 +3823,7 @@ rl78_alloc_physical_registers (void)
    encounter when scanning backwards) triggers a REG_DEAD note if the
    reg was previously in DEAD[].  */
 static void
-rl78_note_reg_uses (char *dead, rtx s, rtx insn)
+rl78_note_reg_uses (char *dead, rtx s, rtx_insn *insn)
 {
   const char *fmt;
   int i, r;
@@ -3886,7 +3885,7 @@ rl78_note_reg_uses (char *dead, rtx s, rtx insn)
 
 /* Like the previous function, but scan for SETs instead.  */
 static void
-rl78_note_reg_set (char *dead, rtx d, rtx insn)
+rl78_note_reg_set (char *dead, rtx d, rtx_insn *insn)
 {
   int r, i;
   bool is_dead;

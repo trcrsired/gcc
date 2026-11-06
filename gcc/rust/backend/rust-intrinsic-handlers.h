@@ -115,10 +115,16 @@ private:
   CompileFn closure;
 };
 
-enum class Prefetch
+enum class Mode
 {
   Read,
   Write
+};
+
+enum class Cache
+{
+  Data,
+  Instruction,
 };
 
 enum class TyAssert
@@ -130,11 +136,24 @@ enum class TyAssert
 
 namespace handlers {
 
+enum class AtomicMinMaxKind
+{
+  SignedMax,
+  SignedMin,
+  UnsignedMax,
+  UnsignedMin,
+};
+
 namespace inner {
 void wrapping_op (IntrinsicCtx &ctx, tree_code op);
 
 void atomic_store (IntrinsicCtx &ctx, int ordering);
 void atomic_load (IntrinsicCtx &ctx, int ordering);
+void atomic_binary_op (IntrinsicCtx &ctx, const std::string &op_name,
+		       int ordering);
+void atomic_compare_exchange (IntrinsicCtx &ctx, bool weak,
+			      int success_ordering, int failure_ordering);
+void atomic_minmax (IntrinsicCtx &ctx, AtomicMinMaxKind kind, int ordering);
 inline void copy (IntrinsicCtx &ctx, bool overlaps);
 inline void expect (IntrinsicCtx &ctx, bool likely);
 void try_handler (IntrinsicCtx &ctx, bool is_new_api);
@@ -142,6 +161,8 @@ void try_handler (IntrinsicCtx &ctx, bool is_new_api);
 void op_with_overflow (IntrinsicCtx &ctx, tree_code op);
 
 inline void unchecked_op (IntrinsicCtx &ctx, tree_code op);
+
+void prefetch (IntrinsicCtx &ctx, Mode mode, Cache cache);
 
 } // namespace inner
 
@@ -158,7 +179,6 @@ void transmute (IntrinsicCtx &ctx);
 // FIXME: This is supposed to be just a ctx without the op right?
 // Or are these inner functions and thus shouldn't live here?
 void rotate (IntrinsicCtx &ctx, tree_code op);
-void prefetch_data (IntrinsicCtx &ctx, Prefetch kind);
 
 void uninit (IntrinsicCtx &ctx);
 void move_val_init (IntrinsicCtx &ctx);
@@ -170,9 +190,6 @@ void ctlz_handler (IntrinsicCtx &ctx);
 void ctlz_nonzero_handler (IntrinsicCtx &ctx);
 void cttz_handler (IntrinsicCtx &ctx);
 void cttz_nonzero_handler (IntrinsicCtx &ctx);
-
-void prefetch_read_data (IntrinsicCtx &ctx);
-void prefetch_write_data (IntrinsicCtx &ctx);
 
 void sorry (IntrinsicCtx &ctx);
 
@@ -191,11 +208,25 @@ Intrinsic::CompileFn wrapping_op (tree_code op);
 Intrinsic::CompileFn atomic_store (int ordering);
 Intrinsic::CompileFn atomic_load (int ordering);
 
+Intrinsic::CompileFn atomic_xadd (int ordering);
+Intrinsic::CompileFn atomic_xsub (int ordering);
+Intrinsic::CompileFn atomic_and (int ordering);
+Intrinsic::CompileFn atomic_nand (int ordering);
+Intrinsic::CompileFn atomic_or (int ordering);
+Intrinsic::CompileFn atomic_xor (int ordering);
+Intrinsic::CompileFn atomic_compare_exchange (bool weak, int success_ordering,
+					      int failure_ordering);
+Intrinsic::CompileFn atomic_minmax (handlers::AtomicMinMaxKind kind,
+				    int ordering);
+Intrinsic::CompileFn atomic_fence (bool is_multithread, int ordering);
+
 Intrinsic::CompileFn unchecked_op (tree_code op);
 
 Intrinsic::CompileFn copy (bool overlaps);
 Intrinsic::CompileFn expect (bool likely);
 Intrinsic::CompileFn try_handler (bool is_new_api);
+
+Intrinsic::CompileFn prefetch (Mode mode, Cache cache);
 
 /**
  * For fadd_fast, fsub_fast, fmul_fast, fdiv_fast and frem_fast

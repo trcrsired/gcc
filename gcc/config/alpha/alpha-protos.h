@@ -74,7 +74,7 @@ extern rtx alpha_expand_zap_mask (HOST_WIDE_INT);
 extern void alpha_expand_builtin_vector_binop (rtx (*)(rtx, rtx, rtx),
 					       machine_mode,
 					       rtx, rtx, rtx);
-extern rtx alpha_emit_unlikely_jump (rtx, rtx);
+extern rtx_insn *alpha_emit_unlikely_jump (rtx, rtx);
 extern void alpha_expand_builtin_establish_vms_condition_handler (rtx, rtx);
 extern void alpha_expand_builtin_revert_vms_condition_handler (rtx);
 
@@ -87,7 +87,7 @@ extern rtx alpha_va_arg (tree, tree);
 extern void alpha_start_function (FILE *, const char *, tree);
 extern void alpha_end_function (FILE *, const char *, tree);
 
-extern bool alpha_find_lo_sum_using_gp (rtx);
+extern bool alpha_find_lo_sum_using_gp (rtx_insn *);
 
 extern int alpha_store_data_bypass_p (rtx_insn *, rtx_insn *);
 

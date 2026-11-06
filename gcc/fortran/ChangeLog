@@ -1,3 +1,40 @@
+2026-11-05  Harald Anlauf  <anlauf@gmx.de>
+
+	PR fortran/128343
+	* scanner.cc (load_line): Check for optional UTF-8 BOM at beginning
+	of line.  Adjust temporary line buffer length and line truncation.
+	(load_file): Use it when reading the very first line of a source
+	file.
+
+2026-11-05  Tobias Burnus  <tburnus@baylibre.com>
+
+	* openmp.cc (OMP_TEAMS_CLAUSES): Add OMP_CLAUSE_DYN_GROUPPRIVATE.
+	* trans-openmp.cc (gfc_trans_omp_clauses): Use expression and not
+	directive line for the location.
+	(gfc_split_omp_clauses): Handle dyn_groupprivate.
+	(gfc_trans_omp_target): Handle target-consistent clauses.
+
+2026-11-03  Mikael Morin  <mikael@gcc.gnu.org>
+
+	PR fortran/128349
+	* trans-expr.cc (gfc_conv_variable): Set class container
+	expression from the one saved by the scalarizer.
+	(trans_scalar_class_assign): Use previously set class container
+	expression if it's available.
+
+2026-11-03  Mikael Morin  <mikael@gcc.gnu.org>
+
+	* trans-expr.cc (trans_scalar_class_assign): Delay creation of tree
+	nodes after early return.
+
+2026-11-01  Mikael Morin  <mikael@gcc.gnu.org>
+
+	PR fortran/127827
+	* symbol.cc (gfc_dummy_requires_direct_arg): Allow CLASS type.
+	* trans-array.cc (get_main_decl): New function.
+	(gfc_get_array_span): If the array decl is not passed as input
+	directly, get it first before querying the span on it.
+
 2026-10-30  Mikael Morin  <mikael@gcc.gnu.org>
 
 	PR fortran/114024

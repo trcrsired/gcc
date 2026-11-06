@@ -812,6 +812,19 @@
                     (const_string "neon_abs<q>")))]
 )
 
+;; Not handled by "<absneg_str><mode>2" due to the lack of a direct
+;; 64-bit vneg.
+(define_expand "negv2di2"
+  [(set (match_operand:V2DI 0 "s_register_operand")
+	(neg:V2DI (match_operand:V2DI 1 "s_register_operand")))]
+  "TARGET_NEON"
+  {
+    rtx zero = force_reg (V2DImode, CONST0_RTX (V2DImode));
+    emit_insn (gen_subv2di3 (operands[0], zero, operands[1]));
+    DONE;
+  }
+)
+
 (define_insn "neon_neg<mode>2"
   [(set (match_operand:VDQW 0 "s_register_operand" "=w")
 	(neg:VDQW (match_operand:VDQW 1 "s_register_operand" "w")))]
@@ -3553,13 +3566,13 @@ if (BYTES_BIG_ENDIAN)
 	(vec_duplicate:VDQW (match_dup 3)))]
   {
     unsigned HOST_WIDE_INT elt = UINTVAL (operands[2]);
-    if (BYTES_BIG_ENDIAN)
-      elt = GET_MODE_NUNITS (<V_double_vector_mode>mode) - 1 - elt;
     unsigned HOST_WIDE_INT size = GET_MODE_SIZE (<V_elem>mode);
     int base_regno = REGNO (operands[1]);
     int regno = (base_regno
 		 + subreg_regno_offset (base_regno, <V_double_vector_mode>mode,
 					elt * size, SImode));
+    if (BYTES_BIG_ENDIAN)
+      elt = GET_MODE_NUNITS (<V_double_vector_mode>mode) - 1 - elt;
     unsigned HOST_WIDE_INT offset = (elt * size) % GET_MODE_SIZE (SImode);
     if (offset != 0)
       {
@@ -3636,13 +3649,13 @@ if (BYTES_BIG_ENDIAN)
 	(vec_duplicate:VHFBF (match_dup 3)))]
   {
     unsigned HOST_WIDE_INT elt = UINTVAL (operands[2]);
-    if (BYTES_BIG_ENDIAN)
-      elt = GET_MODE_NUNITS (<V_double_vector_mode>mode) - 1 - elt;
     unsigned HOST_WIDE_INT size = GET_MODE_SIZE (<V_elem>mode);
     int base_regno = REGNO (operands[1]);
     int regno = (base_regno
 		 + subreg_regno_offset (base_regno, <V_double_vector_mode>mode,
 					elt * size, SImode));
+    if (BYTES_BIG_ENDIAN)
+      elt = GET_MODE_NUNITS (<V_double_vector_mode>mode) - 1 - elt;
     unsigned HOST_WIDE_INT offset = (elt * size) % GET_MODE_SIZE (SImode);
     if (offset != 0)
       {
