@@ -8796,6 +8796,7 @@ cp_parser_postfix_expression (cp_parser *parser, bool address_p, bool cast_p,
     case RID_BUILTIN_OPERATOR_DELETE:
     case RID_BUILTIN_BSWAPG:
     case RID_BUILTIN_BITREVERSEG:
+    case RID_BUILTIN_CLMULG:
       {
 	vec<tree, va_gc> *vec;
 
@@ -8925,6 +8926,11 @@ cp_parser_postfix_expression (cp_parser *parser, bool address_p, bool cast_p,
 	    postfix_expression
 	      = build_x_bswapg_bitreverseg (loc, IFN_BITREVERSE, vec,
 					    tf_warning_or_error);
+	    break;
+
+	  case RID_BUILTIN_CLMULG:
+	    postfix_expression
+	      = build_x_clmulg (loc, vec, tf_warning_or_error);
 	    break;
 
 	  default:
