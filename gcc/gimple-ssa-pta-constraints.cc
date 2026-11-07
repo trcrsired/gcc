@@ -2125,6 +2125,43 @@ find_func_aliases_for_call (struct function *fn, gcall *t)
   if (gimple_call_internal_p (t, IFN_DEFERRED_INIT))
     return;
 
+  /* The payload carrier of a spec'd function's return channel stands in
+     for the store into the channel local that the herbceptions return
+     pass replaced.  Its argument is the function's return value, so it
+     escapes through the return exactly like the value of
+     `return <value>;'.  The call itself carries ECF_NOVOPS (it has no
+     memory operands at all), which below would classify it as const and
+     let the pointee look dead, so this has to be said explicitly.
+
+     Without it DSE deletes the stores that initialize memory reachable
+     only from the return value -- for example
+
+	struct S { double x; };
+	S *f () throws { return new S {7.0}; }
+
+     returns a pointer to uninitialized memory at -O1 and above.  */
+  if (gimple_call_internal_p (t, IFN_HERBCEPTION_RETURN_PAYLOAD))
+    {
+      tree payload = gimple_call_arg (t, 0);
+      auto_vec<ce_s, 1> rhsc;
+
+      if (! in_ipa_mode)
+	make_constraint_to (escaped_return_id, payload);
+      else if (fn->decl != NULL_TREE)
+	{
+	  struct constraint_expr lhs;
+	  struct constraint_expr *rhsp;
+	  unsigned i;
+
+	  fi = lookup_vi_for_tree (fn->decl);
+	  lhs = get_function_part_constraint (fi, fi_result);
+	  get_constraint_for_rhs (payload, &rhsc);
+	  FOR_EACH_VEC_ELT (rhsc, i, rhsp)
+	    process_constraint (new_constraint (lhs, *rhsp));
+	}
+      return;
+    }
+
   /* .ASSUME produces a flag and has no observable side-effects.  */
   if (gimple_call_internal_p (t, IFN_ASSUME))
     return;
@@ -2351,13 +2388,35 @@ find_func_aliases (struct function *fn, gimple *origt)
 	  process_all_all_constraints (lhsc, rhsc);
 	}
       /* If there is a store to a global variable the rhs escapes.  */
-      if ((lhsop = get_base_address (lhsop)) != NULL_TREE
-	  && DECL_P (lhsop))
+      tree lhsbase = get_base_address (lhsop);
+      if (lhsbase != NULL_TREE && DECL_P (lhsbase))
 	{
-	  varinfo_t vi = get_vi_for_tree (lhsop);
+	  varinfo_t vi = get_vi_for_tree (lhsbase);
 	  if ((! in_ipa_mode && vi->is_global_var)
 	      || vi->is_ipa_escape_point)
 	    make_escape_constraint (rhsop);
+
+	  /* A store into the return channel of a spec'd function *is* that
+	     function's return value, so whatever rides it escapes through
+	     the return exactly like the value of `return <value>;' below.
+
+	     The channel local is volatile and is only read at RTL expansion
+	     time, so nothing in GIMPLE reads it.  Without this constraint a
+	     pointer stored into it is not in ESCAPED_RETURN, its heap object
+	     is then not marked as escaped-for-return, and the optimizers
+	     conclude that the memory the caller is about to receive is
+	     dead -- DSE then deletes the stores that initialize it:
+
+		struct S { double x; };
+		S *f () throws { return new S {7.0}; }
+
+	     which returns a pointer to uninitialized memory at -O1 and
+	     above.  */
+	  if (! in_ipa_mode
+	      && fn->herbceptions_error_slot != NULL_TREE
+	      && lhsbase == fn->herbceptions_error_slot
+	      && rhsop != NULL_TREE)
+	    make_constraint_to (escaped_return_id, rhsop);
 	}
     }
   /* Handle escapes through return.  */

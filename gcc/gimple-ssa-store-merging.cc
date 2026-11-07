@@ -2669,6 +2669,9 @@ pass_store_merging::terminate_all_aliasing_chains (imm_store_chain_info
   if (!gimple_vuse (stmt))
     return false;
 
+  tree store_lhs = gimple_store_p (stmt) ? gimple_get_lhs (stmt) : NULL_TREE;
+  ao_ref store_lhs_ref;
+  ao_ref_init (&store_lhs_ref, store_lhs);
   for (imm_store_chain_info *next = m_stores_head, *cur = next; cur; cur = next)
     {
       next = cur->next;
@@ -2686,7 +2689,9 @@ pass_store_merging::terminate_all_aliasing_chains (imm_store_chain_info
 	  ao_ref lhs_ref;
 	  ao_ref_init (&lhs_ref, lhs);
 	  if (ref_maybe_used_by_stmt_p (stmt, &lhs_ref)
-	      || stmt_may_clobber_ref_p_1 (stmt, &lhs_ref, false))
+	      || stmt_may_clobber_ref_p_1 (stmt, &lhs_ref)
+	      || (store_lhs && refs_may_alias_p_1 (&store_lhs_ref,
+						   &lhs_ref, false)))
 	    {
 	      if (dump_file && (dump_flags & TDF_DETAILS))
 		{
@@ -2738,7 +2743,10 @@ stmts_may_clobber_ref_p (gimple *first, gimple *last, tree ref)
   do
     {
       stmt = SSA_NAME_DEF_STMT (vop);
-      if (stmt_may_clobber_ref_p_1 (stmt, &r, false))
+      if (stmt_may_clobber_ref_p_1 (stmt, &r))
+	return true;
+      if (gimple_store_p (stmt)
+	  && refs_anti_dependent_p (ref, gimple_get_lhs (stmt)))
 	return true;
       /* Avoid quadratic compile time by bounding the number of checks
 	 we perform.  */
@@ -5816,6 +5824,7 @@ fold_value_with_zero_tail (basic_block bb)
 	  gsi_next (&gsi);
 	  continue;
 	}
+      tree ptype = TREE_TYPE (addr);
 
       /* Work out the stores that re-emit the zero bytes above the widened
 	 value before emitting any statement, so that a target without an
@@ -5843,9 +5852,6 @@ fold_value_with_zero_tail (basic_block bb)
 
       gimple_stmt_iterator gsi_ins = gsi;
       location_t loc = gimple_location (run[0].stmt);
-      /* The offset operand of a MEM_REF is an integer constant whose type
-	 is a pointer type of the same precision (see the verifier).  */
-      tree ptype = TREE_TYPE (addr);
 
       /* The widened value is the value zero-extended: convert to the
 	 unsigned counterpart first when it is signed, so that the bits above
