@@ -469,6 +469,10 @@ static struct demangle_component *d_ctor_dtor_name (struct d_info *);
 static struct demangle_component **
 d_cv_qualifiers (struct d_info *, struct demangle_component **, int);
 
+static int
+d_D_qualifier (struct d_info *, enum demangle_component_type *,
+		 struct demangle_component **);
+
 static struct demangle_component *
 d_ref_qualifier (struct d_info *, struct demangle_component *);
 
@@ -2896,6 +2900,82 @@ cplus_demangle_type (struct d_info *di)
   return ret;
 }
 
+/* Parse one of the function qualifiers spelled with a leading `D',
+   with `D' already consumed: `Dx' (transaction_safe), `Do' / `DO...E'
+   (noexcept), `Dw...E' (throw), `Dr' (herbceptions throws), `DE...E'
+   (herbceptions return_failure) and `Dg...E' (dependent throws).
+   Returns 1 and fills *T / *RIGHT on success, 0 on failure.  */
+
+static int
+d_D_qualifier (struct d_info *di, enum demangle_component_type *t,
+	       struct demangle_component **right)
+{
+  char peek = d_next_char (di);
+
+  *right = NULL;
+  if (peek == 'x')
+    {
+      *t = DEMANGLE_COMPONENT_TRANSACTION_SAFE;
+      di->expansion += sizeof "transaction_safe";
+    }
+  else if (peek == 'o'
+	   || peek == 'O')
+    {
+      *t = DEMANGLE_COMPONENT_NOEXCEPT;
+      di->expansion += sizeof "noexcept";
+      if (peek == 'O')
+	{
+	  *right = d_expression (di);
+	  if (*right == NULL)
+	    return 0;
+	  if (! d_check_char (di, 'E'))
+	    return 0;
+	}
+    }
+  else if (peek == 'w')
+    {
+      *t = DEMANGLE_COMPONENT_THROW_SPEC;
+      di->expansion += sizeof "throw";
+      *right = d_parmlist (di);
+      if (*right == NULL)
+	return 0;
+      if (! d_check_char (di, 'E'))
+	return 0;
+    }
+  else if (peek == 'r')
+    {
+      /* Herbceptions `throws'.  */
+      *t = DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS;
+      di->expansion += sizeof "throws";
+    }
+  else if (peek == 'E')
+    {
+      /* Herbceptions `return_failure{T}'.  */
+      *t = DEMANGLE_COMPONENT_HERBCEPTIONS_RETURN_FAILURE;
+      di->expansion += sizeof "return_failure";
+      *right = cplus_demangle_type (di);
+      if (*right == NULL)
+	return 0;
+      if (! d_check_char (di, 'E'))
+	return 0;
+    }
+  else if (peek == 'g')
+    {
+      /* Herbceptions dependent `throws(expr)'.  */
+      *t = DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS;
+      di->expansion += sizeof "throws";
+      *right = d_expression (di);
+      if (*right == NULL)
+	return 0;
+      if (! d_check_char (di, 'E'))
+	return 0;
+    }
+  else
+    return 0;
+
+  return 1;
+}
+
 /* <CV-qualifiers> ::= [r] [V] [K] [Dx] */
 
 static struct demangle_component **
@@ -2934,69 +3014,8 @@ d_cv_qualifiers (struct d_info *di,
 	       : DEMANGLE_COMPONENT_CONST);
 	  di->expansion += sizeof "const";
 	}
-      else
-	{
-	  peek = d_next_char (di);
-	  if (peek == 'x')
-	    {
-	      t = DEMANGLE_COMPONENT_TRANSACTION_SAFE;
-	      di->expansion += sizeof "transaction_safe";
-	    }
-	  else if (peek == 'o'
-		   || peek == 'O')
-	    {
-	      t = DEMANGLE_COMPONENT_NOEXCEPT;
-	      di->expansion += sizeof "noexcept";
-	      if (peek == 'O')
-		{
-		  right = d_expression (di);
-		  if (right == NULL)
-		    return NULL;
-		  if (! d_check_char (di, 'E'))
-		    return NULL;
-		}
-	    }
-	  else if (peek == 'w')
-	    {
-	      t = DEMANGLE_COMPONENT_THROW_SPEC;
-	      di->expansion += sizeof "throw";
-	      right = d_parmlist (di);
-	      if (right == NULL)
-		return NULL;
-	      if (! d_check_char (di, 'E'))
-		return NULL;
-	    }
-	  else if (peek == 'r')
-	    {
-	      /* Herbceptions `throws'.  */
-	      t = DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS;
-	      di->expansion += sizeof "throws";
-	    }
-	  else if (peek == 'E')
-	    {
-	      /* Herbceptions `return_failure{T}'.  */
-	      t = DEMANGLE_COMPONENT_HERBCEPTIONS_RETURN_FAILURE;
-	      di->expansion += sizeof "return_failure";
-	      right = cplus_demangle_type (di);
-	      if (right == NULL)
-		return NULL;
-	      if (! d_check_char (di, 'E'))
-		return NULL;
-	    }
-	  else if (peek == 'g')
-	    {
-	      /* Herbceptions dependent `throws(expr)'.  */
-	      t = DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS;
-	      di->expansion += sizeof "throws";
-	      right = d_expression (di);
-	      if (right == NULL)
-		return NULL;
-	      if (! d_check_char (di, 'E'))
-		return NULL;
-	    }
-	  else
-	    return NULL;
-	}
+      else if (! d_D_qualifier (di, &t, &right))
+	return NULL;
 
       *pret = d_make_comp (di, t, NULL, right);
       if (*pret == NULL)
@@ -3154,7 +3173,34 @@ d_bare_function_type (struct d_info *di, int has_return_type)
 {
   struct demangle_component *return_type;
   struct demangle_component *tl;
+  struct demangle_component *quals = NULL;
+  struct demangle_component **qtail = &quals;
+  struct demangle_component *ret;
   char peek;
+
+  /* Function qualifiers spelled with `D' -- `throws', `return_failure',
+     `noexcept', `transaction_safe', `throw' -- may prefix the parameter
+     list of a function whose mangled name carries no `F...E'.  Parse
+     them here: without this, `_Z1fDrv' reads as a function whose single
+     parameter has type `void throws' instead of a `throws' function
+     with no parameters.  */
+  while (d_peek_char (di) == 'D')
+    {
+      enum demangle_component_type t;
+      struct demangle_component *right;
+
+      peek = d_peek_next_char (di);
+      if (peek != 'x' && peek != 'o' && peek != 'O' && peek != 'w'
+	  && peek != 'r' && peek != 'E' && peek != 'g')
+	break;
+      d_advance (di, 1);
+      if (! d_D_qualifier (di, &t, &right))
+	return NULL;
+      *qtail = d_make_comp (di, t, NULL, right);
+      if (*qtail == NULL)
+	return NULL;
+      qtail = &d_left (*qtail);
+    }
 
   /* Detect special qualifier indicating that the first argument
      is the return type.  */
@@ -3178,8 +3224,14 @@ d_bare_function_type (struct d_info *di, int has_return_type)
   if (tl == NULL)
     return NULL;
 
-  return d_make_comp (di, DEMANGLE_COMPONENT_FUNCTION_TYPE,
-		      return_type, tl);
+  ret = d_make_comp (di, DEMANGLE_COMPONENT_FUNCTION_TYPE,
+		     return_type, tl);
+  if (ret == NULL)
+    return NULL;
+  if (quals == NULL)
+    return ret;
+  *qtail = ret;
+  return quals;
 }
 
 /* <class-enum-type> ::= <name>  */
@@ -4533,6 +4585,8 @@ d_count_templates_scopes (struct d_print_info *dpi,
     case DEMANGLE_COMPONENT_TRANSACTION_SAFE:
     case DEMANGLE_COMPONENT_NOEXCEPT:
     case DEMANGLE_COMPONENT_THROW_SPEC:
+    case DEMANGLE_COMPONENT_HERBCEPTIONS_THROWS:
+    case DEMANGLE_COMPONENT_HERBCEPTIONS_RETURN_FAILURE:
     case DEMANGLE_COMPONENT_VENDOR_TYPE_QUAL:
     case DEMANGLE_COMPONENT_POINTER:
     case DEMANGLE_COMPONENT_COMPLEX:
